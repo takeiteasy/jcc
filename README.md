@@ -1,209 +1,484 @@
-# chibicc: A Small C Compiler
+# jcc
 
-(The old master has moved to
-[historical/old](https://github.com/rui314/chibicc/tree/historical/old)
-branch. This is a new one uploaded in September 2020.)
+> [!WARNING]
+> Work in progress, see [TODO](#todo)
 
-chibicc is yet another small C compiler that implements most C11
-features. Even though it still probably falls into the "toy compilers"
-category just like other small compilers do, chibicc can compile
-several real-world programs, including [Git](https://git-scm.com/),
-[SQLite](https://sqlite.org),
-[libpng](http://www.libpng.org/pub/png/libpng.html) and chibicc
-itself, without making modifications to the compiled programs.
-Generated executables of these programs pass their corresponding test
-suites. So, chibicc actually supports a wide variety of C11 features
-and is able to compile hundreds of thousands of lines of real-world C
-code correctly.
+`JCC` is a ~~C89~~/~~C99~~/C11* JIT C Compiler. The preprocessor/lexer/parser is taken from [chibicc](http://https://github.com/rui314/chibicc) and the VM was built off [c4](https://github.com/rswier/c4) and [write-a-C-interpreter](https://github.com/lotabout/write-a-C-interpreter).
 
-chibicc is developed as the reference implementation for a book I'm
-currently writing about the C compiler and the low-level programming.
-The book covers the vast topic with an incremental approach; in the first
-chapter, readers will implement a "compiler" that accepts just a single
-number as a "language", which will then gain one feature at a time in each
-section of the book until the language that the compiler accepts matches
-what the C11 spec specifies. I took this incremental approach from [the
-paper](http://scheme2006.cs.uchicago.edu/11-ghuloum.pdf) by Abdulaziz
-Ghuloum.
+**\*** Most C11 features implemented, see [TODO](#todo) for features still missing
 
-Each commit of this project corresponds to a section of the book. For this
-purpose, not only the final state of the project but each commit was
-carefully written with readability in mind. Readers should be able to learn
-how a C language feature can be implemented just by reading one or a few
-commits of this project. For example, this is how
-[while](https://github.com/rui314/chibicc/commit/773115ab2a9c4b96f804311b95b20e9771f0190a),
-[[]](https://github.com/rui314/chibicc/commit/75fbd3dd6efde12eac8225d8b5723093836170a5),
-[?:](https://github.com/rui314/chibicc/commit/1d0e942fd567a35d296d0f10b7693e98b3dd037c),
-and [thread-local
-variable](https://github.com/rui314/chibicc/commit/79644e54cc1805e54428cde68b20d6d493b76d34)
-are implemented. If you have plenty of spare time, it might be fun to read
-it from the [first
-commit](https://github.com/rui314/chibicc/commit/0522e2d77e3ab82d3b80a5be8dbbdc8d4180561c).
+## Features
 
-If you like this project, please consider purchasing a copy of the book
-when it becomes available! 😀 I publish the source code here to give people
-early access to it, because I was planing to do that anyway with a
-permissive open-source license after publishing the book. If I don't charge
-for the source code, it doesn't make much sense to me to keep it private. I
-hope to publish the book in 2021.
-You can sign up [here](https://forms.gle/sgrMWHGeGjeeEJcX7) to receive a
-notification when a free chapter is available online or the book is published.
+### Core C Language Support
 
-I pronounce chibicc as _chee bee cee cee_. "chibi" means "mini" or
-"small" in Japanese. "cc" stands for C compiler.
+### Operators
 
-## Status
+- Arithmetic: `+`, `-`, `*`, `/`, `%`, unary `-`
+- Bitwise: `&`, `|`, `^`, `~`, `<<`, `>>`
+- Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
+- Logical: `&&`, `||`, `!`
+- Assignment: `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`
+- Increment/decrement: `++`, `--` (both prefix and postfix)
+- Ternary: `? :`
+- Comma: `,`
 
-chibicc supports almost all mandatory features and most optional
-features of C11 as well as a few GCC language extensions.
+### Control Flow
 
-Features that are often missing in a small compiler but supported by
-chibicc include (but not limited to):
+- `if`/`else`
+- `for`, `while`, `do-while`
+- `switch`/`case`/`default`
+- `goto`/ labels
+- `break`/`continue`
 
-- Preprocessor
-- float, double and long double (x87 80-bit floating point numbers)
-- Bit-fields
-- alloca()
-- Variable-length arrays
-- Compound literals
-- Thread-local variables
-- Atomic variables
-- Common symbols
-- Designated initializers
-- L, u, U and u8 string literals
-- Functions that take or return structs as values, as specified by the
-  x86-64 SystemV ABI
+### Functions
 
-chibicc does not support complex numbers, K&R-style function prototypes
-and GCC-style inline assembly. Digraphs and trigraphs are intentionally
-left out.
+- Function declarations and definitions
+- Function calls (direct and indirect via function pointers)
+- Recursion
+- Parameters and return values
+- Function pointers (declaration, assignment, indirect calls via `CALLI`)
+- Variadic functions (`<stdarg.h>` support with `va_start`, `va_arg`, `va_end`)
 
-chibicc outputs a simple but nice error message when it finds an error in
-source code.
+### Data Types
 
-There's no optimization pass. chibicc emits terrible code which is probably
-twice or more slower than GCC's output. I have a plan to add an
-optimization pass once the frontend is done.
+- Basic types: `void`, `char`, `short`, `int`, `long`, `float`, `double`, `_Bool`
+- Pointers (declaration, dereference `*`, address-of `&`, pointer arithmetic)
+- Arrays (fixed-size, initialization, multidimensional, indexing)
+- Array decay (in function parameters and expressions)
+- Strings (literals with data segment storage)
+- Structs (declaration, member access `.`, nested structs, initialization, flexible array members)
+- Unions (declaration, member access, initialization)
+- Enums (declaration, explicit values, in expressions and switches)
+- Variable-length arrays (VLA with runtime allocation via VM heap)
 
-I'm using Ubuntu 20.04 for x86-64 as a development platform. I made a
-few small changes so that chibicc works on Ubuntu 18.04, Fedora 32 and
-Gentoo 2.6, but portability is not my goal at this moment. It may or
-may not work on systems other than Ubuntu 20.04.
+### Storage Classes & Qualifiers
 
-## Internals
+- `static` (static locals, static globals, static functions)
+- `extern` (external linkage for multi-file projects)
+- `const` (const-correctness in type system and codegen)
+- `inline` (parsed and generated normally, behaves like static, no special optimization)
+- `register` (accepted and ignored, no special optimization)
+- `volatile` (accepted and ignored, VM doesn't optimize across statements)
+- `restrict` (accepted and ignored, aliasing not tracked)
 
-chibicc consists of the following stages:
+### Other Features
 
-- Tokenize: A tokenizer takes a string as an input, breaks it into a list
-  of tokens and returns them.
+- `typedef` (all types including function pointers)
+- `sizeof` operator (compile-time evaluation for all types)
+- Forward declarations (incomplete types, self-referential structs)
+- Floating-point arithmetic (double precision with full operations)
+- Compound literals (scalars, arrays, structs)
+- Statement expressions (GNU extension: `({ ... })`)
+- Designated initializers (arrays and structs)
+- Cast expressions (explicit type conversions)
 
-- Preprocess: A preprocessor takes as an input a list of tokens and output
-  a new list of macro-expanded tokens. It interprets preprocessor
-  directives while expanding macros.
+### Preprocessor
 
-- Parse: A recursive descendent parser constructs abstract syntax trees
-  from the output of the preprocessor. It also adds a type to each AST
-  node.
+- `#include` (with multiple search paths)
+- `#define` (object-like and function-like macros)
+- `#ifdef`, `#ifndef`, `#if`, `#elif`, `#else`, `#endif`
+- `#undef`
+- `#pragma once`
+- Macro expansion and stringification
+- String literal concatenation (adjacent strings automatically combined)
 
-- Codegen: A code generator emits an assembly text for given AST nodes.
+### Linker
 
-## Contributing
+- Multiple input files
+- Symbol resolution
+- Duplicate definition detection
 
-When I find a bug in this compiler, I go back to the original commit that
-introduced the bug and rewrite the commit history as if there were no such
-bug from the beginning. This is an unusual way of fixing bugs, but as a
-part of a book, it is important to keep every commit bug-free.
+### Foreign Function Interface (FFI)
 
-Thus, I do not take pull requests in this repo. You can send me a pull
-request if you find a bug, but it is very likely that I will read your
-patch and then apply that to my previous commits by rewriting history. I'll
-credit your name somewhere, but your changes will be rewritten by me before
-submitted to this repository.
+> [!WARNING]
+> Variadic *foreign* functions not supported (see [Variadic Foreign Functions](#variadic-foreign-functions))
 
-Also, please assume that I will occasionally force-push my local repository
-to this public one to rewrite history. If you clone this project and make
-local commits on top of it, your changes will have to be rebased by hand
-when I force-push new commits.
+- Direct calls to native C standard library via `CALLF` opcode
+- Standard library functions supported (see [Standard Library Support](#standard-library-support))
+- Custom function registration via `cc_register_cfunc()`
+- Variadic functions like `printf` are supported via preprocessor macros + fixed-argument functions
+- Supporting proper variadic foreign functions would require platform-specific calling conventions or dependencies like libffi, which I want to avoid for simplicity and portability
 
-## Design principles
+### Inline Assembly
 
-chibicc's core value is its simplicity and the reability of its source
-code. To achieve this goal, I was careful not to be too clever when
-writing code. Let me explain what that means.
+- `asm("...")` statements via callback mechanism
+- Not executed in the VM (no-op by default)
+- Callback can emit custom bytecode or perform logging
 
-Oftentimes, as you get used to the code base, you are tempted to
-_improve_ the code using more abstractions and clever tricks.
-But that kind of _improvements_ don't always improve readability for
-first-time readers and can actually hurts it. I tried to avoid the
-pitfall as much as possible. I wrote this code not for me but for
-first-time readers.
+### GNU Extensions
 
-If you take a look at the source code, you'll find a couple of
-dumb-looking pieces of code. These are written intentionally that way
-(but at some places I might be actually missing something,
-though). Here is a few notable examples:
+- `({ ... })` statement expressions
+- `typeof` operator (compile-time type inquiry for variables and expressions)
+- `__attribute__((...))` for functions and variables (currently ignored, parsed only)
 
-- The recursive descendent parser contains many similar-looking functions
-  for similar-looking generative grammar rules. You might be tempted
-  to _improve_ it to reduce the duplication using higher-order functions
-  or macros, but I thought that that's too complicated. It's better to
-  allow small duplications instead.
+### C11 Extensions
 
-- chibicc doesn't try too hard to save memory. An entire input source
-  file is read to memory first before the tokenizer kicks in, for example.
+- `_Generic` type-generic expressions (compile-time type selection)
+- `_Alignof` operator (query type/variable alignment)
+- `_Alignas` specifier (control variable alignment)
+- `_Static_assert` (compile-time assertions with custom error messages)
 
-- Slow algorithms are fine if we know that n isn't too big.
-  For example, we use a linked list as a set in the preprocessor, so
-  the membership check takes O(n) where n is the size of the set.  But
-  that's fine because we know n is usually very small.
-  And even if n can be very big, I stick with a simple slow algorithm
-  until it is proved by benchmarks that that's a bottleneck.
+### Threading + Atomics Support
 
-- Each AST node type uses only a few members of the `Node` struct members.
-  Other unused `Node` members are just a waste of memory at runtime.
-  We could save memory using unions, but I decided to simply put everything
-  in the same struct instead. I believe the inefficiency is negligible.
-  Even if it matters, we can always change the code to use unions
-  at any time. I wanted to avoid premature optimization.
+> [!WARNING]
+> Not supported
 
-- chibicc always allocates heap memory using `calloc`, which is a
-  variant of `malloc` that clears memory with zero. `calloc` is
-  slightly slower than `malloc`, but that should be neligible.
+JCC is single-threaded and does not implement any threading or atomic operations yet.
 
-- Last but not least, chibicc allocates memory using `calloc` but never
-  calls `free`. Allocated heap memory is not freed until the process exits.
-  I'm sure that this memory management policy (or lack thereof) looks
-  very odd, but it makes sense for short-lived programs such as compilers.
-  DMD, a compiler for the D programming language, uses the same memory
-  management scheme for the same reason, for example [1].
+## Example
 
-## About the Author
+```c
+#include "jcc.h"
+#include <stdio.h>
 
-I'm Rui Ueyama. I'm the creator of [8cc](https://github.com/rui314/8cc),
-which is a hobby C compiler, and also the original creator of the current
-version of [LLVM lld](https://lld.llvm.org) linker, which is a
-production-quality linker used by various operating systems and large-scale
-build systems.
+int main(int argc, char **argv) {
+    if (argc < 2) {
+        fprintf(stderr, "Usage: %s <file.c>\n", argv[0]);
+        return 1;
+    }
+    
+    // Create VM instance and initialize
+    JCC vm;
+    cc_init(&vm, argc, (const char **)argv);
+    
+    // Add custom include paths
+    cc_include(&vm, "./include");
+    cc_include(&vm, "./lib");
+    
+    // Define macros
+    cc_define(&vm, "VERSION", "\"1.0.0\"");
+    cc_define(&vm, "DEBUG", "1");
+    
+    // Compile
+    Token *tok = cc_preprocess(&vm, argv[1]);
+    Obj *prog = cc_parse(&vm, tok);
+    // Link all programs together
+    // Obj *merged_prog = cc_link_progs(&vm, input_progs, input_files_count);
+    cc_compile(&vm, prog);
+    
+    // Show disassembly
+    cc_disassemble(&vm);
+    
+    // Run + cleanup
+    int exit_code = cc_run(&vm, argc - 1, argv + 1);
+    cc_destroy(&vm);
+    printf("\nProgram exited with code: %d\n", exit_code);
+    return exit_code;
+}
+```
 
-## References
+## TODO
 
-- [tcc](https://bellard.org/tcc/): A small C compiler written by Fabrice
-  Bellard. I learned a lot from this compiler, but the design of tcc and
-  chibicc are different. In particular, tcc is a one-pass compiler, while
-  chibicc is a multi-pass one.
+### C11 Features
 
-- [lcc](https://github.com/drh/lcc): Another small C compiler. The creators
-  wrote a [book](https://sites.google.com/site/lccretargetablecompiler/)
-  about the internals of lcc, which I found a good resource to see how a
-  compiler is implemented.
+- [ ] Anonymous structs/unions (Direct member access without intermediate name)
+- [ ] Bitfields - Bit-level struct member access
 
-- [An Incremental Approach to Compiler
-  Construction](http://scheme2006.cs.uchicago.edu/11-ghuloum.pdf)
+### Clang + GNU Extensions 
 
-- [Rob Pike's 5 Rules of Programming](https://users.ece.utexas.edu/~adnan/pike.html)
+- [ ] Universal character names - `\uXXXX` escapes in strings
+- [ ] Blocks/closures - `^{}` (**important**)
+- [ ] Zero-length arrays - `int arr[0];` as flexible array alternative
+- [ ] Nested functions
+- [ ] Labels as values - `&&label` and `goto *ptr;`
+- [ ] Switch case ranges - `case 1 ... 5:`
 
-[1] https://www.drdobbs.com/cpp/increasing-compiler-speed-by-over-75/240158941
+### C23 Features (very limited support)
+- [ ] #elifdef and #elifndef directives for cleaner conditional compilation
+- [ ] #warning directive standardized
+- [ ] #embed directive for embedding binary data directly
+- [ ] `__VA_OPT__` for better variadic macro handling
+- [ ] `[[deprecated]]` for marking deprecated code
+    - [ ] Also support GNU `__attribute__((deprecated))` (and other matching attributes if possible)
+- [ ] `[[nodiscard]]` for warning about ignored return values
+- [ ] `[[maybe_unused]]` for suppressing unused warnings
+- [ ] `[[noreturn]]` and `[[ _Noreturn]]` for non-returning functions
+- [ ] `[[unsequenced]], [[reproducible]]` for function properties
+- [ ] `[[fallthrough]]` for intentional switch fallthrough
+- [ ] Binary integer literals (0b prefix)
+- [ ] Digit separators with single quotes (e.g., 1’000’000)
+- [ ] Empty initializer lists {}
 
-> DMD does memory allocation in a bit of a sneaky way. Since compilers
-> are short-lived programs, and speed is of the essence, DMD just
-> mallocs away, and never frees.
+### Memory safety features
+
+- [x] `--stack-canaries` **Stack overflow protection**
+  - Places canary values (0xDEADBEEFCAFEBABE) on the stack between saved base pointer and local variables
+  - Validates canary on function return (LEV instruction)
+  - Detects stack buffer overflows with detailed error reporting including PC offset
+- [x] `--heap-canaries` **Heap overflow protection**
+  - Front canary in AllocHeader (before user data)
+  - Rear canary after user data
+  - Both canaries (0xCAFEBABEDEADBEEF) validated on free()
+  - Detects heap buffer over/underflows with allocation site information
+- [x] `--memory-leak-detection` **Memory leak detection**
+  - Tracks all VM heap allocations in a linked list
+  - Removes from list on free()
+  - Reports all unfreed allocations at program exit
+  - Shows address, size, and PC offset of allocation site for each leak
+- [x] `--uaf-detection` **Use-after-free detection**
+  - Marks freed blocks instead of reusing them
+  - Increments generation counter on each free
+  - CHKP opcode checks if accessed pointer has been freed
+  - Reports UAF with allocation details and generation number
+- [x] `--bounds-checks` **Runtime array bounds checking**
+  - Tracks requested vs allocated sizes for all heap allocations
+  - CHKP opcode validates pointer is within allocated region
+  - Checks against originally requested size (not rounded allocation)
+  - Detects out-of-bounds array accesses with offset information
+- [ ] `--type-checks` flag for runtime type checking on pointer dereferences
+- [ ] `--uninitialized-detection` flag for uninitialized variable detection
+- [ ] `--pointer-sanitizer` flag for full pointer tracking and validation on dereference
+- [ ] `--stack-instrumentation` flag for tracking stack variable lifetimes and accesses
+
+#### Example Usage
+
+```c
+// test_uaf.c - Use-after-free example
+void *malloc(unsigned long size);
+void free(void *ptr);
+
+int main() {
+    int *ptr = (int *)malloc(sizeof(int) * 10);
+    ptr[0] = 42;
+    free(ptr);
+    int value = ptr[0];  // Use after free!
+    return value;
+}
+```
+
+```bash
+$ ./jcc --uaf-detection test_uaf.c
+
+========== USE-AFTER-FREE DETECTED ==========
+Attempted to access freed memory
+Address:     0x7f3640028
+Size:        40 bytes
+Allocated at PC offset: 15
+Generation:  1 (freed)
+Current PC:  0x7f34002b0 (offset: 86)
+============================================
+```
+
+```c
+// test_bounds.c - Bounds checking example
+void *malloc(unsigned long size);
+
+int main() {
+    char *arr = (char *)malloc(10);
+    char c = arr[10];  // Out of bounds!
+    return c;
+}
+```
+
+```bash
+$ ./jcc --bounds-checks test_bounds.c
+
+========== ARRAY BOUNDS ERROR ==========
+Pointer is outside allocated region
+Address:       0x8c564003a
+Base:          0x8c5640030
+Offset:        10 bytes
+Requested size: 10 bytes
+Allocated size: 16 bytes (rounded)
+Allocated at PC offset: 11
+Current PC:    0x8c5400140 (offset: 40)
+=========================================
+```
+
+### Interactive Debugger
+
+The JCC VM includes an interactive debugger for step-by-step program execution and inspection.
+
+**Enable with:** `-g` or `--debug` flags
+
+### Features
+
+- **Breakpoints** - Set breakpoints at any instruction offset
+- **Single-stepping** - Step into, step over, or step out of functions
+- **Register inspection** - View all VM registers (ax, fax, pc, bp, sp, cycle count)
+-  **Stack inspection** - Examine stack contents
+- **Disassembly** - View current instruction
+- **Memory inspection** - Read memory at any address
+- **Interactive REPL** - Full command-line interface for debugging
+
+#### Debugger Commands
+
+| Command | Short | Description |
+|---------|-------|-------------|
+| `continue` | `c` | Continue execution until next breakpoint |
+| `step` | `s` | Single step (into functions) |
+| `next` | `n` | Step over (skip function calls) |
+| `finish` | `f` | Step out (run until return) |
+| `break <offset>` | `b <offset>` | Set breakpoint at instruction offset |
+| `delete <num>` | `d <num>` | Delete breakpoint by number |
+| `list` | `l` | List all breakpoints |
+| `registers` | `r` | Print all register values |
+| `stack [count]` | `st [count]` | Print stack (default 10 entries) |
+| `disasm` | `dis` | Disassemble current instruction |
+| `memory <addr>` | `m <addr>` | Inspect memory at address |
+| `help` | `h`, `?` | Show help |
+| `quit` | `q` | Exit debugger |
+
+#### Example Debugging Session
+
+```bash
+$ ./jcc --debug test_program.c
+
+========================================
+    JCC Debugger
+========================================
+Starting at entry point (PC: 0x..., offset: 1)
+Type 'help' for commands, 'c' to continue
+
+(jcc-dbg) registers           # Check initial state
+=== Registers ===
+  ax (int):   0x0000000000000000 (0)
+  fax (fp):   0.000000
+  pc:         0xc94800008 (offset: 8)
+  bp:         0xc94600000
+  sp:         0xc945fffe8
+  cycle:      0
+
+(jcc-dbg) break 50            # Set breakpoint at offset 50
+Breakpoint #0 set at PC 0x... (offset: 50)
+
+(jcc-dbg) continue            # Run to breakpoint
+
+Breakpoint hit at PC 0x... (offset: 50)
+
+(jcc-dbg) step                # Execute one instruction
+(jcc-dbg) disasm              # See what we just executed
+0x... (offset 51): IMM 42
+
+(jcc-dbg) stack 5             # Check top 5 stack entries
+=== Stack (top 5 entries) ===
+  sp[0] = 0x000000000000002a  (42)
+  sp[1] = 0x0000000000000005  (5)
+  ...
+
+(jcc-dbg) continue            # Run to completion
+```
+
+### Quality-of-Life Features
+
+- [ ] **Optimization passes** - Constant folding, dead code elimination
+- [ ] **Better error messages** - Line numbers in runtime errors
+- [ ] **Specify C versions** - `-std=c89`, `-std=c11` etc
+- [ ] **Improve debugger** - Watchpoints, conditional breakpoints, mapping source lines to bytecode offsets
+
+## Building
+
+```bash
+make            # Build jcc compiler
+make all        # Build everything (jcc, libjcc.dylib) and run tests
+```
+
+This produces:
+- `jcc` - Full compiler executable (C source → bytecode → execute)
+- `libjcc.dylib` - Shared library for embedding
+
+### Compile to Bytecode
+
+```bash
+# Compile C source to bytecode file
+./jcc -o program.bin program.c
+
+# With multiple files
+./jcc -o app.bin main.c utils.c helpers.c
+
+# With preprocessor flags
+./jcc -I./include -DDEBUG -o debug.bin main.c
+```
+
+### Bytecode File Format
+
+Binary format (little-endian):
+```
+[Magic: "JJCC" (4 bytes)]
+[Version: 1 (4 bytes)]
+[Text size: bytes (8 bytes)]
+[Data size: bytes (8 bytes)]
+[Main offset: instruction offset (8 bytes)]
+[Text segment: bytecode instructions]
+[Data segment: global variables and constants]
+```
+
+## Running Tests
+
+All test files are located in the `tests/` directory. To run the complete test suite:
+
+```bash
+./run_tests.fish
+```
+
+This will run all test files and report:
+- Total number of tests
+- Number of passed tests
+- Number of failed tests
+- List of any failed tests
+
+Individual tests can be run directly:
+
+```bash
+./jcc tests/test_simple.c
+echo $status  # Check exit code
+```
+
+## Standard Library Support
+
+JCC includes a **Foreign Function Interface (FFI)** that allows compiled C code to call native standard library functions directly, without reimplementing them as VM opcodes. The FFI is automatically initialized by `cc_init()` via `cc_load_stdlib()`, which registers most C standard library functions.
+
+### Variadic Foreign Functions
+
+**How it works:**
+1. `printf(...)` is a preprocessor macro that **counts arguments at compile time**
+2. Macro expands to `printf0`, `printf1`, ... `printf10` based on argument count
+3. Each `printfN` is a fixed-argument FFI function registered with the VM
+4. The FFI function calls native `printf()` with the exact number of arguments
+
+**Limitation:** Maximum **20 additional arguments** (format string counts as 1, so 19 total arguments max). I think this covers 99% of real-world printf usage and can be increased manually if needed.
+
+**Why this limitation exists:** 
+- The VM's FFI requires fixed argument counts at function registration
+- True variadic functions use platform-specific calling conventions  
+- This macro-based approach is portable, compile-time, and needs no runtime parsing
+- I want to avoid inline assembly and dependencies (like libffi) and keep it simple
+
+### Registering Custom Functions
+
+You can register additional native functions using `cc_register_cfunc()`:
+
+```c
+// Example: Register a custom native function
+void my_native_func(int x, double y) {
+    printf("Called with: %d, %f\n", x, y);
+}
+
+JCC vm;
+cc_init(&vm);
+
+// Register: name, function pointer, arg count, returns_double
+cc_register_cfunc(&vm, "my_native_func", (void*)my_native_func, 2, 0);
+
+// Now it can be called from C code compiled to VM bytecode
+```
+
+## LICENSE
+```
+jcc
+
+Copyright (C) 2025 George Watson
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+```

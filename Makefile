@@ -1,50 +1,39 @@
-CFLAGS=-std=c11 -g -fno-common -Wall -Wno-switch
+SRCS := $(wildcard src/*.c)
+CFLAGS := -Wall -O0 -g -std=c99 -Wno-switch -Wdeprecated-declarations
+ifeq ($(OS),Windows_NT)
+	EXE := .EXE
+	DYLIB := .dll
+else
+	EXE :=
+	UNAME_S := $(shell uname -s)
+	ifeq ($(UNAME_S),Darwin)
+		DYLIB := .dylib
+	else
+		DYLIB := .so
+	endif
+endif
+EXE_OUT := jcc$(EXE)
+LIB_OUT := libjcc$(DYLIB)
 
-SRCS=$(wildcard *.c)
-OBJS=$(SRCS:.c=.o)
+default: $(EXE_OUT)
 
-TEST_SRCS=$(wildcard test/*.c)
-TESTS=$(TEST_SRCS:.c=.exe)
+$(EXE_OUT): $(SRCS)
+	$(CC) $(CFLAGS) -o $@ $^
 
-# Stage 1
+$(LIB_OUT): $(SRCS)
+	$(CC) -fpic -shared -o $@ $(filter-out src/main.c, $^) $(CFLAGS)
 
-chibicc: $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+test: clean $(EXE_OUT)
+	@./run_tests.fish
 
-$(OBJS): chibicc.h
+all: clean $(EXE_OUT) $(LIB_OUT) test docs
 
-test/%.exe: chibicc test/%.c
-	./chibicc -Iinclude -Itest -c -o test/$*.o test/$*.c
-	$(CC) -pthread -o $@ test/$*.o -xc test/common
-
-test: $(TESTS)
-	for i in $^; do echo $$i; ./$$i || exit 1; echo; done
-	test/driver.sh ./chibicc
-
-test-all: test test-stage2
-
-# Stage 2
-
-stage2/chibicc: $(OBJS:%=stage2/%)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-
-stage2/%.o: chibicc %.c
-	mkdir -p stage2/test
-	./chibicc -c -o $(@D)/$*.o $*.c
-
-stage2/test/%.exe: stage2/chibicc test/%.c
-	mkdir -p stage2/test
-	./stage2/chibicc -Iinclude -Itest -c -o stage2/test/$*.o test/$*.c
-	$(CC) -pthread -o $@ stage2/test/$*.o -xc test/common
-
-test-stage2: $(TESTS:test/%=stage2/test/%)
-	for i in $^; do echo $$i; ./$$i || exit 1; echo; done
-	test/driver.sh ./stage2/chibicc
-
-# Misc.
+docs:
+	@headerdoc2html src/jcc.h -o docs/; \
+	mv docs/jcc_h/*.html docs/; \
+	rm -rf docs/jcc_h
 
 clean:
-	rm -rf chibicc tmp* $(TESTS) test/*.s test/*.exe stage2
-	find * -type f '(' -name '*~' -o -name '*.o' ')' -exec rm {} ';'
+	@$(RM) -f $(EXE_OUT) $(LIB_OUT)
 
-.PHONY: test clean test-stage2
+.PHONY: default test clean docs all
