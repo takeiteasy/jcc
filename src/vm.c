@@ -743,6 +743,12 @@ void cc_destroy(JCC *vm) {
             free(vm->ffi_table[i].name);
         free(vm->ffi_table);
     }
+    
+    // Free error message buffer if set
+    if (vm->error_message) {
+        free(vm->error_message);
+        vm->error_message = NULL;
+    }
 }
 
 void cc_include(JCC *vm, const char *path) {
