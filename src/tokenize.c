@@ -22,12 +22,13 @@
 #include "jcc.h"
 #include "./internal.h"
 
-// Reports an error and exit.
+// Reports an error and exit (or longjmp if error handling is enabled).
 void error(char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);
     fprintf(stderr, "\n");
+    va_end(ap);
     exit(1);
 }
 
@@ -47,7 +48,37 @@ static void verror_at(JCC *vm,
     while (*end && *end != '\n')
         end++;
 
-    // Print out the line.
+    // If error handling is enabled, save error to buffer
+    if (vm && vm->error_jmp_buf) {
+        // Build error message into a buffer
+        char *msg = malloc(4096);  // Allocate space for error message
+        if (!msg) {
+            fprintf(stderr, "Failed to allocate error message buffer\n");
+            exit(1);
+        }
+        
+        // Format the error message
+        int pos = snprintf(msg, 4096, "%s:%d: ", filename, line_no);
+        pos += snprintf(msg + pos, 4096 - pos, "%.*s\n", (int)(end - line), line);
+        
+        int indent = strlen(filename) + snprintf(NULL, 0, ":%d: ", line_no);
+        int col_offset = display_width(vm, line, loc - line) + indent;
+        pos += snprintf(msg + pos, 4096 - pos, "%*s^ ", col_offset, "");
+        
+        va_list ap_copy;
+        va_copy(ap_copy, ap);
+        vsnprintf(msg + pos, 4096 - pos, fmt, ap_copy);
+        va_end(ap_copy);
+        
+        // Free any previous error message
+        if (vm->error_message) {
+            free(vm->error_message);
+        }
+        vm->error_message = msg;
+        return;  // Don't print to stderr or exit
+    }
+
+    // Normal mode: print to stderr
     int indent = fprintf(stderr, "%s:%d: ", filename, line_no);
     fprintf(stderr, "%.*s\n", (int)(end - line), line);
 
@@ -69,6 +100,12 @@ void error_at(JCC *vm, char *loc, char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
     verror_at(vm, vm->current_file->name, vm->current_file->contents, line_no, loc, fmt, ap);
+    va_end(ap);
+    
+    // Use longjmp if error handling is enabled
+    if (vm && vm->error_jmp_buf) {
+        longjmp(*vm->error_jmp_buf, 1);
+    }
     exit(1);
 }
 
@@ -76,6 +113,12 @@ void error_tok(JCC *vm, Token *tok, char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
     verror_at(vm, tok->file->name, tok->file->contents, tok->line_no, tok->loc, fmt, ap);
+    va_end(ap);
+    
+    // Use longjmp if error handling is enabled
+    if (vm && vm->error_jmp_buf) {
+        longjmp(*vm->error_jmp_buf, 1);
+    }
     exit(1);
 }
 

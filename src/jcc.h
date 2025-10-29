@@ -25,6 +25,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <setjmp.h>
 #include <errno.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -791,6 +792,10 @@ struct JCC {
     // Linked programs for extern offset propagation
     Obj **link_progs;                 // Array of original program lists
     int link_prog_count;               // Number of programs
+
+    // Error handling (setjmp/longjmp for exception-like behavior)
+    jmp_buf *error_jmp_buf;            // Jump buffer for error handling (NULL = use exit())
+    char *error_message;               // Last error message (when using longjmp)
 };
 
 /*!
