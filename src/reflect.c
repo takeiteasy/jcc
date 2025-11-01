@@ -1,5 +1,5 @@
 /*
- KRT: K Runtime Library
+ JCC: JIT C Compiler
 
  Copyright (C) 2025 George Watson
 
