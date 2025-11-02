@@ -853,3 +853,63 @@ Token *tokenize_file(JCC *vm, char *path) {
 
     return tokenize(vm, file);
 }
+
+// Output preprocessed tokens as source code (for -E flag)
+void cc_output_preprocessed(FILE *f, Token *tok) {
+    if (!f || !tok)
+        return;
+    
+    int at_bol = 1;
+    
+    for (Token *t = tok; t && t->kind != TK_EOF; t = t->next) {
+        // Handle line breaks
+        if (at_bol && !t->at_bol) {
+            // Continue on same line
+        } else if (t->at_bol && !at_bol) {
+            fprintf(f, "\n");
+        }
+        at_bol = t->at_bol;
+        
+        // Handle spacing
+        if (t->has_space && !at_bol)
+            fprintf(f, " ");
+        
+        // Output token based on kind
+        switch (t->kind) {
+            case TK_IDENT:
+            case TK_PP_NUM:
+                fprintf(f, "%.*s", t->len, t->loc);
+                break;
+                
+            case TK_NUM:
+                // For numeric literals, output the original text
+                if (t->ty && is_flonum(t->ty)) {
+                    fprintf(f, "%.*s", t->len, t->loc);
+                } else {
+                    fprintf(f, "%.*s", t->len, t->loc);
+                }
+                break;
+                
+            case TK_STR:
+                // String literals: output with quotes
+                fprintf(f, "%.*s", t->len, t->loc);
+                break;
+                
+            case TK_KEYWORD:
+                fprintf(f, "%.*s", t->len, t->loc);
+                break;
+                
+            case TK_EOF:
+                break;
+                
+            default:
+                // For all other tokens (operators, punctuation, etc.)
+                fprintf(f, "%.*s", t->len, t->loc);
+                break;
+        }
+        
+        at_bol = 0;
+    }
+    
+    fprintf(f, "\n");
+}

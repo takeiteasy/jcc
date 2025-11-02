@@ -56,6 +56,7 @@ File *new_file(char *name, int file_no, char *contents);
 Token *tokenize_string_literal(JCC *vm, Token *tok, Type *basety);
 Token *tokenize(JCC *vm, File *file);
 Token *tokenize_file(JCC *vm, char *filename);
+void cc_output_preprocessed(FILE *f, Token *tok);
 
 #define unreachable() \
     error("internal error at %s:%d", __FILE__, __LINE__)
@@ -190,3 +191,27 @@ void debugger_print_registers(JCC *vm);
 void debugger_print_stack(JCC *vm, int count);
 void debugger_disassemble_current(JCC *vm);
 int debugger_run(JCC *vm, int argc, char **argv);
+
+//
+// pragma.c (pragma macro system)
+//
+
+typedef struct PragmaMacro PragmaMacro;
+struct PragmaMacro {
+    char *name;              // Function name
+    Token *body_tokens;      // Original token stream for function body
+    void *compiled_fn;       // Compiled function pointer (returns Node*)
+    JCC *macro_vm;           // VM instance for this macro
+    PragmaMacro *next;       // Next macro in list
+};
+
+void compile_pragma_macros(JCC *vm);
+PragmaMacro *find_pragma_macro(JCC *vm, const char *name);
+Node *execute_pragma_macro(JCC *vm, PragmaMacro *pm, Node **args, int arg_count);
+Token *expand_pragma_macro_calls(JCC *vm, Token *tok);
+
+//
+// serialize.c (AST to source serialization)
+//
+
+char *serialize_node_to_source(JCC *vm, Node *node);

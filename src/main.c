@@ -18,6 +18,7 @@
 */
 
 #include "jcc.h"
+#include "./internal.h"
 #include <getopt.h>
 
 static void usage(const char *argv0, int exit_code) {
@@ -31,6 +32,7 @@ static void usage(const char *argv0, int exit_code) {
     printf("\t-U <macro>          Undefine a macro\n");
     printf("\t-a/--ast            Dump AST (TODO)\n");
     printf("\t-P/--print-tokens   Print preprocessed tokens to stdout\n");
+    printf("\t-E/--preprocess     Output preprocessed source code (traditional C -E)\n");
     printf("\t-X/--no-preprocess  Disable preprocessing step\n");
     printf("\t-S/--no-stdlib      Do not link standard library\n");
     printf("\t-o/--out <file>     Dump bytecode to <file> (no execution)\n");
@@ -146,6 +148,7 @@ int main(int argc, const char* argv[]) {
     int enable_memory_leak_detection = 0;
     int enable_stack_instrumentation = 0;
     int print_tokens = 0; // -P
+    int preprocess_only = 0; // -E
     int skip_preprocess = 0; // -X
     int skip_stdlib = 0; // -S
 
@@ -158,6 +161,7 @@ int main(int argc, const char* argv[]) {
         {"verbose", no_argument, 0, 'v'},
         {"ast", no_argument, 0, 'a'},
         {"print-tokens", no_argument, 0, 'P'},
+        {"preprocess", no_argument, 0, 'E'},
         {"no-preprocess", no_argument, 0, 'X'},
         {"no-stdlib", no_argument, 0, 'S'},
         {"debug", no_argument, 0, 'g'},
@@ -176,7 +180,7 @@ int main(int argc, const char* argv[]) {
         {0, 0, 0, 0}
     };
 
-    const char *optstring = "haI:D:U:o:vgbftzskpliPX";
+    const char *optstring = "haI:D:U:o:vgbftzskpliPEXS";
     int opt;
     opterr = 0; // we'll handle errors explicitly
     while ((opt = getopt_long(argc, (char * const *)argv, optstring, long_options, NULL)) != -1) {
@@ -239,8 +243,14 @@ int main(int argc, const char* argv[]) {
         case 'P':
             print_tokens = 1;
             break;
+        case 'E':
+            preprocess_only = 1;
+            break;
         case 'X':
             skip_preprocess = 1;
+            break;
+        case 'S':
+            skip_stdlib = 1;
             break;
         case '?':
             if (optopt)
@@ -332,6 +342,33 @@ int main(int argc, const char* argv[]) {
             fprintf(stderr, "error: failed to preprocess %s\n", input_files[i]);
             goto BAIL;
         }
+    }
+    
+    // Compile any pragma macros that were extracted during preprocessing
+    if (vm.pragma_macros) {
+        compile_pragma_macros(&vm);
+    }
+
+    // If -E flag is set, output preprocessed source and exit
+    if (preprocess_only) {
+        for (int i = 0; i < input_files_count; i++) {
+            FILE *f = out_file ? fopen(out_file, "w") : stdout;
+            if (!f) {
+                fprintf(stderr, "error: failed to open output file %s\n", out_file);
+                goto BAIL;
+            }
+
+            // Expand pragma macro calls before outputting
+            Token *expanded = input_tokens[i];
+            if (vm.pragma_macros) {
+                expanded = expand_pragma_macro_calls(&vm, input_tokens[i]);
+            }
+
+            cc_output_preprocessed(f, expanded);
+            if (f != stdout)
+                fclose(f);
+        }
+        goto BAIL;
     }
     
     input_progs = calloc(input_files_count, sizeof(Obj*));
