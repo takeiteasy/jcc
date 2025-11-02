@@ -29,9 +29,9 @@ test: clean $(EXE_OUT)
 all: clean $(EXE_OUT) $(LIB_OUT) test docs
 
 docs:
-	@headerdoc2html src/jcc.h -o docs/; \
-	mv docs/jcc_h/*.html docs/; \
-	rm -rf docs/jcc_h
+	@headerdoc2html src/jcc.h include/reflection_api.h -o docs/; \
+	gatherheaderdoc docs/; \
+	mv docs/masterTOC.html docs/index.html
 
 clean:
 	@$(RM) -f $(EXE_OUT) $(LIB_OUT)

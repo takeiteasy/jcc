@@ -167,6 +167,37 @@ int main(int argc, char **argv) {
 }
 ```
 
+## Pragma Macros
+
+Pragma macros are a feature that allows you to define macros that are expanded at compile time. They are defined using the `#pragma macro` directive. This is a wip and may change in the future.
+
+```c
+#pragma macro
+long make_5() {
+    return AST_INT_LITERAL(5);
+}
+
+int main() {
+    int a = make_5();
+    if (a != 5)
+        return 1;  // Test failed
+    return 0;  // Test passed
+}
+```
+
+This will expand to:
+
+```c
+int main() {
+    int a = 5;
+    if (a != 5)
+        return 1;
+    return 0;  // Test passed (obviously)
+}
+```
+
+Notice the `make_5()` function is not in the expanded code, and the call replaced by `5`
+
 ## TODO
 
 ### C11 Features

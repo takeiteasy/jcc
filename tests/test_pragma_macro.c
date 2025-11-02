@@ -1,8 +1,10 @@
 // Test pragma macro system - simple make_5 example
+// Note: pragma_api.h is automatically included for all pragma macros
+// Note: __VM is a builtin (like stdin/stdout) - no vm parameter needed!
 
 #pragma macro
-long make_5(long vm) {
-    return ast_int_literal(vm, 5);
+long make_5() {
+    return AST_INT_LITERAL(5);
 }
 
 int main() {
