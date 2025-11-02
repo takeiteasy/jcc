@@ -711,6 +711,36 @@ void gen_expr(JCC *vm, Node *node) {
                 return;
             }
 
+            // Check if this is setjmp or longjmp - these are VM builtins
+            if (node->lhs->kind == ND_VAR && node->lhs->var == vm->builtin_setjmp) {
+                // setjmp(jmp_buf env) - save execution context
+                if (!node->args) {
+                    error_tok(vm, node->tok, "setjmp requires a jmp_buf argument");
+                }
+                // Evaluate jmp_buf address (it's an array, so decays to pointer)
+                gen_expr(vm, node->args);
+                // Don't push - SETJMP reads from ax directly
+                emit(vm, SETJMP);  // Save context, returns 0 in ax
+                // Result (0 or longjmp value) is in ax
+                return;
+            }
+
+            if (node->lhs->kind == ND_VAR && node->lhs->var == vm->builtin_longjmp) {
+                // longjmp(jmp_buf env, int val) - restore execution context
+                // Arguments: env, val
+                if (!node->args || !node->args->next) {
+                    error_tok(vm, node->tok, "longjmp requires jmp_buf and int arguments");
+                }
+                // Push arguments right-to-left: val, then env
+                gen_expr(vm, node->args->next);  // val
+                emit(vm, PUSH);
+                gen_expr(vm, node->args);        // env (jmp_buf address)
+                emit(vm, PUSH);
+                emit(vm, LONGJMP);  // Restore context and jump
+                // This instruction does not return normally
+                return;
+            }
+
             // Check if this is malloc/free and memory safety is enabled
             // When safety features are active, use VM heap (MALC/MFRE) instead of FFI
             int use_vm_heap = vm->enable_heap_canaries || vm->enable_memory_leak_detection ||
@@ -1471,13 +1501,16 @@ void codegen(JCC *vm, Obj *prog) {
     }
 
     // Find main function and store its address
-    for (Obj *fn = prog; fn; fn = fn->next) {
-        if (fn->is_function && strcmp(fn->name, "main") == 0) {
-            // Store main's address at the start of text segment
-            vm->text_seg[0] = fn->code_addr;
-            return;
+    // (Skip this check when compiling pragma macros)
+    if (!vm->compiling_pragma_macro) {
+        for (Obj *fn = prog; fn; fn = fn->next) {
+            if (fn->is_function && strcmp(fn->name, "main") == 0) {
+                // Store main's address at the start of text segment
+                vm->text_seg[0] = fn->code_addr;
+                return;
+            }
         }
-    }
 
-    error("main() function not found");
+        error("main() function not found");
+    }
 }

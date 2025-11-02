@@ -111,7 +111,7 @@ int vm_eval(JCC *vm) {
                     "MALC ,MFRE ,MCPY ,"
                     "SX1  ,SX2  ,SX4  ,ZX1  ,ZX2  ,ZX4  ,"
                     "FLD  ,FST  ,FADD ,FSUB ,FMUL ,FDIV ,FNEG ,FEQ  ,FNE  ,FLT  ,FLE  ,FGT  ,FGE  ,I2F  ,F2I  ,FPSH ,"
-                    "CALLF,CHKB ,CHKP "[op * 6]);
+                    "CALLF,CHKB ,CHKP ,SETJP,LONJP"[op * 6]);
             if (op <= ADJ || op == CHKB)
                 printf(" %lld\n", *vm->pc);
             else
@@ -697,6 +697,51 @@ int vm_eval(JCC *vm) {
                 }
             }
         }
+
+        else if (op == SETJMP) {
+            // setjmp: Save execution context to jmp_buf and return 0
+            // The jmp_buf address is in ax (not on stack)
+            long long *jmp_buf_ptr = (long long *)vm->ax;
+
+            // Save VM state to jmp_buf
+            // [0] = pc (return address - where longjmp will jump back to)
+            // [1] = sp (stack pointer - current state)
+            // [2] = bp (base pointer)
+            // [3] = stack value at sp (for restoration)
+            // [4] = reserved
+            jmp_buf_ptr[0] = (long long)vm->pc;      // Save return address
+            jmp_buf_ptr[1] = (long long)vm->sp;      // Save stack pointer
+            jmp_buf_ptr[2] = (long long)vm->bp;      // Save base pointer
+            jmp_buf_ptr[3] = *vm->sp;                 // Save value at top of stack!
+            jmp_buf_ptr[4] = 0;                       // Reserved
+
+            // setjmp returns 0 when called directly
+            vm->ax = 0;
+        }
+
+        else if (op == LONGJMP) {
+            // longjmp: Restore execution context from jmp_buf and return val
+            // Stack top-to-bottom: [env, val] (env pushed last, so on top)
+            long long *jmp_buf_ptr = (long long *)*vm->sp++;  // Pop jmp_buf pointer (env)
+            int val = (int)*vm->sp++;                          // Pop return value
+
+            // Check if jmp_buf_ptr is valid
+            if (jmp_buf_ptr == NULL || jmp_buf_ptr == (void*)0) {
+                return -1;
+            }
+
+            // Restore VM state from jmp_buf
+            vm->pc = (long long *)jmp_buf_ptr[0];     // Restore program counter
+            vm->sp = (long long *)jmp_buf_ptr[1];     // Restore stack pointer
+            vm->bp = (long long *)jmp_buf_ptr[2];     // Restore base pointer
+
+            // Restore the stack value that was saved!
+            *vm->sp = jmp_buf_ptr[3];
+
+            // Set return value (convert 0 to 1 per C standard)
+            vm->ax = (val == 0) ? 1 : val;
+        }
+
         else {
             printf("unknown instruction:%d\n", op);
             return -1;

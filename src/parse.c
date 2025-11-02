@@ -3244,6 +3244,44 @@ static Node *primary(JCC *vm, Token **rest, Token *tok) {
     }
 
     if (tok->kind == TK_IDENT) {
+        // Check if this is a pragma macro call
+        if (equal(tok->next, "(")) {
+            char *name = strndup(tok->loc, tok->len);
+            PragmaMacro *pm = find_pragma_macro(vm, name);
+            
+            if (pm) {
+                // This is a pragma macro call - execute it
+                tok = tok->next->next;  // Skip name and '('
+                
+                // Parse arguments
+                Node *args[32];  // Max 32 arguments
+                int arg_count = 0;
+                
+                if (!equal(tok, ")")) {
+                    while (true) {
+                        if (arg_count >= 32)
+                            error_tok(vm, tok, "too many arguments to pragma macro");
+                        args[arg_count++] = assign(vm, &tok, tok);
+                        if (equal(tok, ")"))
+                            break;
+                        tok = skip(vm, tok, ",");
+                    }
+                }
+                
+                *rest = tok->next;  // Skip ')'
+                
+                // Execute the pragma macro
+                Node *generated = execute_pragma_macro(vm, pm, args, arg_count);
+                if (!generated) {
+                    error_tok(vm, start, "pragma macro '%s' failed to generate node", pm->name);
+                }
+                
+                free(name);
+                return generated;
+            }
+            free(name);
+        }
+        
         // Variable or enum constant
         VarScope *sc = find_var(vm, tok);
         *rest = tok->next;
@@ -3494,10 +3532,25 @@ static void scan_globals(JCC *vm) {
 }
 
 static void declare_builtin_functions(JCC *vm) {
+    // alloca(size) -> void*
     Type *ty = func_type(pointer_to(ty_void));
     ty->params = copy_type(ty_int);
     vm->builtin_alloca = new_gvar(vm, "alloca", ty);
     vm->builtin_alloca->is_definition = false;
+
+    // setjmp(jmp_buf) -> int
+    // jmp_buf is an array type, but we'll treat it as a pointer for now
+    Type *setjmp_ty = func_type(ty_int);
+    setjmp_ty->params = pointer_to(ty_long);  // jmp_buf is long long[5]
+    vm->builtin_setjmp = new_gvar(vm, "setjmp", setjmp_ty);
+    vm->builtin_setjmp->is_definition = false;
+
+    // longjmp(jmp_buf, int) -> void (noreturn)
+    Type *longjmp_ty = func_type(ty_void);
+    longjmp_ty->params = pointer_to(ty_long);
+    longjmp_ty->params->next = copy_type(ty_int);
+    vm->builtin_longjmp = new_gvar(vm, "longjmp", longjmp_ty);
+    vm->builtin_longjmp->is_definition = false;
 }
 
 // program = (typedef | function-definition | global-variable)*
