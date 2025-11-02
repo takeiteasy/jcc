@@ -22,8 +22,20 @@
 
 #include "./internal.h"
 
+// Global context: current parent VM for pragma macro execution
+// This is set before calling a pragma macro and cleared after.
+// Since pragma macro calls are synchronous and don't nest, this is safe.
+static JCC *current_pragma_parent_vm = NULL;
+
+// Builtin function to get the current VM context (like stdin/stdout)
+JCC* __jcc_get_vm(void) {
+    return current_pragma_parent_vm;
+}
+
 // Register AST builder API functions as FFI functions in the macro VM
 static void register_ast_api(JCC *macro_vm, JCC *parent_vm) {
+    // Builtin VM accessor (like stdin/stdout in stdio.h)
+    cc_register_cfunc(macro_vm, "__jcc_get_vm", (void*)__jcc_get_vm, 0, 0);
     // High-level API - Type lookup
     cc_register_cfunc(macro_vm, "ast_get_type", (void*)ast_get_type, 2, 0);
     cc_register_cfunc(macro_vm, "ast_find_type", (void*)ast_find_type, 2, 0);
@@ -209,40 +221,92 @@ Token *expand_pragma_macro_calls(JCC *vm, Token *tok) {
 
             if (pm) {
                 // Found a pragma macro call
+                if (vm->debug_vm)
+                    printf("Expanding pragma macro '%s' in token stream...\n", name);
+
                 Token *call_start = t;
                 t = t->next->next;  // Skip identifier and '('
 
-                // For now, only handle no-argument calls
-                // TODO: Handle arguments
+                // Parse arguments
+                Node **args = NULL;
+                int arg_count = 0;
+                int capacity = 0;
+
+                // Handle empty argument list
                 if (equal(t, ")")) {
-                    // Execute the macro with no arguments
-                    Node *result = execute_pragma_macro(vm, pm, NULL, 0);
+                    t = t->next;  // Skip ')'
+                } else {
+                    // Parse arguments until we find the closing ')'
+                    while (!equal(t, ")") && t->kind != TK_EOF) {
+                        // Find the end of this argument by tracking parenthesis depth
+                        Token *arg_start = t;
+                        int depth = 0;
+                        Token *arg_end = t;
 
-                    if (result) {
-                        // Serialize the result AST to source text
-                        char *serialized = serialize_node_to_source(vm, result);
-
-                        if (serialized && serialized[0]) {
-                            // Create a new token for the serialized output
-                            Token *new_tok = calloc(1, sizeof(Token));
-                            new_tok->kind = TK_IDENT;  // Will be parsed later
-                            new_tok->loc = serialized;
-                            new_tok->len = strlen(serialized);
-                            new_tok->has_space = call_start->has_space;
-                            new_tok->at_bol = call_start->at_bol;
-
-                            // Add to output list
-                            cur->next = new_tok;
-                            cur = new_tok;
+                        while (arg_end && arg_end->kind != TK_EOF) {
+                            if (equal(arg_end, "("))
+                                depth++;
+                            else if (equal(arg_end, ")")) {
+                                if (depth == 0)
+                                    break;  // Found closing paren of call
+                                depth--;
+                            } else if (equal(arg_end, ",") && depth == 0) {
+                                break;  // Found argument separator
+                            }
+                            arg_end = arg_end->next;
                         }
-                        // Note: serialized string is now owned by the token
+
+                        // Parse this argument expression (use assign to stop at commas)
+                        Token *arg_rest;
+                        Node *arg = cc_parse_assign(vm, &arg_rest, arg_start);
+
+                        if (vm->debug_vm)
+                            printf("  Parsed argument %d for '%s': kind=%d\n", arg_count, name, arg ? arg->kind : -1);
+
+                        // Add to args array
+                        if (arg_count >= capacity) {
+                            capacity = capacity == 0 ? 4 : capacity * 2;
+                            args = realloc(args, capacity * sizeof(Node*));
+                        }
+                        args[arg_count++] = arg;
+
+                        // Move past this argument
+                        t = arg_rest;
+                        if (equal(t, ","))
+                            t = t->next;  // Skip comma
                     }
 
-                    // Skip the ')' token
-                    t = t->next;
-                    free(name);
-                    continue;
+                    if (equal(t, ")"))
+                        t = t->next;  // Skip ')'
                 }
+
+                // Execute the macro
+                Node *result = execute_pragma_macro(vm, pm, args, arg_count);
+
+                if (result) {
+                    // Serialize the result AST to source text
+                    char *serialized = serialize_node_to_source(vm, result);
+
+                    if (serialized && serialized[0]) {
+                        // Create a new token for the serialized output
+                        Token *new_tok = calloc(1, sizeof(Token));
+                        new_tok->kind = TK_IDENT;  // Will be parsed later
+                        new_tok->loc = serialized;
+                        new_tok->len = strlen(serialized);
+                        new_tok->has_space = call_start->has_space;
+                        new_tok->at_bol = call_start->at_bol;
+
+                        // Add to output list
+                        cur->next = new_tok;
+                        cur = new_tok;
+                    }
+                    // Note: serialized string is now owned by the token
+                }
+
+                // Clean up
+                free(args);
+                free(name);
+                continue;
             }
             free(name);
         }
@@ -280,7 +344,10 @@ Node *execute_pragma_macro(JCC *vm, PragmaMacro *pm, Node **args, int arg_count)
 
     // Disable debug output during macro execution (for clean -E output)
     macro_vm->debug_vm = 0;
-    
+
+    // Set the parent VM context so __jcc_get_vm() can access it
+    current_pragma_parent_vm = vm;
+
     // Set up for function call
     // pm->compiled_fn is an offset, need to add text_seg base
     long long func_offset = (long long)pm->compiled_fn;
@@ -288,8 +355,8 @@ Node *execute_pragma_macro(JCC *vm, PragmaMacro *pm, Node **args, int arg_count)
     macro_vm->sp = macro_vm->initial_sp;
     macro_vm->bp = macro_vm->initial_bp;
 
-    // Push the parent VM pointer as first argument (first parameter)
-    *(--macro_vm->sp) = (long long)vm;
+    // Note: We no longer push the parent VM pointer as an argument
+    // Users access it via __VM (which calls __jcc_get_vm())
 
     // Push arguments onto the stack
     for (int i = arg_count - 1; i >= 0; i--) {
@@ -304,17 +371,20 @@ Node *execute_pragma_macro(JCC *vm, PragmaMacro *pm, Node **args, int arg_count)
 
     // Get the returned Node* from ax register
     Node *generated_node = (Node*)(long long)macro_vm->ax;
-    
+
+    // Clear the parent VM context
+    current_pragma_parent_vm = NULL;
+
     // Restore VM state (in case we call again)
     macro_vm->pc = (long long*)saved_pc;
     macro_vm->sp = (long long*)saved_sp;
     macro_vm->bp = (long long*)saved_bp;
     macro_vm->ax = saved_ax;
     macro_vm->debug_vm = saved_debug;
-    
+
     if (vm->debug_vm && generated_node)
         printf("Pragma macro '%s' generated AST node of kind %d\n", pm->name, generated_node->kind);
-    
+
     return generated_node;
 }
 

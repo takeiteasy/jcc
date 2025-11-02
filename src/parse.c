@@ -3609,6 +3609,10 @@ Node *cc_parse_expr(JCC *vm, Token **rest, Token *tok) {
     return expr(vm, rest, tok);
 }
 
+Node *cc_parse_assign(JCC *vm, Token **rest, Token *tok) {
+    return assign(vm, rest, tok);
+}
+
 Node *cc_parse_stmt(JCC *vm, Token **rest, Token *tok) {
     return stmt(vm, rest, tok);
 }

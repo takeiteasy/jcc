@@ -502,9 +502,10 @@ void gen_expr(JCC *vm, Node *node) {
             if (is_flonum(node->lhs->ty)) {
                 emit(vm, FNEG);
             } else {
-                emit_with_arg(vm, IMM, -1);
-                emit(vm, PUSH);
-                emit(vm, MUL);
+                // Push operand first, then multiply by -1
+                emit(vm, PUSH);              // Push operand onto stack
+                emit_with_arg(vm, IMM, -1);  // Load -1 into ax
+                emit(vm, MUL);               // Pop operand, compute operand * -1
             }
             return;
 

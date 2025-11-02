@@ -21,6 +21,7 @@
 
 #pragma once
 #include "jcc.h"
+#include "../include/reflection_api.h"
 #ifndef __has_include
 #define __has_include(x) 0
 #endif

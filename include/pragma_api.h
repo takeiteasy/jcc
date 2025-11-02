@@ -1,24 +1,63 @@
+/*
+ JCC: JIT C Compiler - Pragma Macro Convenience API
+
+ Copyright (C) 2025 George Watson
+
+ This program is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+
+ This program is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+
+ You should have received a copy of the GNU General Public License
+ along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
 /*!
  * @file pragma_api.h
- * @brief AST Builder API for JCC Pragma Macros
+ * @brief Convenience API for JCC Pragma Macros
  *
- * This header provides a comprehensive API for building Abstract Syntax Trees
- * programmatically within #pragma macro functions. It includes functions for:
- * - Type introspection and lookup
- * - Enum reflection
- * - Struct/union introspection
- * - AST node construction (literals, expressions, statements)
- * - Control flow builders (switch, return, if, while, for)
- * - Function and struct construction
+ * This header provides uppercase convenience macros that automatically
+ * pass the VM parameter, making pragma macro code cleaner and easier to write.
  *
- * All functions that accept a JCC* parameter expect the first parameter to be
- * the VM instance passed to your pragma macro function.
+ * ## Magic __VM Builtin
  *
- * @example
+ * All convenience macros use the `__VM` macro which expands to __jcc_get_vm(),
+ * a builtin function that returns the current VM instance. This works like
+ * stdin/stdout/stderr - no parameter passing required!
+ *
  * @code
  * #pragma macro
- * long make_int_literal(long vm, long value) {
- *     return ast_int_literal(vm, value);
+ * long make_5() {
+ *     return AST_INT_LITERAL(5);  // __VM is automatically available
+ * }
+ * @endcode
+ *
+ * The VM pointer is automatically set before your pragma macro executes and
+ * cleared when it returns, so you don't need to pass it as a parameter.
+ *
+ * ## Usage Example
+ *
+ * @code
+ * // Note: pragma_api.h is automatically included for pragma macros
+ *
+ * #pragma macro
+ * long make_adder(long a, long b) {
+ *     // No vm parameter needed! __VM is automatically available
+ *     // Create: return a + b;
+ *     Node *left = AST_VAR_REF("a");
+ *     Node *right = AST_VAR_REF("b");
+ *     Node *sum = AST_BINARY(ND_ADD, left, right);
+ *     return AST_RETURN(sum);
+ * }
+ *
+ * int main() {
+ *     int result = make_adder(3, 5);  // Returns 8
+ *     return result;
  * }
  * @endcode
  */
@@ -26,213 +65,243 @@
 #ifndef PRAGMA_API_H
 #define PRAGMA_API_H
 
+typedef struct JCC JCC;
+typedef struct Type Type;
+typedef struct Node Node;
+typedef struct Obj Obj;
+typedef struct Member Member;
+typedef struct EnumConstant EnumConstant;
+typedef struct Token Token;
+// Enum typedefs (should match jcc.h)
+typedef enum {
+    TY_VOID, TY_BOOL, TY_CHAR, TY_SHORT, TY_INT, TY_LONG,
+    TY_FLOAT, TY_DOUBLE, TY_LDOUBLE, TY_ENUM, TY_PTR, TY_FUNC,
+    TY_ARRAY, TY_VLA, TY_STRUCT, TY_UNION
+} TypeKind;
+
+typedef enum {
+    ND_NULL_EXPR, ND_ADD, ND_SUB, ND_MUL, ND_DIV, ND_NEG, ND_MOD,
+    ND_BITAND, ND_BITOR, ND_BITXOR, ND_SHL, ND_SHR,
+    ND_EQ, ND_NE, ND_LT, ND_LE, ND_ASSIGN, ND_COND, ND_COMMA,
+    ND_MEMBER, ND_ADDR, ND_DEREF, ND_NOT, ND_BITNOT,
+    ND_LOGAND, ND_LOGOR, ND_RETURN, ND_IF, ND_FOR, ND_DO,
+    ND_SWITCH, ND_CASE, ND_BLOCK, ND_GOTO, ND_GOTO_EXPR,
+    ND_LABEL, ND_LABEL_VAL, ND_FUNCALL, ND_EXPR_STMT,
+    ND_STMT_EXPR, ND_VAR, ND_VLA_PTR, ND_NUM, ND_CAST,
+    ND_MEMZERO, ND_ASM, ND_CAS, ND_EXCH
+} NodeKind;
+
+#include "reflection_api.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// Forward declarations for opaque types
-// Note: These types are defined in the JCC internal headers
-// We only need to forward-declare them for the function signatures
-typedef long JCC;
-typedef long Type;
-typedef long Node;
-typedef long Obj;
-typedef long Member;
-typedef long EnumConstant;
-typedef long Token;
-
-// Type Lookup and Introspection
+// ============================================================================
+// Magic __VM Builtin
 // ============================================================================
 
 /*!
- * @function ast_get_type
- * @abstract Find a type by name (high-level wrapper)
- * @param vm The JCC VM instance
- * @param name Name of the type to find (e.g., "int", "struct Point")
- * @return Type pointer or NULL if not found
+ * @function __jcc_get_vm
+ * @abstract Builtin function that returns the current parent VM context
+ * @discussion This works like stdin/stdout/stderr - it's a function that
+ *             returns a pointer to the current VM instance being compiled.
+ *             The VM pointer is set before calling a pragma macro and cleared
+ *             after it returns. Since pragma macro calls are synchronous and
+ *             don't nest, this is thread-safe within a single compilation.
+ * @return Pointer to the current JCC VM instance
  */
-Type *ast_get_type(JCC *vm, const char *name);
+extern JCC* __jcc_get_vm(void);
 
 /*!
- * @function ast_find_type
- * @abstract Find a type by name in the current scope
- * @param vm The JCC VM instance
- * @param name Name of the type to find
- * @return Type pointer or NULL if not found
+ * @define __VM
+ * @abstract Magic macro that references the VM instance in pragma macros
+ * @discussion Expands to __jcc_get_vm(), which returns the current parent VM.
+ *             This is a builtin similar to stdin/stdout/stderr.
+ *             No need to pass vm as a parameter to pragma macro functions!
  */
-Type *ast_find_type(JCC *vm, const char *name);
+#define __VM __jcc_get_vm()
 
-/*!
- * @function ast_type_exists
- * @abstract Check if a type exists by name
- * @param vm The JCC VM instance
- * @param name Type name to check
- * @return true if type exists, false otherwise
- */
-long ast_type_exists(JCC *vm, const char *name);
-
-// High-Level Literal Constructors
+// ============================================================================
+// Type Lookup and Introspection Macros
 // ============================================================================
 
-/*!
- * @function ast_int_literal
- * @abstract Create an integer literal node
- * @param vm The JCC VM instance
- * @param value Integer value
- * @return Node representing the integer literal
- */
-Node *ast_int_literal(JCC *vm, long long value);
+/*! Find a type by name. Returns NULL if not found. */
+#define AST_FIND_TYPE(name) ast_find_type(__VM, name)
 
-/*!
- * @function ast_string_literal
- * @abstract Create a string literal node
- * @param vm The JCC VM instance
- * @param str String value
- * @return Node representing the string literal
- */
-Node *ast_string_literal(JCC *vm, const char *str);
+/*! Check if a type exists by name. */
+#define AST_TYPE_EXISTS(name) ast_type_exists(__VM, name)
 
-/*!
- * @function ast_var_ref
- * @abstract Create a variable reference node
- * @param vm The JCC VM instance
- * @param name Variable name
- * @return Node representing the variable reference
- */
-Node *ast_var_ref(JCC *vm, const char *name);
+/*! Lookup a type by name (high-level wrapper). */
+#define AST_GET_TYPE(name) ast_get_type(__VM, name)
 
-// Enum Reflection (High-Level API)
+// ============================================================================
+// Literal Construction Macros
 // ============================================================================
 
-/*!
- * @function ast_enum_name
- * @abstract Get the name of an enum type
- * @param e Enum type
- * @return Enum name or NULL
- */
-const char *ast_enum_name(Type *e);
+/*! Create an integer literal node. */
+#define AST_INT_LITERAL(val) ast_int_literal(__VM, val)
 
-/*!
- * @function ast_enum_value_count
- * @abstract Get the number of values in an enum
- * @param e Enum type
- * @return Number of enum values
- */
-unsigned long ast_enum_value_count(Type *e);
+/*! Create a string literal node. */
+#define AST_STRING_LITERAL(str) ast_string_literal(__VM, str)
 
-/*!
- * @function ast_enum_value_name
- * @abstract Get the name of an enum value at index
- * @param e Enum type
- * @param index Index of the enum value (0-based)
- * @return Name of the enum value or NULL
- */
-const char *ast_enum_value_name(Type *e, unsigned long index);
+/*! Create a variable reference node. */
+#define AST_VAR_REF(name) ast_var_ref(__VM, name)
 
-/*!
- * @function ast_enum_value
- * @abstract Get the integer value of an enum constant at index
- * @param e Enum type
- * @param index Index of the enum value (0-based)
- * @return Integer value of the enum constant
- */
-long long ast_enum_value(Type *e, unsigned long index);
+/*! Create a numeric literal node (low-level). */
+#define AST_NODE_NUM(val) ast_node_num(__VM, val)
 
-// Control Flow Builders
+/*! Create a floating-point literal node. */
+#define AST_NODE_FLOAT(val) ast_node_float(__VM, val)
+
+/*! Create a string literal node (low-level). */
+#define AST_NODE_STRING(str) ast_node_string(__VM, str)
+
+/*! Create an identifier node. */
+#define AST_NODE_IDENT(name) ast_node_ident(__VM, name)
+
+// ============================================================================
+// Expression Construction Macros
 // ============================================================================
 
-/*!
- * @function ast_switch
- * @abstract Create a switch statement node
- * @param vm The JCC VM instance
- * @param condition Expression to switch on
- * @return Node representing the switch statement
- */
-Node *ast_switch(JCC *vm, Node *condition);
+/*! Create a binary operation node (e.g., ND_ADD, ND_SUB). */
+#define AST_BINARY(op, left, right) ast_node_binary(__VM, op, left, right)
 
-/*!
- * @function ast_switch_add_case
- * @abstract Add a case to a switch statement
- * @param vm The JCC VM instance
- * @param switch_node The switch statement node
- * @param value Case value (integer literal node)
- * @param body Case body (statement node)
- */
-void ast_switch_add_case(JCC *vm, Node *switch_node, Node *value, Node *body);
+/*! Create a unary operation node (e.g., ND_NEG, ND_NOT). */
+#define AST_UNARY(op, operand) ast_node_unary(__VM, op, operand)
 
-/*!
- * @function ast_switch_set_default
- * @abstract Set the default case of a switch statement
- * @param vm The JCC VM instance
- * @param switch_node The switch statement node
- * @param body Default case body (statement node)
- */
-void ast_switch_set_default(JCC *vm, Node *switch_node, Node *body);
+/*! Create a function call node. */
+#define AST_CALL(func_name, args, arg_count) ast_node_call(__VM, func_name, args, arg_count)
 
-/*!
- * @function ast_return
- * @abstract Create a return statement node
- * @param vm The JCC VM instance
- * @param expr Expression to return (or NULL for void return)
- * @return Node representing the return statement
- */
-Node *ast_return(JCC *vm, Node *expr);
+/*! Create a member access node (struct.member or ptr->member). */
+#define AST_MEMBER(object, member_name) ast_node_member(__VM, object, member_name)
 
-// Function Construction
+/*! Create a type cast node. */
+#define AST_CAST(expr, target_type) ast_node_cast(__VM, expr, target_type)
+
+// ============================================================================
+// Statement Construction Macros
 // ============================================================================
 
-/*!
- * @function ast_function
- * @abstract Create a function definition node
- * @param vm The JCC VM instance
- * @param name Function name
- * @param return_type Function return type
- * @return Node representing the function
- */
-Node *ast_function(JCC *vm, const char *name, Type *return_type);
+/*! Create a block (compound statement) node. */
+#define AST_BLOCK(stmts, stmt_count) ast_node_block(__VM, stmts, stmt_count)
 
-/*!
- * @function ast_function_add_param
- * @abstract Add a parameter to a function
- * @param vm The JCC VM instance
- * @param func_node Function node
- * @param name Parameter name
- * @param type Parameter type
- */
-void ast_function_add_param(JCC *vm, Node *func_node, const char *name, Type *type);
+/*! Create a return statement node. */
+#define AST_RETURN(expr) ast_return(__VM, expr)
 
-/*!
- * @function ast_function_set_body
- * @abstract Set the body of a function
- * @param vm The JCC VM instance
- * @param func_node Function node
- * @param body Function body (statement node)
- */
-void ast_function_set_body(JCC *vm, Node *func_node, Node *body);
+/*! Create a switch statement node. */
+#define AST_SWITCH(cond) ast_switch(__VM, cond)
 
-// Struct Construction (Note: Implementation incomplete - use with caution)
+/*! Add a case to a switch statement. */
+#define AST_SWITCH_ADD_CASE(switch_node, value, body) ast_switch_add_case(__VM, switch_node, value, body)
+
+/*! Set the default case of a switch statement. */
+#define AST_SWITCH_SET_DEFAULT(switch_node, body) ast_switch_set_default(__VM, switch_node, body)
+
+// ============================================================================
+// Declaration Construction Macros
 // ============================================================================
 
-/*!
- * @function ast_struct
- * @abstract Create a struct type (placeholder implementation)
- * @param vm The JCC VM instance
- * @param name Struct name
- * @return Node representing the struct type
- * @note Implementation is incomplete
- */
-Node *ast_struct(JCC *vm, const char *name);
+/*! Create a function declaration/definition node. */
+#define AST_FUNCTION(name, return_type) ast_function(__VM, name, return_type)
 
-/*!
- * @function ast_struct_add_field
- * @abstract Add a field to a struct (placeholder implementation)
- * @param vm The JCC VM instance
- * @param struct_node Struct node
- * @param name Field name
- * @param type Field type
- * @note Implementation is incomplete
- */
-void ast_struct_add_field(JCC *vm, Node *struct_node, const char *name, Type *type);
+/*! Add a parameter to a function. */
+#define AST_FUNCTION_ADD_PARAM(func_node, name, type) ast_function_add_param(__VM, func_node, name, type)
+
+/*! Set the body of a function. */
+#define AST_FUNCTION_SET_BODY(func_node, body) ast_function_set_body(__VM, func_node, body)
+
+/*! Create a struct type node. */
+#define AST_STRUCT(name) ast_struct(__VM, name)
+
+/*! Add a field to a struct. */
+#define AST_STRUCT_ADD_FIELD(struct_node, name, type) ast_struct_add_field(__VM, struct_node, name, type)
+
+// ============================================================================
+// Enum Reflection Macros (no VM needed for most)
+// ============================================================================
+
+/*! Get the number of enum constants. */
+#define AST_ENUM_COUNT(enum_type) ast_enum_count(__VM, enum_type)
+
+/*! Get enum constant at index. */
+#define AST_ENUM_AT(enum_type, index) ast_enum_at(__VM, enum_type, index)
+
+/*! Find enum constant by name. */
+#define AST_ENUM_FIND(enum_type, name) ast_enum_find(__VM, enum_type, name)
+
+/*! Get the name of an enum type. */
+#define AST_ENUM_NAME(e) ast_enum_name(e)
+
+/*! Get the number of values in an enum. */
+#define AST_ENUM_VALUE_COUNT(e) ast_enum_value_count(e)
+
+/*! Get the name of an enum value at index. */
+#define AST_ENUM_VALUE_NAME(e, index) ast_enum_value_name(e, index)
+
+/*! Get the integer value of an enum constant at index. */
+#define AST_ENUM_VALUE(e, index) ast_enum_value(e, index)
+
+/*! Get enum constant name. */
+#define AST_ENUM_CONSTANT_NAME(ec) ast_enum_constant_name(ec)
+
+/*! Get enum constant value. */
+#define AST_ENUM_CONSTANT_VALUE(ec) ast_enum_constant_value(ec)
+
+// ============================================================================
+// Struct/Union Member Introspection Macros
+// ============================================================================
+
+/*! Get the number of struct/union members. */
+#define AST_STRUCT_MEMBER_COUNT(struct_type) ast_struct_member_count(__VM, struct_type)
+
+/*! Get member at index. */
+#define AST_STRUCT_MEMBER_AT(struct_type, index) ast_struct_member_at(__VM, struct_type, index)
+
+/*! Find member by name. */
+#define AST_STRUCT_MEMBER_FIND(struct_type, name) ast_struct_member_find(__VM, struct_type, name)
+
+/*! Get member name. */
+#define AST_MEMBER_NAME(m) ast_member_name(m)
+
+/*! Get member type. */
+#define AST_MEMBER_TYPE(m) ast_member_type(m)
+
+/*! Get member offset. */
+#define AST_MEMBER_OFFSET(m) ast_member_offset(m)
+
+/*! Check if member is a bitfield. */
+#define AST_MEMBER_IS_BITFIELD(m) ast_member_is_bitfield(m)
+
+/*! Get bitfield width. */
+#define AST_MEMBER_BITFIELD_WIDTH(m) ast_member_bitfield_width(m)
+
+// ============================================================================
+// Global Symbol Introspection Macros
+// ============================================================================
+
+/*! Find a global symbol by name. */
+#define AST_FIND_GLOBAL(name) ast_find_global(__VM, name)
+
+/*! Get the total number of global symbols. */
+#define AST_GLOBAL_COUNT() ast_global_count(__VM)
+
+/*! Get global symbol at index. */
+#define AST_GLOBAL_AT(index) ast_global_at(__VM, index)
+
+// ============================================================================
+// Type Construction Macros (no VM needed)
+// ============================================================================
+
+/*! Create a pointer type. */
+#define AST_MAKE_POINTER(base) ast_make_pointer(base)
+
+/*! Create an array type. */
+#define AST_MAKE_ARRAY(base, length) ast_make_array(base, length)
+
+/*! Create a function type. */
+#define AST_MAKE_FUNCTION(return_type, param_types, param_count, is_variadic) \
+    ast_make_function(return_type, param_types, param_count, is_variadic)
 
 #ifdef __cplusplus
 }
