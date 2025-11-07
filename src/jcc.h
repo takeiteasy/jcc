@@ -39,6 +39,12 @@
 #include <windows.h>
 #else
 #include <unistd.h>
+#include <dlfcn.h>
+#endif
+
+// libffi support for variadic foreign functions
+#ifdef JCC_HAS_FFI
+#include <ffi.h>
 #endif
 
 #ifdef __cplusplus
@@ -574,14 +580,24 @@ typedef void (*JCCAsmCallback)(JCC *vm, const char *asm_str, void *user_data);
  @abstract Represents a registered foreign (native C) function callable from VM code.
  @field name Function name (for lookup during compilation).
  @field func_ptr Pointer to the native C function.
- @field num_args Number of arguments the function expects.
+ @field num_args Number of arguments the function expects (total for non-variadic, fixed args for variadic).
  @field returns_double True if function returns double, false if returns long long.
+ @field is_variadic True if function is variadic (accepts ... arguments).
+ @field num_fixed_args For variadic functions: number of fixed args before ... (e.g., printf has 1: format string).
+ @field cif libffi call interface (only when JCC_HAS_FFI is defined).
+ @field arg_types Array of argument types for libffi (NULL if not prepared, only when JCC_HAS_FFI is defined).
 */
 typedef struct ForeignFunc {
     char *name;
     void *func_ptr;
     int num_args;
     int returns_double;
+    int is_variadic;        // 1 if function is variadic (e.g., printf), 0 otherwise
+    int num_fixed_args;     // For variadic functions, number of fixed args (rest are variable)
+#ifdef JCC_HAS_FFI
+    ffi_cif cif;            // libffi call interface
+    ffi_type **arg_types;   // Array of argument types (NULL if not prepared)
+#endif
 } ForeignFunc;
 
 /*!
@@ -753,6 +769,7 @@ struct JCC {
     Obj *builtin_longjmp;
 
     StringArray include_paths;
+    StringArray system_include_paths;  // System header search paths for <...>
 
     // Code generation state
     int label_counter;          // For generating unique labels
@@ -832,10 +849,23 @@ void cc_destroy(JCC *vm);
 /*!
  @function cc_include
  @abstract Add a directory to the compiler's header search paths.
+ @discussion This adds the path to the list of directories searched for
+             "..." includes (quote includes).
  @param vm The JCC instance.
  @param path Filesystem path to add to include search.
 */
 void cc_include(JCC *vm, const char *path);
+
+/*!
+ @function cc_system_include
+ @abstract Add a directory to the compiler's system header search paths.
+ @discussion This adds the path to the list of directories searched for
+             <...> includes (angle bracket includes). System include paths
+             are searched after regular include paths for "..." includes.
+ @param vm The JCC instance.
+ @param path Filesystem path to add to system include search.
+*/
+void cc_system_include(JCC *vm, const char *path);
 
 /*!
  @function cc_define
@@ -878,6 +908,21 @@ void cc_set_asm_callback(JCC *vm, JCCAsmCallback callback, void *user_data);
 void cc_register_cfunc(JCC *vm, const char *name, void *func_ptr, int num_args, int returns_double);
 
 /*!
+ @function cc_register_variadic_cfunc
+ @abstract Register a variadic native C function to be callable from VM code via FFI.
+ @param vm The JCC instance.
+ @param name Function name (must match declarations in C source).
+ @param func_ptr Pointer to the native C variadic function.
+ @param num_fixed_args Number of fixed arguments before the ... (e.g., printf has 1: format string).
+ @param returns_double 1 if function returns double, 0 if returns long long.
+ @discussion This function is only available when JCC_HAS_FFI is defined. When libffi
+             is not available, use fixed-argument wrappers instead. Variadic functions
+             accept a variable number of arguments after the fixed arguments.
+             Example: printf has 1 fixed arg (format), fprintf has 2 (stream, format).
+*/
+void cc_register_variadic_cfunc(JCC *vm, const char *name, void *func_ptr, int num_fixed_args, int returns_double);
+
+/*!
  @function cc_load_stdlib
  @abstract Register all standard library functions available via FFI.
  @param vm The JCC instance.
@@ -893,6 +938,57 @@ void cc_register_cfunc(JCC *vm, const char *name, void *func_ptr, int num_args, 
              manually if you want to reset the FFI registry or initialize it separately.
 */
 void cc_load_stdlib(JCC *vm);
+
+/*!
+ @function cc_dlsym
+ @abstract Update an existing registered FFI function's pointer by name.
+ @param vm The JCC instance.
+ @param name Function name to update.
+ @param func_ptr New function pointer to assign.
+ @param num_args Expected number of arguments (must match registered function).
+ @param returns_double Expected return type (must match registered function).
+ @return 0 on success, -1 on error (function not found or signature mismatch).
+ @discussion This function is useful for updating function pointers after loading
+             a dynamic library, or for redirecting calls to different implementations.
+             The function must already be registered via cc_register_cfunc or
+             cc_register_variadic_cfunc.
+*/
+int cc_dlsym(JCC *vm, const char *name, void *func_ptr, int num_args, int returns_double);
+
+/*!
+ @function cc_dlopen
+ @abstract Load a dynamic library and resolve all registered FFI functions.
+ @param vm The JCC instance.
+ @param lib_path Path to the dynamic library (.so, .dylib, .dll) or NULL for default libraries.
+ @return 0 on success, -1 on error.
+ @discussion This function opens a dynamic library and attempts to resolve all currently
+             registered FFI functions. Functions that cannot be resolved will print warnings
+             but won't fail the entire operation. If lib_path is NULL, the function searches
+             in default system libraries.
+
+             Platform-specific behavior:
+             - Unix: Uses dlopen/dlsym to load .so/.dylib files
+             - Windows: Uses LoadLibrary/GetProcAddress to load .dll files
+
+             The library handle is not closed after loading to keep function pointers valid.
+*/
+int cc_dlopen(JCC *vm, const char *lib_path);
+
+/*!
+ @function cc_load_libc
+ @abstract Load the platform's standard C library and resolve FFI functions.
+ @param vm The JCC instance.
+ @return 0 on success, -1 on error.
+ @discussion This function automatically detects and loads the correct C library for
+             the current platform:
+             - macOS: /usr/lib/libSystem.dylib
+             - Linux: /lib64/libc.so.6 (or /lib/libc.so.6 on 32-bit)
+             - FreeBSD: /lib/libc.so.7
+             - Windows: msvcrt.dll
+             This is useful when you want to load stdlib functions dynamically instead
+             of registering them with explicit function pointers.
+*/
+int cc_load_libc(JCC *vm);
 
 /*!
  @function cc_preprocess

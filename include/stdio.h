@@ -1,9 +1,15 @@
 /*
  * stdio.h - Standard I/O functions for JCC VM
- * 
- * This header provides variadic stdio functions via macros that dispatch to 
- * fixed-argument variants based on argument count. Supports printf, sprintf,
- * fprintf, scanf, sscanf, and fscanf with 0-16 additional arguments.
+ *
+ * This header provides two modes for variadic stdio functions:
+ *
+ * WITH libffi (JCC_HAS_FFI defined):
+ *   - True variadic function declarations (printf, scanf, etc.)
+ *   - Unlimited arguments supported via libffi
+ *
+ * WITHOUT libffi (default):
+ *   - Macro-based dispatch to fixed-argument variants
+ *   - Supports printf, sprintf, fprintf, scanf, sscanf, fscanf with 0-16 additional arguments
  */
 
 #ifndef __STDIO_H
@@ -64,6 +70,27 @@ typedef long fpos_t;
 #define _IOLBF 1
 #define _IONBF 2
 #endif
+
+#ifdef JCC_HAS_FFI
+// ==================================================
+// WITH libffi: True variadic function declarations
+// ==================================================
+
+// Printf family
+extern int printf(const char *fmt, ...);
+extern int fprintf(FILE *stream, const char *fmt, ...);
+extern int sprintf(char *str, const char *fmt, ...);
+extern int snprintf(char *str, size_t size, const char *fmt, ...);
+
+// Scanf family
+extern int scanf(const char *fmt, ...);
+extern int sscanf(const char *str, const char *fmt, ...);
+extern int fscanf(FILE *stream, const char *fmt, ...);
+
+#else
+// ==================================================
+// WITHOUT libffi: Fixed-argument declarations + macros
+// ==================================================
 
 // Printf variants (format + 0-16 args)
 extern int printf0(char *fmt);
@@ -198,16 +225,6 @@ extern int snprintf14(char *str, long size, char *fmt, long a1, long a2, long a3
 extern int snprintf15(char *str, long size, char *fmt, long a1, long a2, long a3, long a4, long a5, long a6, long a7, long a8, long a9, long a10, long a11, long a12, long a13, long a14, long a15);
 extern int snprintf16(char *str, long size, char *fmt, long a1, long a2, long a3, long a4, long a5, long a6, long a7, long a8, long a9, long a10, long a11, long a12, long a13, long a14, long a15, long a16);
 
-// V* variants (take va_list) - Note: va_list manipulation not fully supported in VM
-// These are provided for completeness but may not work as expected
-extern int vprintf(char *fmt, va_list ap);
-extern int vsprintf(char *str, char *fmt, va_list ap);
-extern int vsnprintf(char *str, long size, char *fmt, va_list ap);
-extern int vfprintf(FILE *stream, char *fmt, va_list ap);
-extern int vscanf(char *fmt, va_list ap);
-extern int vsscanf(char *str, char *fmt, va_list ap);
-extern int vfscanf(FILE *stream, char *fmt, va_list ap);
-
 // Argument counting for printf/scanf (format + 0-16 extra args)
 // Counts total args and subtracts 1 to get number of args after format
 #define __PRINTF_NARG(...) __PRINTF_NARG_(__VA_ARGS__, __PRINTF_RSEQ())
@@ -247,6 +264,23 @@ extern int vfscanf(FILE *stream, char *fmt, va_list ap);
 #define fprintf(...) __FPRINTF_DISPATCH(__SPRINTF_NARG(__VA_ARGS__))(__VA_ARGS__)
 #define sscanf(...) __SSCANF_DISPATCH(__SPRINTF_NARG(__VA_ARGS__))(__VA_ARGS__)
 #define fscanf(...) __FSCANF_DISPATCH(__SPRINTF_NARG(__VA_ARGS__))(__VA_ARGS__)
+
+#endif  // JCC_HAS_FFI
+
+// V* variants (take va_list) - Note: va_list manipulation not fully supported in VM
+// These are provided for completeness but may not work as expected
+extern int vprintf(char *fmt, va_list ap);
+extern int vsprintf(char *str, char *fmt, va_list ap);
+extern int vsnprintf(char *str, long size, char *fmt, va_list ap);
+extern int vfprintf(FILE *stream, char *fmt, va_list ap);
+extern int vscanf(char *fmt, va_list ap);
+extern int vsscanf(char *str, char *fmt, va_list ap);
+extern int vfscanf(FILE *stream, char *fmt, va_list ap);
+
+// ==================================================
+// Common non-variadic stdio functions (both modes)
+// ==================================================
+
 
 extern int remove(const char* filename);
 extern int rename(const char* old, const char* new);

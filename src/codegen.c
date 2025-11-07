@@ -819,7 +819,11 @@ void gen_expr(JCC *vm, Node *node) {
                 
                 if (ffi_idx >= 0) {
                     // It's a registered FFI function - use CALLF
-                    emit_with_arg(vm, IMM, ffi_idx);
+                    // For variadic functions, we need to pass the actual argument count
+                    // We'll push the arg count before the function index
+                    emit_with_arg(vm, IMM, nargs);  // Actual argument count
+                    emit(vm, PUSH);                  // Save on stack
+                    emit_with_arg(vm, IMM, ffi_idx); // Function index in ax
                     emit(vm, CALLF);
                     is_ffi_call = true;  // CALLF pops its own arguments
                 } else {

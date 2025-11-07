@@ -689,7 +689,7 @@ static bool file_exists(char *path) {
     return !stat(path, &st);
 }
 
-char *search_include_paths(JCC *vm, char *filename) {
+char *search_include_paths(JCC *vm, char *filename, bool is_system) {
     if (filename[0] == '/')
         return filename;
 
@@ -698,9 +698,13 @@ char *search_include_paths(JCC *vm, char *filename) {
     if (cached)
         return cached;
 
+    // For <...> includes, search system_include_paths
+    // For "..." includes, search include_paths
+    StringArray *paths = is_system ? &vm->system_include_paths : &vm->include_paths;
+
     // Search a file from the include paths.
-    for (int i = 0; i < vm->include_paths.len; i++) {
-        char *path = format("%s/%s", vm->include_paths.data[i], filename);
+    for (int i = 0; i < paths->len; i++) {
+        char *path = format("%s/%s", paths->data[i], filename);
         if (!file_exists(path))
             continue;
         hashmap_put(&cache, filename, path);
@@ -966,7 +970,7 @@ static Token *preprocess2(JCC *vm, Token *tok) {
                 }
             }
 
-            char *path = search_include_paths(vm, filename);
+            char *path = search_include_paths(vm, filename, !is_dquote);
             tok = include_file(vm, tok, path ? path : filename, start->next->next);
             continue;
         }
