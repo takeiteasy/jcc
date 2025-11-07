@@ -21,9 +21,8 @@
 #include "./internal.h"
 
 static void emit(JCC *vm, int instruction) {
-    if (!vm || !vm->text_ptr) {
+    if (!vm || !vm->text_ptr) 
         error("codegen: text segment not initialized");
-    }
     *++vm->text_ptr = instruction;
 }
 
@@ -37,9 +36,8 @@ static void emit_with_arg(JCC *vm, int instruction, long long arg) {
 static void emit_load(JCC *vm, Type *ty, int is_deref) {
     // If UAF detection or bounds checking enabled, check pointer validity before dereferencing
     // Only check on actual dereferences, not when loading pointer values
-    if (is_deref && (vm->enable_uaf_detection || vm->enable_bounds_checks)) {
+    if (is_deref && (vm->enable_uaf_detection || vm->enable_bounds_checks)) 
         emit(vm, CHKP);  // Check that pointer in ax is valid
-    }
 
     if (ty->kind == TY_CHAR) {
         emit(vm, LC);  // 1 byte - loads and sign extends via C semantics

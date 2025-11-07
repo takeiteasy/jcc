@@ -20,21 +20,25 @@
 */
 
 #pragma once
+
 #include "jcc.h"
 #include "../include/reflection_api.h"
+
 #ifndef __has_include
 #define __has_include(x) 0
 #endif
+
 #if __has_include(<stdnoreturn.h>)
 #include <stdnoreturn.h>
 #else
 #define noreturn
 #endif
+
 #ifndef __attribute__
 #define __attribute__(x)
 #endif
 
-#define JCC_MAGIC "JJCC"
+#define JCC_MAGIC "JCC\0"
 #define JCC_VERSION 1
 
 void strarray_push(StringArray *arr, char *s);
@@ -194,17 +198,8 @@ void debugger_disassemble_current(JCC *vm);
 int debugger_run(JCC *vm, int argc, char **argv);
 
 //
-// pragma.c (pragma macro system)
+// pragma.c
 //
-
-typedef struct PragmaMacro PragmaMacro;
-struct PragmaMacro {
-    char *name;              // Function name
-    Token *body_tokens;      // Original token stream for function body
-    void *compiled_fn;       // Compiled function pointer (returns Node*)
-    JCC *macro_vm;           // VM instance for this macro
-    PragmaMacro *next;       // Next macro in list
-};
 
 void compile_pragma_macros(JCC *vm);
 PragmaMacro *find_pragma_macro(JCC *vm, const char *name);
@@ -212,7 +207,15 @@ Node *execute_pragma_macro(JCC *vm, PragmaMacro *pm, Node **args, int arg_count)
 Token *expand_pragma_macro_calls(JCC *vm, Token *tok);
 
 //
-// serialize.c (AST to source serialization)
+// serialize.c
 //
 
 char *serialize_node_to_source(JCC *vm, Node *node);
+
+//
+// json.c
+//
+
+void serialize_type_json(FILE *f, Type *ty, int indent);
+void print_indent(FILE *f, int indent);
+void print_escaped_string(FILE *f, const char *str);

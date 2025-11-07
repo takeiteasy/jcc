@@ -78,8 +78,6 @@ typedef enum {
     // SANP,   // Full pointer sanitizer check (TODO)
     // CHKI,   // Check initialization (TODO)
     // MARKI,  // Mark as initialized (TODO)
-    // ENTER,  // Enter scope (TODO)
-    // EXIT    // Exit scope (TODO)
     // Non-local jump instructions (setjmp/longjmp)
     SETJMP, // Save execution context to jmp_buf, return 0
     LONGJMP // Restore execution context from jmp_buf, return val
@@ -666,6 +664,23 @@ typedef struct Breakpoint {
 } Breakpoint;
 
 /*!
+ @struct PragmaMacro
+ @abstract Represents a pragma macro function.
+ @field name Function name.
+ @field body_tokens Original token stream for function body (from preprocessor).
+ @field compiled_fn Compiled function pointer (returns Node*).
+ @field macro_vm VM instance for this macro (used for recursive macro calls).
+ @field next Pointer to next macro in list.
+*/
+typedef struct PragmaMacro {
+    char *name;               // Function name
+    Token *body_tokens;       // Original token stream for function body
+    void *compiled_fn;        // Compiled function pointer (returns Node*)
+    JCC *macro_vm;            // VM instance for this macro
+    struct PragmaMacro *next; // Next macro in list
+} PragmaMacro;
+
+/*!
  @struct JCC
  @abstract Encapsulates all state for the JCC compiler and virtual
            machine. Instances are independent and support embedding.
@@ -1090,6 +1105,29 @@ int cc_run(JCC *vm, int argc, char **argv);
  @param tok Head of the token stream to print.
 */
 void cc_print_tokens(Token *tok);
+
+/*!
+ @function cc_output_json
+ @abstract Output C header declarations as JSON for FFI wrapper generation.
+ @discussion Serializes function signatures, struct/union definitions, enum
+             declarations, and global variables from the parsed AST to JSON
+             format. The output includes full type information with recursive
+             expansion of pointers, arrays, and aggregate types. Storage class
+             specifiers (static, extern) are included. Function bodies are not
+             serialized - only signatures.
+
+             The JSON output format is:
+             {
+               "functions": [...],
+               "structs": [...],
+               "unions": [...],
+               "enums": [...],
+               "variables": [...]
+             }
+ @param f Output file stream (e.g., stdout or file opened with fopen).
+ @param prog Head of the parsed AST object list (from cc_parse).
+*/
+void cc_output_json(FILE *f, Obj *prog);
 
 /*!
  @function cc_save_bytecode
