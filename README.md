@@ -125,48 +125,6 @@
 
 JCC is single-threaded and does not implement any threading or atomic operations yet.
 
-## Example
-
-```c
-#include "jcc.h"
-#include <stdio.h>
-
-int main(int argc, char **argv) {
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s <file.c>\n", argv[0]);
-        return 1;
-    }
-    
-    // Create VM instance and initialize
-    JCC vm;
-    cc_init(&vm, argc, (const char **)argv);
-    
-    // Add custom include paths
-    cc_include(&vm, "./include");
-    cc_include(&vm, "./lib");
-    
-    // Define macros
-    cc_define(&vm, "VERSION", "\"1.0.0\"");
-    cc_define(&vm, "DEBUG", "1");
-    
-    // Compile
-    Token *tok = cc_preprocess(&vm, argv[1]);
-    Obj *prog = cc_parse(&vm, tok);
-    // Link all programs together
-    // Obj *merged_prog = cc_link_progs(&vm, input_progs, input_files_count);
-    cc_compile(&vm, prog);
-    
-    // Show disassembly
-    cc_disassemble(&vm);
-    
-    // Run + cleanup
-    int exit_code = cc_run(&vm, argc - 1, argv + 1);
-    cc_destroy(&vm);
-    printf("\nProgram exited with code: %d\n", exit_code);
-    return exit_code;
-}
-```
-
 ## Pragma Macros
 
 Pragma macros are a feature that allows you to define macros that are expanded at compile time. They are defined using the `#pragma macro` directive. This is a wip and may change in the future.
@@ -197,6 +155,24 @@ int main() {
 ```
 
 Notice the `make_5()` function is not in the expanded code, and the call replaced by `5`
+
+### JSON Output
+
+Create JSON files from header files containing all functions, structs, unions, enums, and variables. Useful for FFI wrapper generation?
+
+```bash
+$ ./jcc --json -o lib.json lib.h
+```
+
+```json
+{
+    "functions": [...],
+    "structs": [...],
+    "unions": [...],
+    "enums": [...],
+    "variables": [...]
+}
+```
 
 ## TODO
 
@@ -260,6 +236,8 @@ Notice the `make_5()` function is not in the expanded code, and the call replace
 - [ ] `--uninitialized-detection` flag for uninitialized variable detection
 - [ ] `--pointer-sanitizer` flag for full pointer tracking and validation on dereference
 - [ ] `--stack-instrumentation` flag for tracking stack variable lifetimes and accesses
+- [ ] `--ffi-whitelist` flag for whitelisting functions to be exposed to the FFI
+- [ ] `--ffi-blacklist` flag for blacklisting functions from being exposed to the FFI
 
 #### Example Usage
 
@@ -457,7 +435,7 @@ With libffi enabled:
 
 Binary format (little-endian):
 ```
-[Magic: "JJCC" (4 bytes)]
+[Magic: "JCC\0" (4 bytes)]
 [Version: 1 (4 bytes)]
 [Text size: bytes (8 bytes)]
 [Data size: bytes (8 bytes)]

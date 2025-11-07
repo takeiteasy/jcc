@@ -33,6 +33,7 @@ static void usage(const char *argv0, int exit_code) {
     printf("\t-a/--ast            Dump AST (TODO)\n");
     printf("\t-P/--print-tokens   Print preprocessed tokens to stdout\n");
     printf("\t-E/--preprocess     Output preprocessed source code (traditional C -E)\n");
+    printf("\t-j/--json           Output header declarations as JSON\n");
     printf("\t-X/--no-preprocess  Disable preprocessing step\n");
     printf("\t-S/--no-stdlib      Do not link standard library\n");
     printf("\t-o/--out <file>     Dump bytecode to <file> (no execution)\n");
@@ -151,6 +152,7 @@ int main(int argc, const char* argv[]) {
     int preprocess_only = 0; // -E
     int skip_preprocess = 0; // -X
     int skip_stdlib = 0; // -S
+    int output_json = 0; // -j
 
     if (argc <= 1)
         usage(argv[0], 1);
@@ -164,6 +166,7 @@ int main(int argc, const char* argv[]) {
         {"preprocess", no_argument, 0, 'E'},
         {"no-preprocess", no_argument, 0, 'X'},
         {"no-stdlib", no_argument, 0, 'S'},
+        {"json", no_argument, 0, 'j'},
         {"debug", no_argument, 0, 'g'},
         {"enable-bounds-checks", no_argument, 0, 'b'},
         {"enable-uaf-detection", no_argument, 0, 'f'},
@@ -180,7 +183,7 @@ int main(int argc, const char* argv[]) {
         {0, 0, 0, 0}
     };
 
-    const char *optstring = "haI:D:U:o:vgbftzskpliPEXS";
+    const char *optstring = "haI:D:U:o:vgbftzskpliPEXSj";
     int opt;
     opterr = 0; // we'll handle errors explicitly
     while ((opt = getopt_long(argc, (char * const *)argv, optstring, long_options, NULL)) != -1) {
@@ -251,6 +254,9 @@ int main(int argc, const char* argv[]) {
             break;
         case 'S':
             skip_stdlib = 1;
+            break;
+        case 'j':
+            output_json = 1;
             break;
         case '?':
             if (optopt)
@@ -378,6 +384,29 @@ int main(int argc, const char* argv[]) {
             fprintf(stderr, "error: failed to parse %s\n", input_files[i]);
             goto BAIL;
         }
+    }
+
+    // For JSON output, we don't need to link (especially useful for header files without main())
+    if (output_json) {
+        // Link programs, but don't fail if linking fails (e.g., no main() in header file)
+        Obj *merged_prog = cc_link_progs(&vm, input_progs, input_files_count);
+        if (!merged_prog && input_files_count == 1) {
+            // If linking failed and we have a single file, just use that file's AST
+            merged_prog = input_progs[0];
+        } else if (!merged_prog) {
+            fprintf(stderr, "error: failed to link programs for JSON output\n");
+            goto BAIL;
+        }
+
+        FILE *f = out_file ? fopen(out_file, "w") : stdout;
+        if (!f) {
+            fprintf(stderr, "error: failed to open output file %s\n", out_file);
+            goto BAIL;
+        }
+        cc_output_json(f, merged_prog);
+        if (f != stdout)
+            fclose(f);
+        goto BAIL;
     }
 
     // Link all programs together
