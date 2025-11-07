@@ -90,14 +90,14 @@
 
 ### Foreign Function Interface (FFI)
 
-> [!WARNING]
-> Variadic *foreign* functions not supported (see [Variadic Foreign Functions](#variadic-foreign-functions))
-
 - Direct calls to native C standard library via `CALLF` opcode
 - Standard library functions supported (see [Standard Library Support](#standard-library-support))
-- Custom function registration via `cc_register_cfunc()`
-- Variadic functions like `printf` are supported via preprocessor macros + fixed-argument functions
-- Supporting proper variadic foreign functions would require platform-specific calling conventions or dependencies like libffi, which I want to avoid for simplicity and portability
+- Custom function registration via `cc_register_cfunc()` (fixed-arg) and `cc_register_variadic_cfunc()` (variadic)
+- **Optional libffi support** for true variadic foreign functions (`printf`, `scanf`, etc.)
+  - Build with `make JCC_HAS_FFI=1` to enable libffi support
+  - Automatically uses platform-specific calling conventions via libffi
+  - Falls back to macro-based dispatch if libffi is not available
+- Dual-mode operation: works with or without libffi (see [Variadic Foreign Functions](#variadic-foreign-functions))
 
 ### Inline Assembly
 
@@ -402,11 +402,43 @@ Breakpoint hit at PC 0x... (offset: 50)
 ```bash
 make            # Build jcc compiler
 make all        # Build everything (jcc, libjcc.dylib) and run tests
+
+# Optional: Build with libffi support for true variadic foreign functions
+make JCC_HAS_FFI=1
+# or export JCC_HAS_FFI=1 && make
 ```
 
 This produces:
 - `jcc` - Full compiler executable (C source → bytecode → execute)
 - `libjcc.dylib` - Shared library for embedding
+
+### libffi Support
+
+To enable true variadic foreign function support, build with libffi:
+
+**macOS (Homebrew):**
+```bash
+brew install libffi
+make JCC_HAS_FFI=1
+```
+
+**Linux:**
+```bash
+# Debian/Ubuntu
+sudo apt-get install libffi-dev
+
+# Fedora/RHEL
+sudo dnf install libffi-devel
+
+# Then build
+make JCC_HAS_FFI=1
+```
+
+With libffi enabled:
+- Variadic foreign functions (`printf`, `scanf`, `fprintf`, etc.) work with any number of arguments
+- No need for macro-based dispatch
+- Standard headers (`stdio.h`) use real variadic declarations
+- Backward compatible: code written for non-libffi mode still works
 
 ### Compile to Bytecode
 
@@ -461,26 +493,49 @@ JCC includes a **Foreign Function Interface (FFI)** that allows compiled C code 
 
 ### Variadic Foreign Functions
 
+JCC supports variadic foreign functions (`printf`, `scanf`, etc.) in **two modes**:
+
+#### Mode 1: With libffi (Recommended)
+
+Build with `make JCC_HAS_FFI=1` to enable true variadic support:
+
+**How it works:**
+1. Variadic functions are registered with `cc_register_variadic_cfunc()`
+2. At call time, the actual argument count is passed to the `CALLF` opcode
+3. libffi's `ffi_prep_cif_var()` prepares the call interface dynamically
+4. Native function is called with correct platform-specific calling convention
+5. **No limit** on number of arguments (platform-dependent, typically 100+)
+
+**Advantages:**
+- True C variadic functions - no macro magic
+- Standard headers use real `...` syntax: `int printf(const char *fmt, ...);`
+- Works with any number of arguments
+- Fully portable (libffi handles all platforms)
+
+#### Mode 2: Without libffi (Fallback)
+
+When built without libffi, variadic functions use macro-based dispatch:
+
 **How it works:**
 1. `printf(...)` is a preprocessor macro that **counts arguments at compile time**
-2. Macro expands to `printf0`, `printf1`, ... `printf10` based on argument count
+2. Macro expands to `printf0`, `printf1`, ... `printf16` based on argument count
 3. Each `printfN` is a fixed-argument FFI function registered with the VM
 4. The FFI function calls native `printf()` with the exact number of arguments
 
-**Limitation:** Maximum **20 additional arguments** (format string counts as 1, so 19 total arguments max). I think this covers 99% of real-world printf usage and can be increased manually if needed.
+**Limitation:** Maximum **20 additional arguments** (format string counts as 1). This covers 99% of real-world usage and can be increased if needed.
 
-**Why this limitation exists:** 
-- The VM's FFI requires fixed argument counts at function registration
-- True variadic functions use platform-specific calling conventions  
-- This macro-based approach is portable, compile-time, and needs no runtime parsing
-- I want to avoid inline assembly and dependencies (like libffi) and keep it simple
+**Why this mode exists:**
+- Works without external dependencies
+- Portable and simple
+- Compile-time argument counting (no runtime overhead)
+- Useful for embedded environments or when libffi is unavailable
 
 ### Registering Custom Functions
 
-You can register additional native functions using `cc_register_cfunc()`:
+You can register additional native functions using `cc_register_cfunc()` (fixed-arg) or `cc_register_variadic_cfunc()` (variadic):
 
 ```c
-// Example: Register a custom native function
+// Example: Register a custom fixed-argument function
 void my_native_func(int x, double y) {
     printf("Called with: %d, %f\n", x, y);
 }
@@ -488,10 +543,17 @@ void my_native_func(int x, double y) {
 JCC vm;
 cc_init(&vm);
 
-// Register: name, function pointer, arg count, returns_double
+// Register fixed-arg function: name, function pointer, arg count, returns_double
 cc_register_cfunc(&vm, "my_native_func", (void*)my_native_func, 2, 0);
 
-// Now it can be called from C code compiled to VM bytecode
+// Register variadic function (requires libffi, JCC_HAS_FFI=1)
+#ifdef JCC_HAS_FFI
+// Register: name, function pointer, num_fixed_args, returns_double
+cc_register_variadic_cfunc(&vm, "my_printf", (void*)printf, 1, 0);
+// num_fixed_args = 1 (format string is the fixed arg, rest are variadic)
+#endif
+
+// Now they can be called from C code compiled to VM bytecode
 ```
 
 ## LICENSE

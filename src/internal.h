@@ -66,7 +66,7 @@ void cc_output_preprocessed(FILE *f, Token *tok);
 // preprocess.c
 //
 
-char *search_include_paths(JCC *vm, char *filename);
+char *search_include_paths(JCC *vm, char *filename, bool is_system);
 void init_macros(JCC *vm);
 void define_macro(JCC *vm, char *name, char *buf);
 void undef_macro(JCC *vm, char *name);

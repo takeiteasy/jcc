@@ -613,35 +613,131 @@ int vm_eval(JCC *vm) {
 
         else if (op == CALLF) {
             // Foreign function call: ax contains FFI function index
+            // For variadic functions, actual arg count is on stack (pushed by codegen)
             int func_idx = vm->ax;
             if (func_idx < 0 || func_idx >= vm->ffi_count) {
                 printf("error: invalid FFI function index: %d\n", func_idx);
                 return -1;
             }
-            
+
             ForeignFunc *ff = &vm->ffi_table[func_idx];
-            
+
+            // Pop actual argument count from stack (pushed by codegen for all FFI calls)
+            int actual_nargs = (int)*vm->sp++;
+
             if (vm->debug_vm)
-                printf("CALLF: calling %s with %d args\n", ff->name, ff->num_args);
-            
-            // Arguments are on stack in reverse order (arg0 at higher address)
-            // sp[0] is first arg, sp[1] is second arg, etc.
-            long long args[20];  // Support up to 20 arguments (e.g., format + 16 args + extras)
-            if (ff->num_args > 20) {
-                printf("error: FFI function has too many arguments: %d\n", ff->num_args);
+                printf("CALLF: calling %s with %d args (fixed: %d, variadic: %d)\n",
+                       ff->name, actual_nargs, ff->num_fixed_args, ff->is_variadic);
+
+#ifdef JCC_HAS_FFI
+            // libffi implementation - supports variadic functions
+            // For variadic functions, we need to prepare cif dynamically per call
+            // For non-variadic functions, we can cache the cif
+
+            ffi_cif cif;
+            ffi_type **arg_types = NULL;
+            ffi_type *return_type = ff->returns_double ? &ffi_type_double : &ffi_type_sint64;
+
+            if (ff->is_variadic) {
+                // Variadic function - prepare cif dynamically for this specific call
+                // Allocate temporary arg_types array
+                arg_types = malloc(actual_nargs * sizeof(ffi_type *));
+                if (!arg_types) {
+                    printf("error: failed to allocate arg types for variadic FFI\n");
+                    return -1;
+                }
+
+                // All arguments are long long (for integers/pointers)
+                for (int i = 0; i < actual_nargs; i++)
+                    arg_types[i] = &ffi_type_sint64;
+
+                // Prepare variadic cif with actual argument count
+                ffi_status status = ffi_prep_cif_var(&cif, FFI_DEFAULT_ABI, ff->num_fixed_args,
+                                                    actual_nargs, return_type, arg_types);
+                if (status != FFI_OK) {
+                    printf("error: failed to prepare variadic FFI cif (status=%d)\n", status);
+                    free(arg_types);
+                    return -1;
+                }
+            } else {
+                // Non-variadic function - use cached cif or prepare once
+                if (!ff->arg_types) {
+                    // First call - allocate and prepare
+                    ff->arg_types = malloc(actual_nargs * sizeof(ffi_type *));
+                    if (!ff->arg_types) {
+                        printf("error: failed to allocate arg types for FFI\n");
+                        return -1;
+                    }
+
+                    // All arguments are long long (for integers/pointers)
+                    for (int i = 0; i < actual_nargs; i++)
+                        ff->arg_types[i] = &ffi_type_sint64;
+
+                    ffi_status status = ffi_prep_cif(&ff->cif, FFI_DEFAULT_ABI, actual_nargs,
+                                                    return_type, ff->arg_types);
+                    if (status != FFI_OK) {
+                        printf("error: failed to prepare FFI cif (status=%d)\n", status);
+                        return -1;
+                    }
+                }
+                // Use cached cif
+                arg_types = ff->arg_types;
+                memcpy(&cif, &ff->cif, sizeof(ffi_cif));
+            }
+
+            // Pop arguments from stack (they were pushed right-to-left)
+            void *args[actual_nargs];
+            long long arg_values[actual_nargs];
+
+            for (int i = 0; i < actual_nargs; i++) {
+                arg_values[i] = *vm->sp++;
+                args[i] = &arg_values[i];
+                if (vm->debug_vm)
+                    printf("  arg[%d] = 0x%llx (%lld)\n", i, arg_values[i], arg_values[i]);
+            }
+
+            // Call the function using libffi
+            if (ff->returns_double) {
+                double result;
+                ffi_call(&cif, FFI_FN(ff->func_ptr), &result, args);
+                vm->fax = result;
+            } else {
+                long long result;
+                ffi_call(&cif, FFI_FN(ff->func_ptr), &result, args);
+                vm->ax = result;
+            }
+
+            // Free temporary arg_types for variadic functions
+            if (ff->is_variadic && arg_types) {
+                free(arg_types);
+            }
+
+#else
+            // Fallback implementation without libffi - no variadic support
+            // Check for variadic functions
+            if (ff->is_variadic) {
+                printf("error: variadic FFI functions require libffi (build with JCC_HAS_FFI=1)\n");
                 return -1;
             }
-            
+
+            // Arguments are on stack in reverse order (arg0 at higher address)
+            // sp[0] is first arg, sp[1] is second arg, etc.
+            long long args[20];  // Support up to 20 arguments
+            if (actual_nargs > 20) {
+                printf("error: FFI function has too many arguments: %d (max 20 without libffi)\n", actual_nargs);
+                return -1;
+            }
+
             // Pop arguments from stack (they were pushed right-to-left)
-            for (int i = 0; i < ff->num_args; i++) {
+            for (int i = 0; i < actual_nargs; i++) {
                 args[i] = *vm->sp++;
                 if (vm->debug_vm)
                     printf("  arg[%d] = 0x%llx (%lld)\n", i, args[i], args[i]);
             }
-            
+
             // Call the native function based on argument count
             if (ff->returns_double) {
-                switch (ff->num_args) {
+                switch (actual_nargs) {
                     case 0: vm->fax = ((double(*)())ff->func_ptr)(); break;
                     case 1: vm->fax = ((double(*)(long long))ff->func_ptr)(args[0]); break;
                     case 2: vm->fax = ((double(*)(long long,long long))ff->func_ptr)(args[0],args[1]); break;
@@ -664,12 +760,12 @@ int vm_eval(JCC *vm) {
                     case 19: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16],args[17],args[18]); break;
                     case 20: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16],args[17],args[18],args[19]); break;
                     default:
-                        printf("error: unsupported arg count for double return: %d\n", ff->num_args);
+                        printf("error: unsupported arg count for double return: %d\n", actual_nargs);
                         return -1;
                 }
             } else {
                 // Integer/pointer return
-                switch (ff->num_args) {
+                switch (actual_nargs) {
                     case 0: vm->ax = ((long long(*)())ff->func_ptr)(); break;
                     case 1: vm->ax = ((long long(*)(long long))ff->func_ptr)(args[0]); break;
                     case 2: vm->ax = ((long long(*)(long long,long long))ff->func_ptr)(args[0],args[1]); break;
@@ -692,10 +788,11 @@ int vm_eval(JCC *vm) {
                     case 19: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16],args[17],args[18]); break;
                     case 20: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16],args[17],args[18],args[19]); break;
                     default:
-                        printf("error: unsupported arg count for int return: %d\n", ff->num_args);
+                        printf("error: unsupported arg count for int return: %d\n", actual_nargs);
                         return -1;
                 }
             }
+#endif  // JCC_HAS_FFI
         }
 
         else if (op == SETJMP) {
@@ -752,16 +849,25 @@ int vm_eval(JCC *vm) {
 void cc_init(JCC *vm, bool enable_debugger) {
     // Zero-initialize the VM struct
     memset(vm, 0, sizeof(JCC));
-    
+
     // Set defaults
     vm->poolsize = 256 * 1024;  // 256KB default
     vm->debug_vm = 0;
-    
+
     // Return buffer will be allocated in data segment during codegen
     vm->return_buffer_size = 1024;
     vm->return_buffer = NULL;  // Will be set to data segment location
-    
+
     init_macros(vm);
+
+    // Add default system include path for <...> includes
+    cc_system_include(vm, "./include");
+
+    // If VM was built with libffi support, define JCC_HAS_FFI for user code
+#ifdef JCC_HAS_FFI
+    cc_define(vm, "JCC_HAS_FFI", "1");
+#endif
+
     if (enable_debugger) {
         vm->enable_debugger = true;
         debugger_init(vm);
@@ -784,8 +890,13 @@ void cc_destroy(JCC *vm) {
     
     // Free FFI table
     if (vm->ffi_table) {
-        for (int i = 0; i < vm->ffi_count; i++)
+        for (int i = 0; i < vm->ffi_count; i++) {
             free(vm->ffi_table[i].name);
+#ifdef JCC_HAS_FFI
+            if (vm->ffi_table[i].arg_types)
+                free(vm->ffi_table[i].arg_types);
+#endif
+        }
         free(vm->ffi_table);
     }
     
@@ -798,6 +909,10 @@ void cc_destroy(JCC *vm) {
 
 void cc_include(JCC *vm, const char *path) {
     strarray_push(&vm->include_paths, strdup(path));
+}
+
+void cc_system_include(JCC *vm, const char *path) {
+    strarray_push(&vm->system_include_paths, strdup(path));
 }
 
 void cc_define(JCC *vm, char *name, char *buf) {
@@ -818,7 +933,7 @@ void cc_register_cfunc(JCC *vm, const char *name, void *func_ptr, int num_args, 
         error("cc_register_cfunc: vm is NULL");
     if (!name || !func_ptr)
         error("cc_register_cfunc: name or func_ptr is NULL");
-    
+
     // Expand capacity if needed
     if (vm->ffi_count >= vm->ffi_capacity) {
         vm->ffi_capacity = vm->ffi_capacity ? vm->ffi_capacity * 2 : 32;
@@ -826,14 +941,203 @@ void cc_register_cfunc(JCC *vm, const char *name, void *func_ptr, int num_args, 
         if (!vm->ffi_table)
             error("cc_register_cfunc: realloc failed");
     }
-    
-    // Add function to registry
+
+    // Add function to registry (non-variadic)
     vm->ffi_table[vm->ffi_count++] = (ForeignFunc){
         .name = strdup(name),
         .func_ptr = func_ptr,
         .num_args = num_args,
-        .returns_double = returns_double
+        .returns_double = returns_double,
+        .is_variadic = 0,
+        .num_fixed_args = num_args
+#ifdef JCC_HAS_FFI
+        , .arg_types = NULL
+#endif
     };
+}
+
+void cc_register_variadic_cfunc(JCC *vm, const char *name, void *func_ptr, int num_fixed_args, int returns_double) {
+    if (!vm)
+        error("cc_register_variadic_cfunc: vm is NULL");
+    if (!name || !func_ptr)
+        error("cc_register_variadic_cfunc: name or func_ptr is NULL");
+
+#ifndef JCC_HAS_FFI
+    // Variadic functions require libffi
+    error("cc_register_variadic_cfunc: variadic FFI functions require libffi (build with JCC_HAS_FFI=1)");
+#else
+
+    // Expand capacity if needed
+    if (vm->ffi_count >= vm->ffi_capacity) {
+        vm->ffi_capacity = vm->ffi_capacity ? vm->ffi_capacity * 2 : 32;
+        vm->ffi_table = realloc(vm->ffi_table, vm->ffi_capacity * sizeof(ForeignFunc));
+        if (!vm->ffi_table)
+            error("cc_register_variadic_cfunc: realloc failed");
+    }
+
+    // Add variadic function to registry
+    // Note: num_args will be updated dynamically during CALLF based on actual call
+    // For now, we set it to num_fixed_args as a placeholder
+    vm->ffi_table[vm->ffi_count++] = (ForeignFunc){
+        .name = strdup(name),
+        .func_ptr = func_ptr,
+        .num_args = num_fixed_args,  // Will be updated during CALLF
+        .returns_double = returns_double,
+        .is_variadic = 1,
+        .num_fixed_args = num_fixed_args,
+        .arg_types = NULL  // Will be prepared during first CALLF
+    };
+#endif
+}
+
+int cc_dlsym(JCC *vm, const char *name, void *func_ptr, int num_args, int returns_double) {
+    if (!vm || !name || !func_ptr)
+        return -1;
+
+    for (int i = 0; i < vm->ffi_count; i++) {
+        if (strcmp(vm->ffi_table[i].name, name) == 0) {
+            if (vm->ffi_table[i].num_args != num_args || vm->ffi_table[i].returns_double != returns_double) {
+                fprintf(stderr, "error: FFI function '%s' signature mismatch\n", name);
+                return -1;
+            }
+            vm->ffi_table[i].func_ptr = func_ptr;
+            return 0;
+        }
+    }
+
+    fprintf(stderr, "error: FFI function '%s' not found in bytecode\n", name);
+    return -1;
+}
+
+int cc_dlopen(JCC *vm, const char *lib_path) {
+    if (!vm)
+        return -1;
+
+#ifdef _WIN32
+    HMODULE handle;
+    if (lib_path) {
+        // Open the specified dynamic library
+        handle = LoadLibraryA(lib_path);
+        if (!handle) {
+            DWORD err = GetLastError();
+            fprintf(stderr, "error: failed to load library %s: error code %lu\n", lib_path, err);
+            return -1;
+        }
+    } else {
+        // For searching all loaded libraries, use NULL handle in GetProcAddress
+        handle = NULL;
+    }
+#else
+    void *handle = dlopen(lib_path, RTLD_LAZY);
+    if (!handle && lib_path) {
+        fprintf(stderr, "error: failed to load library %s: %s\n", lib_path, dlerror());
+        return -1;
+    }
+#endif
+
+    int success_count = 0;
+    int total_count = vm->ffi_count;
+
+    // Try to resolve each FFI function
+    for (int i = 0; i < vm->ffi_count; i++) {
+        ForeignFunc *ff = &vm->ffi_table[i];
+
+#ifdef _WIN32
+        // Look up the symbol
+        void *func_ptr = GetProcAddress(handle, ff->name);
+        if (!func_ptr) {
+            DWORD err = GetLastError();
+            fprintf(stderr, "warning: failed to resolve symbol '%s': error code %lu\n", ff->name, err);
+        } else {
+            ff->func_ptr = func_ptr;
+            success_count++;
+            if (vm->debug_vm)
+                printf("Resolved FFI function '%s' at %p\n", ff->name, func_ptr);
+        }
+#else
+        // Clear any previous error
+        dlerror();
+
+        // Look up the symbol
+        void *func_ptr = dlsym(handle, ff->name);
+        const char *error = dlerror();
+
+        if (error)
+            fprintf(stderr, "warning: failed to resolve symbol '%s': %s\n", ff->name, error);
+        else {
+            ff->func_ptr = func_ptr;
+            success_count++;
+            if (vm->debug_vm)
+                printf("Resolved FFI function '%s' at %p\n", ff->name, func_ptr);
+        }
+#endif
+    }
+
+    if (success_count == 0 && total_count > 0) {
+        fprintf(stderr, "error: no FFI functions could be resolved\n");
+#ifdef _WIN32
+        if (lib_path)
+            FreeLibrary(handle);
+#else
+        if (lib_path)
+            dlclose(handle);
+#endif
+        return -1;
+    }
+
+    if (vm->debug_vm)
+        printf("Loaded %d/%d FFI functions from %s\n", success_count, total_count, lib_path ? lib_path : "default libraries");
+
+    // Don't close! Function pointers are still in use!
+    // dlclose(handle); <- NO! BAD!
+    return 0;
+}
+
+// Get the platform-specific path of the standard C library
+static const char* find_libc() {
+#ifdef _WIN32
+    // On Windows, LoadLibrary searches system paths, so return just the name
+    return "msvcrt.dll";
+#else
+    static char path[PATH_MAX];
+    const char *libname;
+    const char **search_paths;
+
+#ifdef __APPLE__
+    libname = "libSystem.dylib";
+    const char *apple_paths[] = {"/usr/lib/", NULL};
+    search_paths = apple_paths;
+#elif defined(__linux__)
+    libname = "libc.so.6";
+    const char *linux_paths[] = {"/lib64/", "/lib/x86_64-linux-gnu/", "/lib/", "/usr/lib64/", "/usr/lib/", NULL};
+    search_paths = linux_paths;
+#elif defined(__FreeBSD__)
+    libname = "libc.so.7";
+    const char *freebsd_paths[] = {"/lib/", "/usr/lib/", NULL};
+    search_paths = freebsd_paths;
+#else
+    libname = "libc.so";
+    const char *default_paths[] = {"/lib/", "/usr/lib/", NULL};
+    search_paths = default_paths;
+#endif
+
+    // Try to find the library in standard locations
+    for (const char **p = search_paths; *p; p++) {
+        if (snprintf(path, sizeof(path), "%s%s", *p, libname) < sizeof(path)) {
+            if (access(path, F_OK) == 0)
+                return path;
+        }
+    }
+    // Fallback to just the library name if full path not found
+    return libname;
+#endif
+}
+
+int cc_load_libc(JCC *vm) {
+    const char *libc_path = find_libc();
+    if (vm->debug_vm)
+        printf("Loading standard C library: %s\n", libc_path);
+    return cc_dlopen(vm, libc_path);
 }
 
 int cc_run(JCC *vm, int argc, char **argv) {

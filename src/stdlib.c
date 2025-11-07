@@ -477,10 +477,20 @@ void cc_load_stdlib(JCC *vm) {
     cc_register_cfunc(vm, "__jcc_stdin", (void*)__jcc_stdin, 0, 0);
     cc_register_cfunc(vm, "__jcc_stdout", (void*)__jcc_stdout, 0, 0);
     cc_register_cfunc(vm, "__jcc_stderr", (void*)__jcc_stderr, 0, 0);
-    // Variadic function wrappers (v* variants that take va_list)
+
+#ifdef JCC_HAS_FFI
+    // libffi is available - register true variadic functions
+    cc_register_variadic_cfunc(vm, "printf", (void*)printf, 1, 0);
+    cc_register_variadic_cfunc(vm, "fprintf", (void*)fprintf, 2, 0);
+    cc_register_variadic_cfunc(vm, "sprintf", (void*)sprintf, 2, 0);
+    cc_register_variadic_cfunc(vm, "snprintf", (void*)snprintf, 3, 0);
+    cc_register_variadic_cfunc(vm, "scanf", (void*)scanf, 1, 0);
+    cc_register_variadic_cfunc(vm, "sscanf", (void*)sscanf, 2, 0);
+    cc_register_variadic_cfunc(vm, "fscanf", (void*)fscanf, 2, 0);
+#else
+    // libffi not available - use fixed-argument wrapper functions
     register_variadic_wrappers(vm);
-    // Note: Direct printf/scanf are not supported due to variadic calling conventions
-    // Use vprintf/vsprintf with <stdarg.h> instead, or puts/putchar for simple output
+#endif
     cc_register_cfunc(vm, "remove", (void*)remove, 1, 0);
     cc_register_cfunc(vm, "rename", (void*)rename, 2, 0);
     cc_register_cfunc(vm, "tmpfile", (void*)tmpfile, 0, 0);
