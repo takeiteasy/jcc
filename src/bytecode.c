@@ -366,8 +366,22 @@ void cc_compile(JCC *vm, Obj *prog) {
         
         // Initialize codegen state
         vm->current_codegen_fn = NULL;
+
+        // Initialize source map for debugger (if enabled)
+        if (vm->enable_debugger) {
+            vm->source_map_capacity = 1024;  // Initial capacity
+            vm->source_map = malloc(vm->source_map_capacity * sizeof(SourceMap));
+            if (!vm->source_map) {
+                error("could not malloc for source map");
+            }
+            vm->source_map_count = 0;
+            vm->last_debug_file = NULL;
+            vm->last_debug_line = -1;
+            vm->num_debug_symbols = 0;
+            vm->num_watchpoints = 0;
+        }
     }
-    
+
     // Store the merged program for variable lookup during codegen
     vm->globals = prog;
     

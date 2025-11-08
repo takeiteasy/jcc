@@ -84,6 +84,37 @@ static void emit_store(JCC *vm, Type *ty) {
     }
 }
 
+// Emit debug info (source location mapping) for debugger
+static void emit_debug_info(JCC *vm, Token *tok) {
+    if (!vm->enable_debugger || !tok || !tok->file) {
+        return;
+    }
+
+    // Only emit if line changed
+    if (tok->file == vm->last_debug_file && tok->line_no == vm->last_debug_line) {
+        return;
+    }
+
+    // Grow source map if needed
+    if (vm->source_map_count >= vm->source_map_capacity) {
+        vm->source_map_capacity *= 2;
+        SourceMap *new_map = realloc(vm->source_map, vm->source_map_capacity * sizeof(SourceMap));
+        if (!new_map) {
+            error("could not realloc source map");
+        }
+        vm->source_map = new_map;
+    }
+
+    // Add mapping entry
+    vm->source_map[vm->source_map_count].pc_offset = vm->text_ptr - vm->text_seg;
+    vm->source_map[vm->source_map_count].file = tok->file;
+    vm->source_map[vm->source_map_count].line_no = tok->line_no;
+    vm->source_map_count++;
+
+    vm->last_debug_file = tok->file;
+    vm->last_debug_line = tok->line_no;
+}
+
 static void gen_stmt(JCC *vm, Node *node);
 
 // Helper to resolve global variable to the canonical version in the merged program
@@ -1046,6 +1077,9 @@ static void gen_stmt(JCC *vm, Node *node) {
         return;
     }
 
+    // Emit debug info for source mapping (if debugger enabled)
+    emit_debug_info(vm, node->tok);
+
     switch (node->kind) {
         case ND_EXPR_STMT:
             gen_expr(vm, node->lhs);
@@ -1338,6 +1372,20 @@ static void gen_stmt(JCC *vm, Node *node) {
     }
 }
 
+// Add a variable to the debug symbol table
+static void add_debug_symbol(JCC *vm, const char *name, long long offset, Type *ty, int is_local) {
+    if (!vm->enable_debugger || vm->num_debug_symbols >= MAX_DEBUG_SYMBOLS) {
+        return;
+    }
+
+    vm->debug_symbols[vm->num_debug_symbols].name = (char*)name;
+    vm->debug_symbols[vm->num_debug_symbols].offset = offset;
+    vm->debug_symbols[vm->num_debug_symbols].ty = ty;
+    vm->debug_symbols[vm->num_debug_symbols].is_local = is_local;
+    vm->debug_symbols[vm->num_debug_symbols].scope_depth = 0;  // TODO: track actual scope depth
+    vm->num_debug_symbols++;
+}
+
 // Generate code for a function
 // Made non-static for K macro compilation
 void gen_function(JCC *vm, Obj *fn) {
@@ -1353,9 +1401,23 @@ void gen_function(JCC *vm, Obj *fn) {
     // Reset label and goto tables for this function
     vm->num_labels = 0;
     vm->num_goto_patches = 0;
-    
+
     // Set current function for VLA cleanup
     vm->current_codegen_fn = fn;
+
+    // Save number of global debug symbols (don't clear globals)
+    // We only clear locals when entering a new function
+    int num_global_symbols = 0;
+    if (vm->enable_debugger) {
+        // Count global symbols (is_local == 0)
+        for (int i = 0; i < vm->num_debug_symbols; i++) {
+            if (!vm->debug_symbols[i].is_local) {
+                num_global_symbols++;
+            }
+        }
+        // Reset to globals only (removes previous function's locals)
+        vm->num_debug_symbols = num_global_symbols;
+    }
 
     // Generating function code
 
@@ -1374,6 +1436,8 @@ void gen_function(JCC *vm, Obj *fn) {
     for (Obj *param = fn->params; param; param = param->next) {
         param->offset = param_offset;
         param->is_local = true;  // Parameters are accessed like locals
+        // Add to debug symbol table
+        add_debug_symbol(vm, param->name, param_offset, param->ty, 1);
         param_offset++;  // Next param is at higher index
     }
     
@@ -1412,6 +1476,8 @@ void gen_function(JCC *vm, Obj *fn) {
             }
             stack_size += var_size;
             var->offset = -stack_size;  // Locals have negative offsets (below bp)
+            // Add to debug symbol table
+            add_debug_symbol(vm, var->name, var->offset, var->ty, 1);
         }
     }
 
@@ -1524,7 +1590,10 @@ void codegen(JCC *vm, Obj *prog) {
             
             // Store the offset in the variable
             var->offset = vm->data_ptr - vm->data_seg;
-            
+
+            // Add to debug symbol table (globals are function-independent, so add before functions)
+            add_debug_symbol(vm, var->name, var->offset, var->ty, 0);
+
             // Initialize the data
             // NOTE: Type sizes are already adjusted in new_gvar() for VM compatibility
             // (integers are 8 bytes in VM), so init_data is already in the correct format

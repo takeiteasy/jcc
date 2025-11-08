@@ -192,6 +192,7 @@ void cc_debug_repl(JCC *vm);
 void debugger_disassemble_current(JCC *vm);
 void debugger_print_stack(JCC *vm, int count);
 int debugger_check_breakpoint(JCC *vm);
+int debugger_check_watchpoint(JCC *vm, void *addr, int size, int access_type);
 void debugger_print_registers(JCC *vm);
 void debugger_print_stack(JCC *vm, int count);
 void debugger_disassemble_current(JCC *vm);

@@ -427,73 +427,86 @@ Current PC:    0xb98800148 (offset: 41)
 
 ### Interactive Debugger
 
-The JCC VM includes an interactive debugger for step-by-step program execution and inspection.
+The JCC VM includes an interactive, source-level debugger for step-by-step program execution and inspection.
 
 **Enable with:** `-g` or `--debug` flags
 
+When enabled, the debugger provides a powerful GDB-like interface for controlling program flow and inspecting state.
+
 ### Features
 
-- **Breakpoints** - Set breakpoints at any instruction offset
-- **Single-stepping** - Step into, step over, or step out of functions
-- **Register inspection** - View all VM registers (ax, fax, pc, bp, sp, cycle count)
--  **Stack inspection** - Examine stack contents
-- **Disassembly** - View current instruction
-- **Memory inspection** - Read memory at any address
-- **Interactive REPL** - Full command-line interface for debugging
+- **Source-Level Debugging**: The debugger maps bytecode instructions to their original source code locations. When you step through the code, it displays the current file, line number, and the corresponding source line, providing a seamless debugging experience.
+- **Advanced Breakpoints**: Set breakpoints using multiple formats:
+    - By line number in the current file (`break 42`).
+    - By file and line number (`break test.c:42`).
+    - At the entry point of a function (`break main`).
+    - At a raw bytecode offset (legacy support).
+- **Conditional Breakpoints**: Set breakpoints that only trigger when a specific condition is met. The expression can use local and global variables, arithmetic, comparison, and logical operators.
+    - Syntax: `break <location> if <expression>`
+    - Example: `break 22 if x > 5`
+- **Watchpoints (Data Breakpoints)**: Break execution when memory is read or written. Watchpoints can be set on variables by name or on raw memory addresses.
+    - `watch <var|addr>`: Break on write.
+    - `rwatch <addr>`: Break on read.
+    - `awatch <addr>`: Break on read or write.
+- **Execution Control**: Full control over program flow with commands to step into (`step`), step over (`next`), and step out of (`finish`) functions.
+- **State Inspection**: Inspect VM registers, the call stack, and raw memory at any address. The debugger tracks local and global variable names, allowing them to be used in expressions.
 
 #### Debugger Commands
 
 | Command | Short | Description |
-|---------|-------|-------------|
-| `continue` | `c` | Continue execution until next breakpoint |
-| `step` | `s` | Single step (into functions) |
-| `next` | `n` | Step over (skip function calls) |
-| `finish` | `f` | Step out (run until return) |
-| `break <offset>` | `b <offset>` | Set breakpoint at instruction offset |
-| `delete <num>` | `d <num>` | Delete breakpoint by number |
-| `list` | `l` | List all breakpoints |
-| `registers` | `r` | Print all register values |
-| `stack [count]` | `st [count]` | Print stack (default 10 entries) |
-| `disasm` | `dis` | Disassemble current instruction |
-| `memory <addr>` | `m <addr>` | Inspect memory at address |
-| `help` | `h`, `?` | Show help |
-| `quit` | `q` | Exit debugger |
+|---|---|---|
+| `continue` | `c` | Continue execution until next breakpoint or watchpoint. |
+| `step` | `s` | Single step, stepping into function calls. |
+| `next` | `n` | Step over, executing function calls without stopping. |
+| `finish` | `f` | Run until the current function returns. |
+| `break <loc>` | `b <loc>` | Set a breakpoint at a specified location (`<line>`, `<file:line>`, `<func>`, or `<offset>`). |
+| `break <loc> if <expr>` | `b <loc> if <expr>` | Set a conditional breakpoint. |
+| `watch <var/addr>` | `w <var/addr>` | Set a watchpoint to break on writes to a variable or address. |
+| `rwatch <addr>` | | Set a watchpoint to break on reads from an address. |
+| `awatch <addr>` | | Set a watchpoint to break on reads or writes to an address. |
+| `info watch` | | List all active watchpoints. |
+| `delete <num>` | `d <num>` | Delete a breakpoint by its number. |
+| `list` | `l` | List all breakpoints. |
+| `registers` | `r` | Print all register values. |
+| `stack [count]` | `st [count]` | Print the top `count` entries of the stack (default 10). |
+| `disasm` | `dis` | Disassemble the current instruction. |
+| `memory <addr>` | `m <addr>` | Inspect memory at a given address. |
+| `help` | `h`, `?` | Show the help message. |
+| `quit` | `q` | Exit the debugger and terminate the program. |
 
 #### Example Debugging Session
 
 ```bash
-$ ./jcc --debug test_program.c
+$ ./jcc -g test_debugger_enhanced.c
 
 ========================================
     JCC Debugger
 ========================================
-Starting at entry point (PC: 0x..., offset: 1)
+Starting at entry point...
 Type 'help' for commands, 'c' to continue
 
-(jcc-dbg) registers           # Check initial state
-=== Registers ===
-  ax (int):   0x0000000000000000 (0)
-  fax (fp):   0.000000
-  pc:         0xc94800008 (offset: 8)
-  bp:         0xc94600000
-  sp:         0xc945fffe8
-  cycle:      0
-
-(jcc-dbg) break 50            # Set breakpoint at offset 50
-Breakpoint #0 set at PC 0x... (offset: 50)
+(jcc-dbg) break 20            # Set breakpoint at line 20
+Breakpoint #0 set at test_debugger_enhanced.c:20
 
 (jcc-dbg) continue            # Run to breakpoint
+Breakpoint #0 hit at test_debugger_enhanced.c:20
+At test_debugger_enhanced.c:20
+    20:     int x = 10;
+0xc33400018 (offset 24): LEA -4
 
-Breakpoint hit at PC 0x... (offset: 50)
+(jcc-dbg) watch x             # Watch for writes to variable 'x'
+Watchpoint #0: watch x
 
-(jcc-dbg) step                # Execute one instruction
-(jcc-dbg) disasm              # See what we just executed
-0x... (offset 51): IMM 42
+(jcc-dbg) step                # Execute one instruction (the assignment to x)
+Watchpoint #0 hit: write to x at 0x7ffeea28d3f8
+Old value: 0
+New value: 10
+At test_debugger_enhanced.c:21
+    21:     int y = factorial(4);
 
-(jcc-dbg) stack 5             # Check top 5 stack entries
-=== Stack (top 5 entries) ===
-  sp[0] = 0x000000000000002a  (42)
-  sp[1] = 0x0000000000000005  (5)
+(jcc-dbg) stack 3             # Check the stack
+=== Stack (top 3 entries) ===
+  sp[0] = 0x000000000000000a  (10)
   ...
 
 (jcc-dbg) continue            # Run to completion
@@ -504,7 +517,6 @@ Breakpoint hit at PC 0x... (offset: 50)
 - [ ] **Optimization passes** - Constant folding, dead code elimination
 - [ ] **Better error messages** - Line numbers in runtime errors
 - [ ] **Specify C versions** - `-std=c89`, `-std=c11` etc
-- [ ] **Improve debugger** - Watchpoints, conditional breakpoints, mapping source lines to bytecode offsets
 
 ## Building
 
