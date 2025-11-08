@@ -111,8 +111,8 @@ int vm_eval(JCC *vm) {
                     "MALC ,MFRE ,MCPY ,"
                     "SX1  ,SX2  ,SX4  ,ZX1  ,ZX2  ,ZX4  ,"
                     "FLD  ,FST  ,FADD ,FSUB ,FMUL ,FDIV ,FNEG ,FEQ  ,FNE  ,FLT  ,FLE  ,FGT  ,FGE  ,I2F  ,F2I  ,FPSH ,"
-                    "CALLF,CHKB ,CHKP ,CHKT ,CHKI ,MARKI,SETJP,LONJP"[op * 6]);
-            if (op <= ADJ || op == CHKB || op == CHKT || op == CHKI || op == MARKI)
+                    "CALLF,CHKB ,CHKP ,CHKT ,CHKI ,MARKI,MARKA,CHKA ,CHKPA,MARKP,SETJP,LONJP"[op * 6]);
+            if (op <= ADJ || op == CHKB || op == CHKT || op == CHKI || op == MARKI || op == MARKA || op == CHKA || op == MARKP)
                 printf(" %lld\n", *vm->pc);
             else
                 printf("\n");
@@ -170,6 +170,22 @@ int vm_eval(JCC *vm) {
                     printf("A stack buffer overflow has corrupted the stack frame.\n");
                     printf("============================================\n");
                     return -1;  // Abort execution
+                }
+            }
+
+            // Invalidate stack pointers for this frame (dangling pointer detection)
+            if (vm->enable_dangling_detection && vm->stack_ptrs.buckets) {
+                // Iterate through all stack pointers and invalidate those with matching BP
+                long long current_bp = (long long)vm->bp;
+                for (int i = 0; i < vm->stack_ptrs.capacity; i++) {
+                    HashEntry *entry = &vm->stack_ptrs.buckets[i];
+                    if (entry->key && entry->key != (void *)-1) {  // Not NULL and not TOMBSTONE
+                        StackPtrInfo *info = (StackPtrInfo *)entry->val;
+                        if (info && info->bp == current_bp) {
+                            // Mark as invalid by setting BP to -1
+                            info->bp = -1;
+                        }
+                    }
                 }
             }
 
@@ -314,6 +330,27 @@ int vm_eval(JCC *vm) {
                         record->alloc_pc = (long long)(vm->pc - vm->text_seg);
                         record->next = vm->alloc_list;
                         vm->alloc_list = record;
+                    }
+                }
+
+                // If provenance tracking enabled, mark heap allocation
+                if (vm->enable_provenance_tracking && vm->ax != 0) {
+                    AllocHeader *header = (AllocHeader *)((char *)vm->ax - sizeof(AllocHeader));
+
+                    // Create ProvenanceInfo for heap allocation
+                    ProvenanceInfo *info = malloc(sizeof(ProvenanceInfo));
+                    if (info) {
+                        info->origin_type = 0;  // 0 = HEAP
+                        info->base = vm->ax;
+                        info->size = header->requested_size;  // Use requested size, not rounded
+
+                        // Create key from pointer value
+                        char key_buf[32];
+                        snprintf(key_buf, sizeof(key_buf), "%lld", vm->ax);
+                        char *key = strdup(key_buf);
+
+                        // Store in HashMap
+                        hashmap_put(&vm->provenance, key, info);
                     }
                 }
             }
@@ -468,8 +505,8 @@ int vm_eval(JCC *vm) {
             // ax contains the pointer to check
             long long ptr = vm->ax;
 
-            if (!vm->enable_uaf_detection && !vm->enable_bounds_checks) {
-                // Neither UAF nor bounds checking enabled, skip
+            if (!vm->enable_uaf_detection && !vm->enable_bounds_checks && !vm->enable_dangling_detection) {
+                // No pointer checking enabled, skip
                 goto chkp_done;
             }
 
@@ -481,6 +518,41 @@ int vm_eval(JCC *vm) {
                        (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
                 printf("============================================\n");
                 return -1;
+            }
+
+            // Check for dangling stack pointer
+            if (vm->enable_dangling_detection) {
+                if (vm->debug_vm) {
+                    printf("CHKP: checking pointer 0x%llx (buckets=%p, capacity=%d)\n",
+                           ptr, (void*)vm->stack_ptrs.buckets, vm->stack_ptrs.capacity);
+                }
+
+                if (vm->stack_ptrs.buckets) {
+                    char key_buf[32];
+                    snprintf(key_buf, sizeof(key_buf), "%lld", ptr);
+                    void *val = hashmap_get2(&vm->stack_ptrs, key_buf, strlen(key_buf));
+
+                    if (vm->debug_vm) {
+                        printf("CHKP: hashmap lookup returned %p\n", val);
+                    }
+
+                    if (val) {
+                        StackPtrInfo *info = (StackPtrInfo *)val;
+                        if (info->bp == -1) {
+                            // This stack pointer has been invalidated
+                            printf("\n========== DANGLING STACK POINTER ==========\n");
+                            printf("Attempted to dereference invalidated stack pointer\n");
+                            printf("Address:       0x%llx\n", ptr);
+                            printf("Original BP:   invalidated (function has returned)\n");
+                            printf("Stack offset:  %lld\n", info->offset);
+                            printf("Size:          %zu bytes\n", info->size);
+                            printf("Current PC:    0x%llx (offset: %lld)\n",
+                                   (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                            printf("==========================================\n");
+                            return -1;
+                        }
+                    }
+                }
             }
 
             // Check if pointer is in heap range
@@ -957,6 +1029,171 @@ int vm_eval(JCC *vm) {
             chkt_done:;
         }
 
+        else if (op == MARKA) {
+            // Mark address for stack pointer tracking (dangling pointer detection)
+            // Operand: stack offset (bp-relative) and size (encoded as two immediate values)
+            if (!vm->enable_dangling_detection) {
+                // Dangling detection not enabled, skip
+                (void)*vm->pc++;  // Consume offset operand
+                (void)*vm->pc++;  // Consume size operand
+                goto marka_done;
+            }
+
+            long long offset = *vm->pc++;
+            size_t size = (size_t)*vm->pc++;
+
+            // ax contains the pointer value (address of stack variable)
+            long long ptr = vm->ax;
+
+            if (vm->debug_vm) {
+                printf("MARKA: tracking pointer 0x%llx (bp=0x%llx, offset=%lld, size=%zu)\n",
+                       ptr, (long long)vm->bp, offset, size);
+            }
+
+            // Create StackPtrInfo
+            StackPtrInfo *info = malloc(sizeof(StackPtrInfo));
+            if (!info) {
+                fprintf(stderr, "MARKA: failed to allocate StackPtrInfo\n");
+                goto marka_done;
+            }
+            info->bp = (long long)vm->bp;
+            info->offset = offset;
+            info->size = size;
+
+            // Create key from pointer value
+            char key_buf[32];
+            snprintf(key_buf, sizeof(key_buf), "%lld", ptr);
+            char *key = strdup(key_buf);
+            if (!key) {
+                free(info);
+                fprintf(stderr, "MARKA: failed to allocate key\n");
+                goto marka_done;
+            }
+
+            // Store in HashMap
+            hashmap_put(&vm->stack_ptrs, key, info);
+
+            if (vm->debug_vm) {
+                printf("MARKA: stored pointer info (capacity=%d, used=%d)\n",
+                       vm->stack_ptrs.capacity, vm->stack_ptrs.used);
+            }
+
+            marka_done:;
+        }
+
+        else if (op == CHKA) {
+            // Check pointer alignment
+            // Operand: type size (for alignment check)
+            if (!vm->enable_alignment_checks) {
+                // Alignment checking not enabled, skip
+                (void)*vm->pc++;  // Consume operand
+                goto chka_done;
+            }
+
+            size_t type_size = (size_t)*vm->pc++;
+            long long ptr = vm->ax;
+
+            // Skip check for NULL
+            if (ptr == 0) {
+                goto chka_done;
+            }
+
+            // Check alignment (pointer must be multiple of type size)
+            if (type_size > 1 && (ptr % type_size) != 0) {
+                printf("\n========== ALIGNMENT ERROR ==========\n");
+                printf("Pointer is misaligned for type\n");
+                printf("Address:       0x%llx\n", ptr);
+                printf("Type size:     %zu bytes\n", type_size);
+                printf("Required alignment: %zu bytes\n", type_size);
+                printf("Current PC:    0x%llx (offset: %lld)\n",
+                       (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                printf("=====================================\n");
+                return -1;
+            }
+
+            chka_done:;
+        }
+
+        else if (op == CHKPA) {
+            // Check pointer arithmetic (invalid arithmetic detection)
+            // Uses provenance tracking to validate result is within bounds
+            if (!vm->enable_invalid_arithmetic || !vm->enable_provenance_tracking) {
+                // Need both features enabled
+                goto chkpa_done;
+            }
+
+            long long ptr = vm->ax;  // Result of pointer arithmetic
+
+            // Skip check for NULL
+            if (ptr == 0) {
+                goto chkpa_done;
+            }
+
+            // Look up provenance information for this pointer
+            char key_buf[32];
+            snprintf(key_buf, sizeof(key_buf), "%lld", ptr);
+            void *val = hashmap_get2(&vm->provenance, key_buf, strlen(key_buf));
+
+            if (val) {
+                ProvenanceInfo *info = (ProvenanceInfo *)val;
+
+                // Check if pointer is within valid range [base, base+size]
+                long long end = info->base + (long long)info->size;
+                if (ptr < info->base || ptr > end) {
+                    const char *origin_names[] = {"HEAP", "STACK", "GLOBAL"};
+                    printf("\n========== INVALID POINTER ARITHMETIC ==========\n");
+                    printf("Pointer arithmetic result outside object bounds\n");
+                    printf("Origin:        %s\n", origin_names[info->origin_type]);
+                    printf("Object base:   0x%llx\n", info->base);
+                    printf("Object size:   %zu bytes\n", info->size);
+                    printf("Result ptr:    0x%llx\n", ptr);
+                    printf("Offset:        %lld bytes from base\n", ptr - info->base);
+                    printf("Current PC:    0x%llx (offset: %lld)\n",
+                           (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                    printf("===============================================\n");
+                    return -1;
+                }
+            }
+            // If no provenance info, we can't validate (might be a computed pointer)
+
+            chkpa_done:;
+        }
+
+        else if (op == MARKP) {
+            // Mark provenance for pointer tracking
+            // Operands: origin_type, base, size (encoded as three immediate values)
+            if (!vm->enable_provenance_tracking) {
+                // Provenance tracking not enabled, skip
+                (void)*vm->pc++;  // Consume origin_type operand
+                (void)*vm->pc++;  // Consume base operand
+                (void)*vm->pc++;  // Consume size operand
+                goto markp_done;
+            }
+
+            int origin_type = (int)*vm->pc++;  // 0=HEAP, 1=STACK, 2=GLOBAL
+            long long base = *vm->pc++;
+            size_t size = (size_t)*vm->pc++;
+
+            // ax contains the pointer value
+            long long ptr = vm->ax;
+
+            // Create ProvenanceInfo
+            ProvenanceInfo *info = malloc(sizeof(ProvenanceInfo));
+            info->origin_type = origin_type;
+            info->base = base;
+            info->size = size;
+
+            // Create key from pointer value
+            char key_buf[32];
+            snprintf(key_buf, sizeof(key_buf), "%lld", ptr);
+            char *key = strdup(key_buf);
+
+            // Store in HashMap
+            hashmap_put(&vm->provenance, key, info);
+
+            markp_done:;
+        }
+
         else if (op == SETJMP) {
             // setjmp: Save execution context to jmp_buf and return 0
             // The jmp_buf address is in ax (not on stack)
@@ -1026,6 +1263,16 @@ void cc_init(JCC *vm, bool enable_debugger) {
     vm->init_state.capacity = 0;  // Will be allocated on first use by hashmap_put
     vm->init_state.buckets = NULL;
     vm->init_state.used = 0;
+
+    // Initialize stack_ptrs HashMap for dangling pointer detection
+    vm->stack_ptrs.capacity = 0;
+    vm->stack_ptrs.buckets = NULL;
+    vm->stack_ptrs.used = 0;
+
+    // Initialize provenance HashMap for provenance tracking
+    vm->provenance.capacity = 0;
+    vm->provenance.buckets = NULL;
+    vm->provenance.used = 0;
 
     // Add default system include path for <...> includes
     cc_system_include(vm, "./include");

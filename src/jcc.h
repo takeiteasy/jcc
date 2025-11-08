@@ -77,7 +77,10 @@ typedef enum {
     CHKT,   // Check type on dereference
     CHKI,   // Check initialization
     MARKI,  // Mark as initialized
-    // SANP,   // Full pointer sanitizer check (TODO)
+    MARKA,  // Mark address (track stack pointer for dangling detection)
+    CHKA,   // Check alignment
+    CHKPA,  // Check pointer arithmetic (invalid arithmetic detection)
+    MARKP,  // Mark provenance (track pointer origin)
     // Non-local jump instructions (setjmp/longjmp)
     SETJMP, // Save execution context to jmp_buf, return 0
     LONGJMP // Restore execution context from jmp_buf, return val
@@ -648,6 +651,32 @@ typedef struct AllocRecord {
 } AllocRecord;
 
 /*!
+ @struct StackPtrInfo
+ @abstract Tracks stack pointer information for dangling pointer detection.
+ @field bp Base pointer value when pointer was created.
+ @field offset Stack offset from BP.
+ @field size Size of the pointed-to object.
+*/
+typedef struct StackPtrInfo {
+    long long bp;
+    long long offset;
+    size_t size;
+} StackPtrInfo;
+
+/*!
+ @struct ProvenanceInfo
+ @abstract Tracks pointer provenance (origin) for validation.
+ @field origin_type Type of origin: 0=HEAP, 1=STACK, 2=GLOBAL.
+ @field base Base address of the original object.
+ @field size Size of the original object.
+*/
+typedef struct ProvenanceInfo {
+    int origin_type;  // 0=HEAP, 1=STACK, 2=GLOBAL
+    long long base;
+    size_t size;
+} ProvenanceInfo;
+
+/*!
  @struct Breakpoint
  @abstract Represents a debugger breakpoint at a specific program counter location.
  @field pc Program counter address where the breakpoint is set.
@@ -719,6 +748,8 @@ struct JCC {
     // Memory safety tracking
     AllocRecord *alloc_list;   // List of active allocations (for leak detection)
     HashMap init_state;        // Track initialization state of stack variables (for uninitialized detection)
+    HashMap stack_ptrs;        // Track stack pointers for dangling detection (ptr -> {bp, offset, size})
+    HashMap provenance;        // Track pointer provenance (ptr -> {origin_type, base, size})
 
     // Configuration
     int poolsize;              // Size of memory segments (bytes)
@@ -731,9 +762,15 @@ struct JCC {
     int enable_uninitialized_detection; // Uninitialized variable detection
     int enable_stack_canaries;          // Stack overflow protection
     int enable_heap_canaries;           // Heap overflow protection
-    int enable_pointer_sanitizer;       // Full pointer tracking and validation
+    int enable_pointer_sanitizer;       // Convenience flag: enables bounds, UAF, and type checks together
     int enable_memory_leak_detection;   // Track allocations and report leaks at exit
     int enable_stack_instrumentation;   // Track stack variable lifetimes
+
+    // Advanced pointer tracking features
+    int enable_dangling_detection;      // Detect use of stack pointers after function return
+    int enable_alignment_checks;        // Validate pointer alignment for type
+    int enable_provenance_tracking;     // Track pointer origin and validate operations
+    int enable_invalid_arithmetic;      // Detect pointer arithmetic outside object bounds
 
     // Debugger state
     int enable_debugger;                // Enable interactive debugger

@@ -46,9 +46,13 @@ static void usage(const char *argv0, int exit_code) {
     printf("\t-z/--uninitialized-detection Uninitialized variable detection\n");
     printf("\t-s/--stack-canaries          Stack overflow protection\n");
     printf("\t-k/--heap-canaries           Heap overflow protection\n");
-    printf("\t-p/--pointer-sanitizer       Full pointer tracking and validation\n");
     printf("\t-l/--memory-leak-detection   Track allocations and report leaks at exit\n");
     printf("\t-i/--stack-instrumentation   Track stack variable lifetimes and accesses\n");
+    printf("\t-p/--pointer-sanitizer       Enable all pointer checks (bounds, UAF, type)\n");
+    printf("\t   --dangling-pointers       Detect use of stack pointers after function return\n");
+    printf("\t   --alignment-checks        Validate pointer alignment for type\n");
+    printf("\t   --provenance-tracking     Track pointer origin and validate operations\n");
+    printf("\t   --invalid-arithmetic      Detect pointer arithmetic outside object bounds\n");
     printf("\nExample:\n");
     printf("\t%s -o hello hello.c\n", argv0);
     printf("\t%s -I ./include -D DEBUG -o prog prog.c\n", argv0);
@@ -148,6 +152,10 @@ int main(int argc, const char* argv[]) {
     int enable_pointer_sanitizer = 0;
     int enable_memory_leak_detection = 0;
     int enable_stack_instrumentation = 0;
+    int enable_dangling_detection = 0;
+    int enable_alignment_checks = 0;
+    int enable_provenance_tracking = 0;
+    int enable_invalid_arithmetic = 0;
     int print_tokens = 0; // -P
     int preprocess_only = 0; // -E
     int skip_preprocess = 0; // -X
@@ -168,15 +176,19 @@ int main(int argc, const char* argv[]) {
         {"no-stdlib", no_argument, 0, 'S'},
         {"json", no_argument, 0, 'j'},
         {"debug", no_argument, 0, 'g'},
-        {"enable-bounds-checks", no_argument, 0, 'b'},
-        {"enable-uaf-detection", no_argument, 0, 'f'},
-        {"enable-type-checks", no_argument, 0, 't'},
-        {"enable-uninitialized-detection", no_argument, 0, 'z'},
-        {"enable-stack-canaries", no_argument, 0, 's'},
-        {"enable-heap-canaries", no_argument, 0, 'k'},
-        {"enable-pointer-sanitizer", no_argument, 0, 'p'},
-        {"enable-memory-leak-detection", no_argument, 0, 'l'},
-        {"enable-stack-instrumentation", no_argument, 0, 'i'},
+        {"bounds-checks", no_argument, 0, 'b'},
+        {"uaf-detection", no_argument, 0, 'f'},
+        {"type-checks", no_argument, 0, 't'},
+        {"uninitialized-detection", no_argument, 0, 'z'},
+        {"stack-canaries", no_argument, 0, 's'},
+        {"heap-canaries", no_argument, 0, 'k'},
+        {"pointer-sanitizer", no_argument, 0, 'p'},
+        {"memory-leak-detection", no_argument, 0, 'l'},
+        {"stack-instrumentation", no_argument, 0, 'i'},
+        {"dangling-pointers", no_argument, 0, 1001},
+        {"alignment-checks", no_argument, 0, 1002},
+        {"provenance-tracking", no_argument, 0, 1003},
+        {"invalid-arithmetic", no_argument, 0, 1004},
         {"include", required_argument, 0, 'I'},
         {"define", required_argument, 0, 'D'},
         {"undef", required_argument, 0, 'U'},
@@ -236,12 +248,28 @@ int main(int argc, const char* argv[]) {
             break;
         case 'p':
             enable_pointer_sanitizer = 1;
+            // Enable all pointer checks as a group
+            enable_bounds_checks = 1;
+            enable_uaf_detection = 1;
+            enable_type_checks = 1;
             break;
         case 'l':
             enable_memory_leak_detection = 1;
             break;
         case 'i':
             enable_stack_instrumentation = 1;
+            break;
+        case 1001:
+            enable_dangling_detection = 1;
+            break;
+        case 1002:
+            enable_alignment_checks = 1;
+            break;
+        case 1003:
+            enable_provenance_tracking = 1;
+            break;
+        case 1004:
+            enable_invalid_arithmetic = 1;
             break;
         case 'P':
             print_tokens = 1;
@@ -329,6 +357,10 @@ int main(int argc, const char* argv[]) {
     vm.enable_pointer_sanitizer = enable_pointer_sanitizer;
     vm.enable_memory_leak_detection = enable_memory_leak_detection;
     vm.enable_stack_instrumentation = enable_stack_instrumentation;
+    vm.enable_dangling_detection = enable_dangling_detection;
+    vm.enable_alignment_checks = enable_alignment_checks;
+    vm.enable_provenance_tracking = enable_provenance_tracking;
+    vm.enable_invalid_arithmetic = enable_invalid_arithmetic;
 
     if (!skip_stdlib)
         cc_load_stdlib(&vm);
