@@ -111,8 +111,10 @@ int vm_eval(JCC *vm) {
                     "MALC ,MFRE ,MCPY ,"
                     "SX1  ,SX2  ,SX4  ,ZX1  ,ZX2  ,ZX4  ,"
                     "FLD  ,FST  ,FADD ,FSUB ,FMUL ,FDIV ,FNEG ,FEQ  ,FNE  ,FLT  ,FLE  ,FGT  ,FGE  ,I2F  ,F2I  ,FPSH ,"
-                    "CALLF,CHKB ,CHKP ,CHKT ,CHKI ,MARKI,MARKA,CHKA ,CHKPA,MARKP,SETJP,LONJP"[op * 6]);
-            if (op <= ADJ || op == CHKB || op == CHKT || op == CHKI || op == MARKI || op == MARKA || op == CHKA || op == MARKP)
+                    "CALLF,CHKB ,CHKP ,CHKT ,CHKI ,MARKI,MARKA,CHKA ,CHKPA,MARKP,"
+                    "SCPIN,SCPOT,CHKL ,MARKR,MARKW,"
+                    "SETJP,LONJP"[op * 6]);
+            if (op <= ADJ || op == CHKB || op == CHKT || op == CHKI || op == MARKI || op == MARKA || op == CHKA || op == MARKP || op == SCOPEIN || op == SCOPEOUT || op == CHKL || op == MARKR || op == MARKW)
                 printf(" %lld\n", *vm->pc);
             else
                 printf("\n");
@@ -192,7 +194,31 @@ int vm_eval(JCC *vm) {
             }
 
             // Allocate space for local variables
-            vm->sp = vm->sp - *vm->pc++;
+            long long stack_size = *vm->pc++;
+            vm->sp = vm->sp - stack_size;
+
+            // Stack overflow checking (for stack instrumentation)
+            if (vm->enable_stack_instrumentation) {
+                long long stack_used = (long long)(vm->initial_sp - vm->sp);
+                if (stack_used > vm->stack_high_water) {
+                    vm->stack_high_water = stack_used;
+                }
+
+                // Check if we're approaching stack limit (within 10% of segment size)
+                long long stack_limit = vm->poolsize * 9 / 10;  // 90% threshold
+                if (stack_used > stack_limit) {
+                    if (vm->stack_instr_errors) {
+                        printf("\n========== STACK OVERFLOW WARNING ==========\n");
+                        printf("Stack usage: %lld bytes (limit: %lld bytes)\n", stack_used, stack_limit);
+                        printf("Current PC: 0x%llx (offset: %lld)\n",
+                               (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                        printf("===========================================\n");
+                        return -1;
+                    } else if (vm->debug_vm) {
+                        printf("WARNING: Stack usage %lld bytes exceeds threshold\n", stack_used);
+                    }
+                }
+            }
 
             // Note: For uninitialized detection, local variables are uninitialized by default
             // (not in init_state HashMap). Parameters are marked as initialized by codegen.
@@ -1079,23 +1105,25 @@ int vm_eval(JCC *vm) {
 
         else if (op == MARKA) {
             // Mark address for stack pointer tracking (dangling pointer detection)
-            // Operand: stack offset (bp-relative) and size (encoded as two immediate values)
-            if (!vm->enable_dangling_detection) {
-                // Dangling detection not enabled, skip
+            // Operands: stack offset (bp-relative), size, and scope_id (three immediate values)
+            if (!vm->enable_dangling_detection && !vm->enable_stack_instrumentation) {
+                // Neither dangling nor stack instrumentation enabled, skip
                 (void)*vm->pc++;  // Consume offset operand
                 (void)*vm->pc++;  // Consume size operand
+                (void)*vm->pc++;  // Consume scope_id operand
                 goto marka_done;
             }
 
             long long offset = *vm->pc++;
             size_t size = (size_t)*vm->pc++;
+            int scope_id = (int)*vm->pc++;
 
             // ax contains the pointer value (address of stack variable)
             long long ptr = vm->ax;
 
             if (vm->debug_vm) {
-                printf("MARKA: tracking pointer 0x%llx (bp=0x%llx, offset=%lld, size=%zu)\n",
-                       ptr, (long long)vm->bp, offset, size);
+                printf("MARKA: tracking pointer 0x%llx (bp=0x%llx, offset=%lld, size=%zu, scope=%d)\n",
+                       ptr, (long long)vm->bp, offset, size, scope_id);
             }
 
             // Create StackPtrInfo
@@ -1107,6 +1135,7 @@ int vm_eval(JCC *vm) {
             info->bp = (long long)vm->bp;
             info->offset = offset;
             info->size = size;
+            info->scope_id = scope_id;
 
             // Create key from pointer value
             char key_buf[32];
@@ -1242,6 +1271,201 @@ int vm_eval(JCC *vm) {
             markp_done:;
         }
 
+        // ========== STACK INSTRUMENTATION INSTRUCTIONS ==========
+
+        else if (op == SCOPEIN) {
+            // Mark scope entry - activate all variables in this scope
+            // Operand: scope_id
+            if (!vm->enable_stack_instrumentation) {
+                (void)*vm->pc++;  // Consume scope_id operand
+                goto scopein_done;
+            }
+
+            int scope_id = (int)*vm->pc++;
+
+            if (vm->debug_vm) {
+                printf("SCOPEIN: entering scope %d (bp=0x%llx)\n", scope_id, (long long)vm->bp);
+            }
+
+            // Iterate through all metadata entries and activate those matching this scope
+            for (int i = 0; i < vm->stack_var_meta.capacity; i++) {
+                if (vm->stack_var_meta.buckets[i].key != NULL) {
+                    StackVarMeta *meta = (StackVarMeta *)vm->stack_var_meta.buckets[i].val;
+                    if (meta && meta->scope_id == scope_id) {
+                        meta->is_alive = 1;
+                        meta->bp = (long long)vm->bp;
+                        if (vm->debug_vm) {
+                            printf("  Activated variable '%s' at bp%+lld\n", meta->name, meta->offset);
+                        }
+                    }
+                }
+            }
+
+            scopein_done:;
+        }
+
+        else if (op == SCOPEOUT) {
+            // Mark scope exit - deactivate variables and detect dangling pointers
+            // Operand: scope_id
+            if (!vm->enable_stack_instrumentation) {
+                (void)*vm->pc++;  // Consume scope_id operand
+                goto scopeout_done;
+            }
+
+            int scope_id = (int)*vm->pc++;
+
+            if (vm->debug_vm) {
+                printf("SCOPEOUT: exiting scope %d (bp=0x%llx)\n", scope_id, (long long)vm->bp);
+            }
+
+            // Iterate through all metadata entries and deactivate those matching this scope
+            for (int i = 0; i < vm->stack_var_meta.capacity; i++) {
+                if (vm->stack_var_meta.buckets[i].key != NULL) {
+                    StackVarMeta *meta = (StackVarMeta *)vm->stack_var_meta.buckets[i].val;
+                    if (meta && meta->scope_id == scope_id && meta->bp == (long long)vm->bp) {
+                        meta->is_alive = 0;
+                        if (vm->debug_vm) {
+                            printf("  Deactivated variable '%s' at bp%+lld (reads=%lld, writes=%lld)\n",
+                                   meta->name, meta->offset, meta->read_count, meta->write_count);
+                        }
+                    }
+                }
+            }
+
+            // Check for dangling pointers (pointers to variables in this scope)
+            if (vm->enable_dangling_detection) {
+                for (int i = 0; i < vm->stack_ptrs.capacity; i++) {
+                    if (vm->stack_ptrs.buckets[i].key != NULL) {
+                        StackPtrInfo *ptr_info = (StackPtrInfo *)vm->stack_ptrs.buckets[i].val;
+                        if (ptr_info && ptr_info->scope_id == scope_id && ptr_info->bp == (long long)vm->bp) {
+                            if (vm->stack_instr_errors) {
+                                printf("\n========== DANGLING POINTER DETECTED ==========\n");
+                                printf("Pointer to stack variable in scope %d still exists\n", scope_id);
+                                printf("Pointer: 0x%s (bp=%+lld)\n", vm->stack_ptrs.buckets[i].key, ptr_info->offset);
+                                printf("Scope is now exiting - this pointer will dangle\n");
+                                printf("Current PC: 0x%llx (offset: %lld)\n",
+                                       (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                                printf("==============================================\n");
+                                return -1;
+                            } else if (vm->debug_vm) {
+                                printf("WARNING: Dangling pointer detected for scope %d\n", scope_id);
+                            }
+                        }
+                    }
+                }
+            }
+
+            scopeout_done:;
+        }
+
+        else if (op == CHKL) {
+            // Check variable liveness before access
+            // Operand: offset (bp-relative)
+            if (!vm->enable_stack_instrumentation) {
+                (void)*vm->pc++;  // Consume offset operand
+                goto chkl_done;
+            }
+
+            long long offset = *vm->pc++;
+
+            // Look up variable metadata
+            char key_buf[32];
+            snprintf(key_buf, sizeof(key_buf), "%lld", offset);
+            StackVarMeta *meta = (StackVarMeta *)hashmap_get(&vm->stack_var_meta, key_buf);
+
+            if (meta) {
+                // Check if variable matches current BP (different frames shouldn't interfere)
+                if (meta->bp != (long long)vm->bp && meta->bp != 0) {
+                    // Different frame - this is use after function return
+                    if (vm->stack_instr_errors) {
+                        printf("\n========== USE AFTER RETURN DETECTED ==========\n");
+                        printf("Variable '%s' at bp%+lld accessed after function return\n",
+                               meta->name, meta->offset);
+                        printf("Variable BP:  0x%llx\n", meta->bp);
+                        printf("Current BP:   0x%llx\n", (long long)vm->bp);
+                        printf("Current PC:   0x%llx (offset: %lld)\n",
+                               (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                        printf("==============================================\n");
+                        return -1;
+                    }
+                }
+
+                // Check if variable is alive
+                if (!meta->is_alive) {
+                    if (vm->stack_instr_errors) {
+                        printf("\n========== USE AFTER SCOPE DETECTED ==========\n");
+                        printf("Variable '%s' at bp%+lld accessed after scope exit\n",
+                               meta->name, meta->offset);
+                        printf("Scope ID: %d\n", meta->scope_id);
+                        printf("Current PC: 0x%llx (offset: %lld)\n",
+                               (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                        printf("=============================================\n");
+                        return -1;
+                    } else if (vm->debug_vm) {
+                        printf("WARNING: Variable '%s' accessed after scope exit\n", meta->name);
+                    }
+                }
+            }
+
+            chkl_done:;
+        }
+
+        else if (op == MARKR) {
+            // Mark variable read access
+            // Operand: offset (bp-relative)
+            if (!vm->enable_stack_instrumentation) {
+                (void)*vm->pc++;  // Consume offset operand
+                goto markr_done;
+            }
+
+            long long offset = *vm->pc++;
+
+            // Look up variable metadata
+            char key_buf[32];
+            snprintf(key_buf, sizeof(key_buf), "%lld", offset);
+            StackVarMeta *meta = (StackVarMeta *)hashmap_get(&vm->stack_var_meta, key_buf);
+
+            if (meta && meta->bp == (long long)vm->bp) {
+                meta->read_count++;
+                if (vm->debug_vm) {
+                    printf("MARKR: '%s' read (count=%lld)\n", meta->name, meta->read_count);
+                }
+            }
+
+            markr_done:;
+        }
+
+        else if (op == MARKW) {
+            // Mark variable write access
+            // Operand: offset (bp-relative)
+            if (!vm->enable_stack_instrumentation) {
+                (void)*vm->pc++;  // Consume offset operand
+                goto markw_done;
+            }
+
+            long long offset = *vm->pc++;
+
+            // Look up variable metadata
+            char key_buf[32];
+            snprintf(key_buf, sizeof(key_buf), "%lld", offset);
+            StackVarMeta *meta = (StackVarMeta *)hashmap_get(&vm->stack_var_meta, key_buf);
+
+            if (meta && meta->bp == (long long)vm->bp) {
+                meta->write_count++;
+                // Mark as initialized on first write
+                if (!meta->initialized) {
+                    meta->initialized = 1;
+                }
+                if (vm->debug_vm) {
+                    printf("MARKW: '%s' write (count=%lld)\n", meta->name, meta->write_count);
+                }
+            }
+
+            markw_done:;
+        }
+
+        // ========== END STACK INSTRUMENTATION INSTRUCTIONS ==========
+
         else if (op == SETJMP) {
             // setjmp: Save execution context to jmp_buf and return 0
             // The jmp_buf address is in ax (not on stack)
@@ -1322,6 +1546,16 @@ void cc_init(JCC *vm, bool enable_debugger) {
     vm->provenance.buckets = NULL;
     vm->provenance.used = 0;
 
+    // Initialize stack_var_meta HashMap for stack instrumentation
+    vm->stack_var_meta.capacity = 0;
+    vm->stack_var_meta.buckets = NULL;
+    vm->stack_var_meta.used = 0;
+
+    // Initialize stack instrumentation state
+    vm->current_scope_id = 0;
+    vm->current_function_scope_id = 0;
+    vm->stack_high_water = 0;
+
     // Add default system include path for <...> includes
     cc_system_include(vm, "./include");
 
@@ -1354,6 +1588,16 @@ void cc_destroy(JCC *vm) {
     if (vm->init_state.buckets)
         free(vm->init_state.buckets);
 
+    // Free stack_var_meta HashMap and metadata structures
+    if (vm->stack_var_meta.buckets) {
+        for (int i = 0; i < vm->stack_var_meta.capacity; i++) {
+            if (vm->stack_var_meta.buckets[i].key && vm->stack_var_meta.buckets[i].val) {
+                free(vm->stack_var_meta.buckets[i].val);  // Free StackVarMeta struct
+            }
+        }
+        free(vm->stack_var_meta.buckets);
+    }
+
     // Free FFI table
     if (vm->ffi_table) {
         for (int i = 0; i < vm->ffi_count; i++) {
@@ -1371,6 +1615,40 @@ void cc_destroy(JCC *vm) {
         free(vm->error_message);
         vm->error_message = NULL;
     }
+}
+
+void cc_print_stack_report(JCC *vm) {
+    if (!vm || !vm->enable_stack_instrumentation) {
+        printf("Stack instrumentation not enabled.\n");
+        return;
+    }
+
+    printf("\n========== STACK INSTRUMENTATION REPORT ==========\n");
+    printf("Stack high water mark: %lld bytes\n", vm->stack_high_water);
+    printf("Total scopes created: %d\n", vm->current_scope_id);
+    printf("\n");
+
+    // Collect and display variable statistics
+    printf("Variable Access Statistics:\n");
+    printf("%-20s %10s %10s %10s %10s\n", "Variable", "Scope", "Reads", "Writes", "Status");
+    printf("%-20s %10s %10s %10s %10s\n", "--------", "-----", "-----", "------", "------");
+
+    for (int i = 0; i < vm->stack_var_meta.capacity; i++) {
+        if (vm->stack_var_meta.buckets[i].key != NULL) {
+            StackVarMeta *meta = (StackVarMeta *)vm->stack_var_meta.buckets[i].val;
+            if (meta) {
+                const char *status = meta->is_alive ? "alive" : "dead";
+                printf("%-20s %10d %10lld %10lld %10s\n",
+                       meta->name ? meta->name : "<unknown>",
+                       meta->scope_id,
+                       meta->read_count,
+                       meta->write_count,
+                       status);
+            }
+        }
+    }
+
+    printf("=================================================\n\n");
 }
 
 void cc_include(JCC *vm, const char *path) {
