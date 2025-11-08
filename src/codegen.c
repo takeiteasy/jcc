@@ -34,10 +34,19 @@ static void emit_with_arg(JCC *vm, int instruction, long long arg) {
 // Emit appropriate load instruction based on type
 // If is_deref is true, this is a pointer dereference and should be checked
 static void emit_load(JCC *vm, Type *ty, int is_deref) {
-    // If UAF detection or bounds checking enabled, check pointer validity before dereferencing
+    // If UAF detection, bounds checking, or dangling detection enabled, check pointer before dereferencing
     // Only check on actual dereferences, not when loading pointer values
-    if (is_deref && (vm->enable_uaf_detection || vm->enable_bounds_checks))
+    if (is_deref && (vm->enable_uaf_detection || vm->enable_bounds_checks || vm->enable_dangling_detection))
         emit(vm, CHKP);  // Check that pointer in ax is valid
+
+    // If alignment checking enabled, check pointer alignment before dereferencing
+    if (is_deref && vm->enable_alignment_checks) {
+        // Emit alignment check with type size
+        size_t type_size = ty->size;
+        if (type_size > 1) {  // Only check for types larger than 1 byte
+            emit_with_arg(vm, CHKA, type_size);
+        }
+    }
 
     // If type checking enabled, check the type on dereference
     if (is_deref && vm->enable_type_checks) {
@@ -299,6 +308,11 @@ void gen_expr(JCC *vm, Node *node) {
                 gen_expr(vm, node->rhs);
                 emit(vm, ADD);
             }
+
+            // Check pointer arithmetic if result is a pointer type
+            if (vm->enable_invalid_arithmetic && node->ty->kind == TY_PTR) {
+                emit(vm, CHKPA);
+            }
             return;
 
         case ND_SUB:
@@ -311,6 +325,11 @@ void gen_expr(JCC *vm, Node *node) {
                 emit(vm, PUSH);
                 gen_expr(vm, node->rhs);
                 emit(vm, SUB);
+            }
+
+            // Check pointer arithmetic if result is a pointer type
+            if (vm->enable_invalid_arithmetic && node->ty->kind == TY_PTR) {
+                emit(vm, CHKPA);
             }
             return;
 
@@ -453,10 +472,39 @@ void gen_expr(JCC *vm, Node *node) {
                     vm->num_func_addr_patches++;
                 } else if (node->lhs->var->is_local) {
                     emit_with_arg(vm, LEA, node->lhs->var->offset);
+
+                    // Mark address for dangling pointer detection
+                    if (vm->enable_dangling_detection) {
+                        // ax now contains the address of the stack variable
+                        // Emit MARKA with stack offset and size as two operands
+                        // node->ty is the pointer type, node->ty->base is what it points to
+                        size_t pointed_size = node->ty->base ? node->ty->base->size : 1;
+                        emit(vm, MARKA);
+                        *++vm->text_ptr = node->lhs->var->offset;
+                        *++vm->text_ptr = pointed_size;
+                    }
+
+                    // Mark provenance for stack pointer
+                    if (vm->enable_provenance_tracking) {
+                        size_t pointed_size = node->ty->base ? node->ty->base->size : 1;
+                        emit(vm, MARKP);
+                        *++vm->text_ptr = 1;  // Origin type: 1=STACK
+                        *++vm->text_ptr = (long long)(vm->bp + node->lhs->var->offset);  // Base address
+                        *++vm->text_ptr = pointed_size;
+                    }
                 } else {
                     // Global variable - resolve to canonical version
                     Obj *resolved = resolve_global_var(vm, node->lhs->var);
                     emit_with_arg(vm, IMM, (long long)(vm->data_seg + resolved->offset));
+
+                    // Mark provenance for global pointer
+                    if (vm->enable_provenance_tracking) {
+                        size_t pointed_size = node->ty->base ? node->ty->base->size : 1;
+                        emit(vm, MARKP);
+                        *++vm->text_ptr = 2;  // Origin type: 2=GLOBAL
+                        *++vm->text_ptr = (long long)(vm->data_seg + resolved->offset);  // Base
+                        *++vm->text_ptr = pointed_size;
+                    }
                 }
             } else if (node->lhs->kind == ND_DEREF) {
                 // Address of dereferenced pointer - just evaluate the pointer

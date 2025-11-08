@@ -3,9 +3,13 @@
 > [!WARNING]
 > Work in progress, see [TODO](#todo)
 
-`JCC` is a ~~C89~~/~~C99~~/C11* JIT C Compiler. The preprocessor/lexer/parser is taken from [chibicc](http://https://github.com/rui314/chibicc) and the VM was built off [c4](https://github.com/rswier/c4) and [write-a-C-interpreter](https://github.com/lotabout/write-a-C-interpreter).
+`JCC` is a ~~C89~~/~~C99~~/C11* JIT C Compiler. The preprocessor/lexer/parser is taken from [chibicc](http://https://github.com/rui314/chibicc) and the VM was built off [c4](https://github.com/rswier/c4) and [write-a-C-interpreter](https://github.com/lotabout/write-a-C-interpreter). 
 
 **\*** Most C11 features implemented, see [TODO](#todo) for features still missing
+
+The goal of this project is correctness and safety. This is just a toy, and won't be 🚀🔥 **BLAZING FAST** 🔥🚀. I wouldn't recommend using this for anything important or in any production code. I'm not an expert so safety features may not be perfect. They will also have performance overhead (depends on the features enabled).
+
+`JCC` is not just a JIT compiler. It also extends the C preprocessor with new features, see [Pragma Macros](#pragma-macros) for more details. I have lots of other ideas for more `#pragma` extensions too.
 
 ## Features
 
@@ -121,40 +125,18 @@
 ### Threading + Atomics Support
 
 > [!WARNING]
-> Not supported
+> Not supported (yet)
 
 JCC is single-threaded and does not implement any threading or atomic operations yet.
 
 ## Pragma Macros
 
-Pragma macros are a feature that allows you to define macros that are expanded at compile time. They are defined using the `#pragma macro` directive. This is a wip and may change in the future.
+> [!WARNING]
+> This is a very early feature and a wip. The API may change in the future and some features may not be fully implemented.
 
-```c
-#pragma macro
-long make_5() {
-    return AST_INT_LITERAL(5);
-}
+Pragma macros are a feature that allows you to define macros that are expanded at compile time. Create functions, structs, unions, enums, and variables at compile time. There is a comprehensive reflection API. A common problem in C is creating "enum_to_string" functions. Now you can write a single pragma macro that generates the function at compile time for *any* enum:
 
-int main() {
-    int a = make_5();
-    if (a != 5)
-        return 1;  // Test failed
-    return 0;  // Test passed
-}
-```
-
-This will expand to:
-
-```c
-int main() {
-    int a = 5;
-    if (a != 5)
-        return 1;
-    return 0;  // Test passed (obviously)
-}
-```
-
-Notice the `make_5()` function is not in the expanded code, and the call replaced by `5`
+```TODO: Example```
 
 ### JSON Output
 
@@ -244,7 +226,39 @@ $ ./jcc --json -o lib.json lib.h
   - CHKI opcode validates variable is initialized before read
   - Detects use of uninitialized local variables with stack offset info
   - HashMap key: BP address + offset for per-function-call tracking
-- [ ] `--pointer-sanitizer` flag for full pointer tracking and validation on dereference
+- [x] `--pointer-sanitizer` **Comprehensive pointer checking (convenience flag)**
+  - Enables `--bounds-checks`, `--uaf-detection`, and `--type-checks` together
+  - Provides comprehensive pointer safety in a single flag
+  - Recommended for development and testing
+
+### Advanced Pointer Tracking Features
+
+- [x] `--dangling-pointers` **Dangling stack pointer detection**
+  - Tracks all stack pointer creations via MARKA opcode
+  - Invalidates pointers when function returns (LEV instruction)
+  - CHKP validates pointer hasn't been invalidated before dereference
+  - Detects use-after-return bugs (e.g., returning `&local_var`)
+  - HashMap tracks: pointer value → {BP, stack offset, size}
+- [x] `--alignment-checks` **Pointer alignment validation**
+  - CHKA opcode validates pointer alignment before dereference
+  - Checks that `pointer % type_size == 0`
+  - Detects misaligned memory access (e.g., `int*` at odd address)
+  - Only checks types larger than 1 byte
+- [x] `--provenance-tracking` **Pointer origin tracking**
+  - Tracks pointer provenance: HEAP, STACK, or GLOBAL
+  - MARKP opcode records origin when pointers are created
+  - Automatically tracks heap allocations in MALC opcode
+  - HashMap stores: pointer → {origin_type, base, size}
+  - Enables validation of pointer operations within original object bounds
+- [x] `--invalid-arithmetic` **Pointer arithmetic bounds checking**
+  - CHKPA opcode validates pointer arithmetic results
+  - Requires `--provenance-tracking` to be enabled
+  - Checks that `ptr` stays within `[base, base+size]` after arithmetic
+  - Detects out-of-bounds pointer computations before dereference
+  - Prevents pointer escape from original object
+
+### Future Memory Safety Features
+
 - [ ] `--stack-instrumentation` flag for tracking stack variable lifetimes and accesses
 - [ ] `--ffi-type-checking` flag for runtime type checking on FFI calls
 - [ ] `--ffi-allow` and `--ffi-deny` flags for whitelisting and blacklisting functions to be exposed to the FFI
@@ -353,6 +367,62 @@ Address:      0x7ffee4b3f8
 BP:           0x7ffee4b400
 PC:           0x7ffe400120 (offset: 32)
 ================================================
+```
+
+```c
+// test_dangling_pointer.c - Dangling stack pointer example
+
+int *get_local_address() {
+    int x = 42;
+    return &x;  // Return address of local variable (dangling pointer!)
+}
+
+int main() {
+    int *ptr = get_local_address();
+    int value = *ptr;  // Dereference dangling pointer!
+    return value;
+}
+```
+
+```bash
+$ ./jcc --dangling-pointers test_dangling_pointer.c
+
+========== DANGLING STACK POINTER ==========
+Attempted to dereference invalidated stack pointer
+Address:       0x92e5fffb0
+Original BP:   invalidated (function has returned)
+Stack offset:  -1
+Size:          4 bytes
+Current PC:    0x92e800080 (offset: 16)
+==========================================
+```
+
+```c
+// test_alignment.c - Pointer alignment example
+
+void *malloc(unsigned long size);
+
+int main() {
+    char *buffer = (char *)malloc(16);
+
+    // Create a misaligned int pointer (offset by 1 byte)
+    int *misaligned = (int *)(buffer + 1);
+
+    int value = *misaligned;  // Alignment error!
+    return value;
+}
+```
+
+```bash
+$ ./jcc --alignment-checks test_alignment.c
+
+========== ALIGNMENT ERROR ==========
+Pointer is misaligned for type
+Address:       0x100c8eac1
+Type size:     4 bytes
+Required alignment: 4 bytes
+Current PC:    0xb98800148 (offset: 41)
+=====================================
 ```
 
 ### Interactive Debugger
