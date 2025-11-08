@@ -36,8 +36,14 @@ static void emit_with_arg(JCC *vm, int instruction, long long arg) {
 static void emit_load(JCC *vm, Type *ty, int is_deref) {
     // If UAF detection or bounds checking enabled, check pointer validity before dereferencing
     // Only check on actual dereferences, not when loading pointer values
-    if (is_deref && (vm->enable_uaf_detection || vm->enable_bounds_checks)) 
+    if (is_deref && (vm->enable_uaf_detection || vm->enable_bounds_checks))
         emit(vm, CHKP);  // Check that pointer in ax is valid
+
+    // If type checking enabled, check the type on dereference
+    if (is_deref && vm->enable_type_checks) {
+        // Emit type check with expected type
+        emit_with_arg(vm, CHKT, ty->kind);
+    }
 
     if (ty->kind == TY_CHAR) {
         emit(vm, LC);  // 1 byte - loads and sign extends via C semantics
@@ -155,17 +161,26 @@ void gen_expr(JCC *vm, Node *node) {
             } else if (node->var->is_local) {
                 // Local variable or parameter - load address relative to bp
                 // Parameters have positive offsets, locals have negative offsets
+
+                // Check if variable is initialized (for uninitialized detection)
+                // Only check scalar types (not arrays/structs) that will actually be loaded
+                bool is_param = node->var->offset > 0;
+                bool is_scalar = (node->ty->kind != TY_ARRAY &&
+                                  node->ty->kind != TY_STRUCT &&
+                                  node->ty->kind != TY_UNION);
+
+                if (vm->enable_uninitialized_detection && is_scalar) {
+                    emit_with_arg(vm, CHKI, node->var->offset);
+                }
+
                 emit_with_arg(vm, LEA, node->var->offset);
-                
+
                 // For struct/union parameters (positive offset), we pass by pointer
                 // So we need to load the pointer value first
-                bool is_param = node->var->offset > 0;
                 if (is_param && (node->ty->kind == TY_STRUCT || node->ty->kind == TY_UNION)) {
                     emit(vm, LI);  // Load the pointer to struct
                     // Now ax contains the struct address
-                } else if (node->ty->kind != TY_ARRAY &&
-                           node->ty->kind != TY_STRUCT &&
-                           node->ty->kind != TY_UNION) {
+                } else if (is_scalar) {
                     // For arrays/structs/unions (locals), LEA gives us the address
                     // For scalar types, we need to load the value
                     emit_load(vm, node->ty, 0);  // Not a dereference, just loading variable value
@@ -257,6 +272,16 @@ void gen_expr(JCC *vm, Node *node) {
             } else {
                 // For scalar types, emit appropriate store instruction
                 emit_store(vm, node->ty);
+            }
+
+            // Mark local variable as initialized (for uninitialized detection)
+            if (vm->enable_uninitialized_detection && node->lhs->kind == ND_VAR && node->lhs->var->is_local) {
+                bool is_scalar = (node->ty->kind != TY_ARRAY &&
+                                  node->ty->kind != TY_STRUCT &&
+                                  node->ty->kind != TY_UNION);
+                if (is_scalar) {
+                    emit_with_arg(vm, MARKI, node->lhs->var->offset);
+                }
             }
 
             // Assignment expression returns the assigned value (already in ax/fax for scalars)
@@ -1349,6 +1374,19 @@ void gen_function(JCC *vm, Obj *fn) {
 
     // Function prologue
     emit_with_arg(vm, ENT, stack_size);
+
+    // Mark function parameters as initialized (for uninitialized detection)
+    if (vm->enable_uninitialized_detection) {
+        for (Obj *param = fn->params; param; param = param->next) {
+            // Only mark scalar types (arrays/structs don't need tracking)
+            bool is_scalar = (param->ty->kind != TY_ARRAY &&
+                              param->ty->kind != TY_STRUCT &&
+                              param->ty->kind != TY_UNION);
+            if (is_scalar) {
+                emit_with_arg(vm, MARKI, param->offset);
+            }
+        }
+    }
 
     // Generate function body
     gen_stmt(vm, fn->body);

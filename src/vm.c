@@ -111,8 +111,8 @@ int vm_eval(JCC *vm) {
                     "MALC ,MFRE ,MCPY ,"
                     "SX1  ,SX2  ,SX4  ,ZX1  ,ZX2  ,ZX4  ,"
                     "FLD  ,FST  ,FADD ,FSUB ,FMUL ,FDIV ,FNEG ,FEQ  ,FNE  ,FLT  ,FLE  ,FGT  ,FGE  ,I2F  ,F2I  ,FPSH ,"
-                    "CALLF,CHKB ,CHKP ,SETJP,LONJP"[op * 6]);
-            if (op <= ADJ || op == CHKB)
+                    "CALLF,CHKB ,CHKP ,CHKT ,CHKI ,MARKI,SETJP,LONJP"[op * 6]);
+            if (op <= ADJ || op == CHKB || op == CHKT || op == CHKI || op == MARKI)
                 printf(" %lld\n", *vm->pc);
             else
                 printf("\n");
@@ -145,6 +145,11 @@ int vm_eval(JCC *vm) {
 
             // Allocate space for local variables
             vm->sp = vm->sp - *vm->pc++;
+
+            // Note: For uninitialized detection, local variables are uninitialized by default
+            // (not in init_state HashMap). Parameters are marked as initialized by codegen.
+            // Different function frames have different bp values, so init_state keys naturally
+            // separate between frames.
         }
         else if (op == ADJ)  { vm->sp = vm->sp + *vm->pc++; }                               // add esp, <size>
         else if (op == LEV)  {
@@ -242,6 +247,7 @@ int vm_eval(JCC *vm) {
                         header->freed = 0;
                         header->generation = 0;
                         header->alloc_pc = vm->text_seg ? (long long)(vm->pc - vm->text_seg) : 0;
+                        header->type_kind = TY_VOID;  // Default to void* (generic pointer)
 
                         // If heap canaries enabled, write canaries
                         if (vm->enable_heap_canaries) {
@@ -278,6 +284,7 @@ int vm_eval(JCC *vm) {
                     header->freed = 0;
                     header->generation = 0;
                     header->alloc_pc = vm->text_seg ? (long long)(vm->pc - vm->text_seg) : 0;
+                    header->type_kind = TY_VOID;  // Default to void* (generic pointer)
 
                     // If heap canaries enabled, write canaries
                     if (vm->enable_heap_canaries) {
@@ -795,6 +802,161 @@ int vm_eval(JCC *vm) {
 #endif  // JCC_HAS_FFI
         }
 
+        else if (op == CHKI) {
+            // Check if variable is initialized
+            // Operand: stack offset (bp-relative)
+            if (!vm->enable_uninitialized_detection) {
+                // Uninitialized detection not enabled, skip
+                (void)*vm->pc++;  // Consume operand but don't use it
+                goto chki_done;
+            }
+
+            long long offset = *vm->pc++;
+
+            // Adjust offset for stack canaries if enabled
+            if (vm->enable_stack_canaries && offset < 0) {
+                offset -= 1;
+            }
+
+            // Create key for HashMap lookup (bp address + offset)
+            long long addr = (long long)(vm->bp + offset);
+            char key[32];
+            snprintf(key, sizeof(key), "%lld", addr);
+
+            // Check if variable is initialized
+            void *init = hashmap_get(&vm->init_state, key);
+            if (!init) {
+                printf("\n========== UNINITIALIZED VARIABLE READ ==========\n");
+                printf("Attempted to read uninitialized variable\n");
+                printf("Stack offset: %lld\n", offset);
+                printf("Address:      0x%llx\n", addr);
+                printf("BP:           0x%llx\n", (long long)vm->bp);
+                printf("PC:           0x%llx (offset: %lld)\n",
+                       (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                printf("================================================\n");
+                return -1;
+            }
+
+            chki_done:;
+        }
+
+        else if (op == MARKI) {
+            // Mark variable as initialized
+            // Operand: stack offset (bp-relative)
+            if (!vm->enable_uninitialized_detection) {
+                // Uninitialized detection not enabled, skip
+                (void)*vm->pc++;  // Consume operand but don't use it
+                goto marki_done;
+            }
+
+            long long offset = *vm->pc++;
+
+            // Adjust offset for stack canaries if enabled
+            if (vm->enable_stack_canaries && offset < 0) {
+                offset -= 1;
+            }
+
+            // Create key for HashMap (bp address + offset)
+            long long addr = (long long)(vm->bp + offset);
+            char key_buf[32];
+            snprintf(key_buf, sizeof(key_buf), "%lld", addr);
+
+            // strdup() the key since hashmap stores the pointer
+            char *key = strdup(key_buf);
+
+            // Mark as initialized (use non-NULL value)
+            hashmap_put(&vm->init_state, key, (void*)1);
+
+            marki_done:;
+        }
+
+        else if (op == CHKT) {
+            // Check type on pointer dereference
+            // Operand: expected TypeKind
+            // ax contains the pointer to check
+            if (!vm->enable_type_checks) {
+                // Type checking not enabled, skip
+                (void)*vm->pc++;  // Consume operand but don't use it
+                goto chkt_done;
+            }
+
+            int expected_type = (int)*vm->pc++;
+            long long ptr = vm->ax;
+
+            // Skip check for NULL (will be caught by CHKP if enabled)
+            if (ptr == 0) {
+                goto chkt_done;
+            }
+
+            // Skip check for void* (TY_VOID) and generic pointers (TY_PTR)
+            // These are universal pointers in C
+            if (expected_type == TY_VOID || expected_type == TY_PTR) {
+                goto chkt_done;
+            }
+
+            // Only check heap allocations (we can't track stack variable types at runtime)
+            if (ptr >= (long long)vm->heap_seg && ptr < (long long)vm->heap_end) {
+                // Find the allocation header
+                char *search_ptr = vm->heap_seg;
+                AllocHeader *found_header = NULL;
+
+                while (search_ptr < vm->heap_ptr) {
+                    AllocHeader *header = (AllocHeader *)search_ptr;
+
+                    if (header->magic != 0xDEADBEEF) {
+                        search_ptr += sizeof(AllocHeader) + 8;
+                        continue;
+                    }
+
+                    long long alloc_start = (long long)(header + 1);
+                    long long alloc_end = alloc_start + header->size;
+
+                    if (ptr >= alloc_start && ptr <= alloc_end) {
+                        found_header = header;
+                        break;
+                    }
+
+                    size_t canary_overhead = vm->enable_heap_canaries ? sizeof(long long) : 0;
+                    search_ptr += sizeof(AllocHeader) + header->size + canary_overhead;
+                }
+
+                if (found_header) {
+                    // Check type match
+                    int actual_type = found_header->type_kind;
+
+                    // Skip if allocation was generic (TY_VOID or TY_PTR)
+                    if (actual_type != TY_VOID && actual_type != TY_PTR) {
+                        if (actual_type != expected_type) {
+                            // Type mismatch!
+                            const char *type_names[] = {
+                                "void", "bool", "char", "short", "int", "long",
+                                "float", "double", "long double", "enum", "pointer",
+                                "function", "array", "vla", "struct", "union"
+                            };
+
+                            const char *expected_name = (expected_type >= 0 && expected_type < 16)
+                                ? type_names[expected_type] : "unknown";
+                            const char *actual_name = (actual_type >= 0 && actual_type < 16)
+                                ? type_names[actual_type] : "unknown";
+
+                            printf("\n========== TYPE MISMATCH DETECTED ==========\n");
+                            printf("Pointer type mismatch on dereference\n");
+                            printf("Address:       0x%llx\n", ptr);
+                            printf("Expected type: %s\n", expected_name);
+                            printf("Actual type:   %s\n", actual_name);
+                            printf("Allocated at PC offset: %lld\n", found_header->alloc_pc);
+                            printf("Current PC:    0x%llx (offset: %lld)\n",
+                                   (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                            printf("============================================\n");
+                            return -1;
+                        }
+                    }
+                }
+            }
+
+            chkt_done:;
+        }
+
         else if (op == SETJMP) {
             // setjmp: Save execution context to jmp_buf and return 0
             // The jmp_buf address is in ax (not on stack)
@@ -860,6 +1022,11 @@ void cc_init(JCC *vm, bool enable_debugger) {
 
     init_macros(vm);
 
+    // Initialize init_state HashMap for uninitialized variable detection
+    vm->init_state.capacity = 0;  // Will be allocated on first use by hashmap_put
+    vm->init_state.buckets = NULL;
+    vm->init_state.used = 0;
+
     // Add default system include path for <...> includes
     cc_system_include(vm, "./include");
 
@@ -887,7 +1054,11 @@ void cc_destroy(JCC *vm) {
     if (vm->heap_seg)
         free(vm->heap_seg);
     // return_buffer is part of data_seg, no need to free separately
-    
+
+    // Free init_state HashMap
+    if (vm->init_state.buckets)
+        free(vm->init_state.buckets);
+
     // Free FFI table
     if (vm->ffi_table) {
         for (int i = 0; i < vm->ffi_count; i++) {
