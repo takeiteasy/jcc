@@ -48,6 +48,7 @@ static void usage(const char *argv0, int exit_code) {
     printf("\t-k/--heap-canaries           Heap overflow protection\n");
     printf("\t-l/--memory-leak-detection   Track allocations and report leaks at exit\n");
     printf("\t-i/--stack-instrumentation   Track stack variable lifetimes and accesses\n");
+    printf("\t   --stack-errors            Enable runtime errors for stack instrumentation\n");
     printf("\t-p/--pointer-sanitizer       Enable all pointer checks (bounds, UAF, type)\n");
     printf("\t   --dangling-pointers       Detect use of stack pointers after function return\n");
     printf("\t   --alignment-checks        Validate pointer alignment for type\n");
@@ -152,6 +153,7 @@ int main(int argc, const char* argv[]) {
     int enable_pointer_sanitizer = 0;
     int enable_memory_leak_detection = 0;
     int enable_stack_instrumentation = 0;
+    int stack_instr_errors = 0;
     int enable_dangling_detection = 0;
     int enable_alignment_checks = 0;
     int enable_provenance_tracking = 0;
@@ -185,6 +187,7 @@ int main(int argc, const char* argv[]) {
         {"pointer-sanitizer", no_argument, 0, 'p'},
         {"memory-leak-detection", no_argument, 0, 'l'},
         {"stack-instrumentation", no_argument, 0, 'i'},
+        {"stack-errors", no_argument, 0, 1005},
         {"dangling-pointers", no_argument, 0, 1001},
         {"alignment-checks", no_argument, 0, 1002},
         {"provenance-tracking", no_argument, 0, 1003},
@@ -270,6 +273,9 @@ int main(int argc, const char* argv[]) {
             break;
         case 1004:
             enable_invalid_arithmetic = 1;
+            break;
+        case 1005:
+            stack_instr_errors = 1;
             break;
         case 'P':
             print_tokens = 1;
@@ -357,6 +363,7 @@ int main(int argc, const char* argv[]) {
     vm.enable_pointer_sanitizer = enable_pointer_sanitizer;
     vm.enable_memory_leak_detection = enable_memory_leak_detection;
     vm.enable_stack_instrumentation = enable_stack_instrumentation;
+    vm.stack_instr_errors = stack_instr_errors;
     vm.enable_dangling_detection = enable_dangling_detection;
     vm.enable_alignment_checks = enable_alignment_checks;
     vm.enable_provenance_tracking = enable_provenance_tracking;

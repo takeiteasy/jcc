@@ -209,6 +209,11 @@ void gen_expr(JCC *vm, Node *node) {
                                   node->ty->kind != TY_STRUCT &&
                                   node->ty->kind != TY_UNION);
 
+                // Check if variable is alive (for stack instrumentation)
+                if (vm->enable_stack_instrumentation) {
+                    emit_with_arg(vm, CHKL, node->var->offset);
+                }
+
                 if (vm->enable_uninitialized_detection && is_scalar) {
                     emit_with_arg(vm, CHKI, node->var->offset);
                 }
@@ -224,6 +229,10 @@ void gen_expr(JCC *vm, Node *node) {
                     // For arrays/structs/unions (locals), LEA gives us the address
                     // For scalar types, we need to load the value
                     emit_load(vm, node->ty, 0);  // Not a dereference, just loading variable value
+                    // Mark read access for stack instrumentation
+                    if (vm->enable_stack_instrumentation) {
+                        emit_with_arg(vm, MARKR, node->var->offset);
+                    }
                 }
             } else {
                 // Global variable - resolve to canonical version from merged program
@@ -244,6 +253,10 @@ void gen_expr(JCC *vm, Node *node) {
             // Get left side address and push it
             if (node->lhs->kind == ND_VAR) {
                 if (node->lhs->var->is_local) {
+                    // Check if variable is alive (for stack instrumentation)
+                    if (vm->enable_stack_instrumentation) {
+                        emit_with_arg(vm, CHKL, node->lhs->var->offset);
+                    }
                     emit_with_arg(vm, LEA, node->lhs->var->offset);
                 } else {
                     // Global variable - resolve to canonical version
@@ -311,6 +324,10 @@ void gen_expr(JCC *vm, Node *node) {
                 // Note: We don't return the dest address for now (chibicc limitation)
             } else {
                 // For scalar types, emit appropriate store instruction
+                // Mark write access for stack instrumentation (before store)
+                if (vm->enable_stack_instrumentation && node->lhs->kind == ND_VAR && node->lhs->var->is_local) {
+                    emit_with_arg(vm, MARKW, node->lhs->var->offset);
+                }
                 emit_store(vm, node->ty);
             }
 
@@ -505,14 +522,15 @@ void gen_expr(JCC *vm, Node *node) {
                     emit_with_arg(vm, LEA, node->lhs->var->offset);
 
                     // Mark address for dangling pointer detection
-                    if (vm->enable_dangling_detection) {
+                    if (vm->enable_dangling_detection || vm->enable_stack_instrumentation) {
                         // ax now contains the address of the stack variable
-                        // Emit MARKA with stack offset and size as two operands
+                        // Emit MARKA with stack offset, size, and scope_id as three operands
                         // node->ty is the pointer type, node->ty->base is what it points to
                         size_t pointed_size = node->ty->base ? node->ty->base->size : 1;
                         emit(vm, MARKA);
                         *++vm->text_ptr = node->lhs->var->offset;
                         *++vm->text_ptr = pointed_size;
+                        *++vm->text_ptr = vm->current_function_scope_id;  // Scope ID
                     }
 
                     // Mark provenance for stack pointer
@@ -1116,14 +1134,32 @@ static void gen_stmt(JCC *vm, Node *node) {
             }
             // Clean up VLA allocations before return
             emit_vla_cleanup(vm);
+            // Emit SCOPEOUT for function scope before return
+            if (vm->enable_stack_instrumentation) {
+                emit_with_arg(vm, SCOPEOUT, vm->current_function_scope_id);
+            }
             emit(vm, LEV);  // Return from function
             return;
 
-        case ND_BLOCK:
+        case ND_BLOCK: {
+            // Emit SCOPEIN for this block (nested scope)
+            int block_scope_id = -1;
+            if (vm->enable_stack_instrumentation) {
+                block_scope_id = vm->current_scope_id++;
+                emit_with_arg(vm, SCOPEIN, block_scope_id);
+            }
+
+            // Generate block body
             for (Node *n = node->body; n; n = n->next) {
                 gen_stmt(vm, n);
             }
+
+            // Emit SCOPEOUT for this block
+            if (vm->enable_stack_instrumentation && block_scope_id >= 0) {
+                emit_with_arg(vm, SCOPEOUT, block_scope_id);
+            }
             return;
+        }
 
         case ND_IF: {
             gen_expr(vm, node->cond);
@@ -1382,8 +1418,37 @@ static void add_debug_symbol(JCC *vm, const char *name, long long offset, Type *
     vm->debug_symbols[vm->num_debug_symbols].offset = offset;
     vm->debug_symbols[vm->num_debug_symbols].ty = ty;
     vm->debug_symbols[vm->num_debug_symbols].is_local = is_local;
-    vm->debug_symbols[vm->num_debug_symbols].scope_depth = 0;  // TODO: track actual scope depth
+    vm->debug_symbols[vm->num_debug_symbols].scope_depth = vm->current_scope_id;
     vm->num_debug_symbols++;
+}
+
+// Add stack variable metadata for instrumentation
+static void add_stack_var_meta(JCC *vm, const char *name, long long offset, Type *ty, int scope_id) {
+    if (!vm->enable_stack_instrumentation) {
+        return;
+    }
+
+    // Create metadata structure
+    StackVarMeta *meta = calloc(1, sizeof(StackVarMeta));
+    if (!meta) {
+        error("failed to allocate stack variable metadata");
+    }
+
+    meta->name = (char*)name;
+    meta->bp = 0;  // Will be set at runtime
+    meta->offset = offset;
+    meta->ty = ty;
+    meta->scope_id = scope_id;
+    meta->is_alive = 0;  // Will be activated by SCOPEIN
+    meta->initialized = 0;
+    meta->read_count = 0;
+    meta->write_count = 0;
+
+    // Store in HashMap keyed by offset (will be bp+offset at runtime)
+    // For now, use offset as key during codegen, runtime will use bp+offset
+    char key[32];
+    snprintf(key, sizeof(key), "%lld", offset);
+    hashmap_put(&vm->stack_var_meta, key, meta);
 }
 
 // Generate code for a function
@@ -1432,12 +1497,18 @@ void gen_function(JCC *vm, Obj *fn) {
     // [old_bp]    <- bp[0] or bp (BP points here)
     // [local1]    <- bp[-1] or below BP (allocated by ENT)
     
+    // Function scope (scope_id 0 reserved for function-level)
+    int function_scope_id = vm->current_scope_id++;
+    vm->current_function_scope_id = function_scope_id;
+
     int param_offset = 2;  // First param at bp+2 (arg1)
     for (Obj *param = fn->params; param; param = param->next) {
         param->offset = param_offset;
         param->is_local = true;  // Parameters are accessed like locals
         // Add to debug symbol table
         add_debug_symbol(vm, param->name, param_offset, param->ty, 1);
+        // Add to stack instrumentation metadata
+        add_stack_var_meta(vm, param->name, param_offset, param->ty, function_scope_id);
         param_offset++;  // Next param is at higher index
     }
     
@@ -1478,6 +1549,8 @@ void gen_function(JCC *vm, Obj *fn) {
             var->offset = -stack_size;  // Locals have negative offsets (below bp)
             // Add to debug symbol table
             add_debug_symbol(vm, var->name, var->offset, var->ty, 1);
+            // Add to stack instrumentation metadata
+            add_stack_var_meta(vm, var->name, var->offset, var->ty, function_scope_id);
         }
     }
 
@@ -1488,6 +1561,11 @@ void gen_function(JCC *vm, Obj *fn) {
 
     // Function prologue
     emit_with_arg(vm, ENT, stack_size);
+
+    // Emit SCOPEIN for function-level scope (activates all function variables)
+    if (vm->enable_stack_instrumentation) {
+        emit_with_arg(vm, SCOPEIN, function_scope_id);
+    }
 
     // Mark function parameters as initialized (for uninitialized detection)
     if (vm->enable_uninitialized_detection) {
@@ -1510,6 +1588,10 @@ void gen_function(JCC *vm, Obj *fn) {
     // 1. Functions with explicit returns handle cleanup before each return
     // 2. Functions without explicit returns reaching here is undefined behavior
     //    for non-void functions, so VLA cleanup is not critical
+    // Emit SCOPEOUT for function scope before final return
+    if (vm->enable_stack_instrumentation) {
+        emit_with_arg(vm, SCOPEOUT, function_scope_id);
+    }
     emit(vm, LEV);
     
     // Clear current function

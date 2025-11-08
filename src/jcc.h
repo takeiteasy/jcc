@@ -81,6 +81,12 @@ typedef enum {
     CHKA,   // Check alignment
     CHKPA,  // Check pointer arithmetic (invalid arithmetic detection)
     MARKP,  // Mark provenance (track pointer origin)
+    // Stack instrumentation opcodes
+    SCOPEIN,  // Mark scope entry (allocate/activate variables)
+    SCOPEOUT, // Mark scope exit (invalidate variables, detect dangling pointers)
+    CHKL,     // Check variable liveness before access
+    MARKR,    // Mark variable read access
+    MARKW,    // Mark variable write access
     // Non-local jump instructions (setjmp/longjmp)
     SETJMP, // Save execution context to jmp_buf, return 0
     LONGJMP // Restore execution context from jmp_buf, return val
@@ -656,12 +662,39 @@ typedef struct AllocRecord {
  @field bp Base pointer value when pointer was created.
  @field offset Stack offset from BP.
  @field size Size of the pointed-to object.
+ @field scope_id Unique identifier for the scope where variable was declared.
 */
 typedef struct StackPtrInfo {
     long long bp;
     long long offset;
     size_t size;
+    int scope_id;
 } StackPtrInfo;
+
+/*!
+ @struct StackVarMeta
+ @abstract Unified metadata for stack variable instrumentation.
+ @field name Variable name (for debugging/reporting).
+ @field bp Base pointer value when variable is active.
+ @field offset Offset from BP (negative for locals, positive for params).
+ @field ty Type information for the variable.
+ @field scope_id Unique identifier for the scope where variable was declared.
+ @field is_alive 1 if variable is in scope, 0 if out of scope.
+ @field initialized 1 if variable has been initialized, 0 if uninitialized.
+ @field read_count Number of read accesses to this variable.
+ @field write_count Number of write accesses to this variable.
+*/
+typedef struct StackVarMeta {
+    char *name;
+    long long bp;
+    long long offset;
+    Type *ty;
+    int scope_id;
+    int is_alive;
+    int initialized;
+    long long read_count;
+    long long write_count;
+} StackVarMeta;
 
 /*!
  @struct ProvenanceInfo
@@ -810,6 +843,7 @@ struct JCC {
     HashMap init_state;        // Track initialization state of stack variables (for uninitialized detection)
     HashMap stack_ptrs;        // Track stack pointers for dangling detection (ptr -> {bp, offset, size})
     HashMap provenance;        // Track pointer provenance (ptr -> {origin_type, base, size})
+    HashMap stack_var_meta;    // Unified stack variable metadata (bp+offset -> StackVarMeta)
 
     // Configuration
     int poolsize;              // Size of memory segments (bytes)
@@ -824,13 +858,19 @@ struct JCC {
     int enable_heap_canaries;           // Heap overflow protection
     int enable_pointer_sanitizer;       // Convenience flag: enables bounds, UAF, and type checks together
     int enable_memory_leak_detection;   // Track allocations and report leaks at exit
-    int enable_stack_instrumentation;   // Track stack variable lifetimes
+    int enable_stack_instrumentation;   // Track stack variable lifetimes and accesses
+    int stack_instr_errors;             // Enable runtime errors for stack instrumentation (vs logging only)
 
     // Advanced pointer tracking features
     int enable_dangling_detection;      // Detect use of stack pointers after function return
     int enable_alignment_checks;        // Validate pointer alignment for type
     int enable_provenance_tracking;     // Track pointer origin and validate operations
     int enable_invalid_arithmetic;      // Detect pointer arithmetic outside object bounds
+
+    // Stack instrumentation state
+    int current_scope_id;               // Incremented for each scope entry
+    int current_function_scope_id;      // Scope ID of current function being generated
+    long long stack_high_water;         // Maximum stack usage tracking
 
     // Debugger state
     int enable_debugger;                // Enable interactive debugger
@@ -978,6 +1018,16 @@ void cc_init(JCC *vm, bool enable_debugger);
  @param vm The JCC instance to destroy.
 */
 void cc_destroy(JCC *vm);
+
+/*!
+ @function cc_print_stack_report
+ @abstract Print stack instrumentation statistics and report.
+ @discussion Outputs stack usage statistics including high water mark,
+             variable access counts, and scope information. Only useful
+             when stack instrumentation is enabled.
+ @param vm The JCC instance.
+*/
+void cc_print_stack_report(JCC *vm);
 
 /*!
  @function cc_include
