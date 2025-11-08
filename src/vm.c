@@ -119,14 +119,62 @@ int vm_eval(JCC *vm) {
         }
         
         if (op == IMM)        { vm->ax = *vm->pc++; }                                        // load immediate value to ax
-        else if (op == LC)    { vm->ax = (long long)(*(signed char *)(long long)vm->ax); }   // load signed char, sign-extend to long long
-        else if (op == LS)    { vm->ax = (long long)(*(short *)(long long)vm->ax); }         // load short, sign-extend to long long
-        else if (op == LW)    { vm->ax = (long long)(*(int *)(long long)vm->ax); }           // load int, sign-extend to long long
-        else if (op == LI)    { vm->ax = *(long long *)(long long)vm->ax; }                  // load long long to ax, address in ax
-        else if (op == SC)    { vm->ax = *(char *)*vm->sp++ = vm->ax; }                      // save character to address, value in ax, address on stack
-        else if (op == SS)    { vm->ax = *(short *)*vm->sp++ = vm->ax; }                     // save short to address, value in ax, address on stack
-        else if (op == SW)    { vm->ax = *(int *)*vm->sp++ = vm->ax; }                       // save int (word) to address, value in ax, address on stack
-        else if (op == SI)    { *(long long *)*vm->sp++ = vm->ax; }                          // save long long to address, value in ax, address on stack
+        else if (op == LC)    {
+            // Check read watchpoints before loading
+            if (vm->enable_debugger && vm->num_watchpoints > 0) {
+                debugger_check_watchpoint(vm, (void*)vm->ax, 1, WATCH_READ);
+            }
+            vm->ax = (long long)(*(signed char *)(long long)vm->ax);   // load signed char, sign-extend to long long
+        }
+        else if (op == LS)    {
+            // Check read watchpoints before loading
+            if (vm->enable_debugger && vm->num_watchpoints > 0) {
+                debugger_check_watchpoint(vm, (void*)vm->ax, 2, WATCH_READ);
+            }
+            vm->ax = (long long)(*(short *)(long long)vm->ax);         // load short, sign-extend to long long
+        }
+        else if (op == LW)    {
+            // Check read watchpoints before loading
+            if (vm->enable_debugger && vm->num_watchpoints > 0) {
+                debugger_check_watchpoint(vm, (void*)vm->ax, 4, WATCH_READ);
+            }
+            vm->ax = (long long)(*(int *)(long long)vm->ax);           // load int, sign-extend to long long
+        }
+        else if (op == LI)    {
+            // Check read watchpoints before loading
+            if (vm->enable_debugger && vm->num_watchpoints > 0) {
+                debugger_check_watchpoint(vm, (void*)vm->ax, 8, WATCH_READ);
+            }
+            vm->ax = *(long long *)(long long)vm->ax;                  // load long long to ax, address in ax
+        }
+        else if (op == SC)    {
+            // Check write watchpoints before storing
+            if (vm->enable_debugger && vm->num_watchpoints > 0) {
+                debugger_check_watchpoint(vm, (void*)*vm->sp, 1, WATCH_WRITE);
+            }
+            vm->ax = *(char *)*vm->sp++ = vm->ax;                      // save character to address, value in ax, address on stack
+        }
+        else if (op == SS)    {
+            // Check write watchpoints before storing
+            if (vm->enable_debugger && vm->num_watchpoints > 0) {
+                debugger_check_watchpoint(vm, (void*)*vm->sp, 2, WATCH_WRITE);
+            }
+            vm->ax = *(short *)*vm->sp++ = vm->ax;                     // save short to address, value in ax, address on stack
+        }
+        else if (op == SW)    {
+            // Check write watchpoints before storing
+            if (vm->enable_debugger && vm->num_watchpoints > 0) {
+                debugger_check_watchpoint(vm, (void*)*vm->sp, 4, WATCH_WRITE);
+            }
+            vm->ax = *(int *)*vm->sp++ = vm->ax;                       // save int (word) to address, value in ax, address on stack
+        }
+        else if (op == SI)    {
+            // Check write watchpoints before storing
+            if (vm->enable_debugger && vm->num_watchpoints > 0) {
+                debugger_check_watchpoint(vm, (void*)*vm->sp, 8, WATCH_WRITE);
+            }
+            *(long long *)*vm->sp++ = vm->ax;                          // save long long to address, value in ax, address on stack
+        }
         else if (op == PUSH)  { *--vm->sp = vm->ax; }                                        // push the value of ax onto the stack
         else if (op == JMP)   { vm->pc = (long long *)*vm->pc; }                             // jump to the address
         else if (op == JZ)    { vm->pc = vm->ax ? vm->pc + 1 : (long long *)*vm->pc; }       // jump if ax is zero

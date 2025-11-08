@@ -677,6 +677,66 @@ typedef struct ProvenanceInfo {
 } ProvenanceInfo;
 
 /*!
+ @struct SourceMap
+ @abstract Maps bytecode offsets to source file locations for debugger support.
+ @field pc_offset Offset in text segment (bytecode) where this mapping applies.
+ @field file Source file containing this code.
+ @field line_no Line number in source file.
+*/
+typedef struct SourceMap {
+    long long pc_offset;  // Offset in text segment
+    File *file;           // Source file
+    int line_no;          // Line number in source
+} SourceMap;
+
+/*!
+ @struct DebugSymbol
+ @abstract Represents a variable's debug information for expression evaluation.
+ @field name Variable name (for lookup).
+ @field offset Offset from BP (negative for locals) or address in data segment (globals).
+ @field ty Type of the variable.
+ @field is_local True if local variable (BP-relative), false if global.
+ @field scope_depth Scope depth (for handling shadowing).
+*/
+typedef struct DebugSymbol {
+    char *name;           // Variable name
+    long long offset;     // BP offset (locals) or data segment address (globals)
+    Type *ty;             // Variable type
+    int is_local;         // 1=local (BP-relative), 0=global (data segment)
+    int scope_depth;      // Scope depth for shadowing resolution
+} DebugSymbol;
+
+/*!
+ @struct Watchpoint
+ @abstract Represents a data breakpoint that triggers on memory access.
+ @field address Memory address being watched.
+ @field size Size of watched region in bytes.
+ @field type Type flags: WATCH_READ | WATCH_WRITE | WATCH_CHANGE.
+ @field old_value Last known value (for change detection).
+ @field expr Original expression string (for display).
+ @field enabled Whether this watchpoint is currently active.
+ @field hit_count Number of times this watchpoint has been triggered.
+*/
+#ifndef MAX_WATCHPOINTS
+#define MAX_WATCHPOINTS 64
+#endif
+
+// Watchpoint type flags
+#define WATCH_READ   (1 << 0)  // Trigger on reads
+#define WATCH_WRITE  (1 << 1)  // Trigger on writes
+#define WATCH_CHANGE (1 << 2)  // Only trigger if value actually changes
+
+typedef struct Watchpoint {
+    void *address;        // Address being watched
+    int size;             // Size in bytes
+    int type;             // WATCH_READ | WATCH_WRITE | WATCH_CHANGE
+    long long old_value;  // Last value (for change detection)
+    char *expr;           // Original expression (for display)
+    int enabled;          // 1 if enabled, 0 if disabled
+    int hit_count;        // Number of times triggered
+} Watchpoint;
+
+/*!
  @struct Breakpoint
  @abstract Represents a debugger breakpoint at a specific program counter location.
  @field pc Program counter address where the breakpoint is set.
@@ -782,6 +842,24 @@ struct JCC {
     long long *step_over_return_addr;   // Return address for step over
     long long *step_out_bp;             // Base pointer for step out
     int debugger_attached;              // Debugger REPL is active
+
+    // Source mapping for debugger (bytecode ↔ source lines)
+    SourceMap *source_map;              // Array of PC to source location mappings
+    int source_map_count;               // Number of source map entries
+    int source_map_capacity;            // Allocated capacity
+    File *last_debug_file;              // Last file during debug info emission
+    int last_debug_line;                // Last line number during debug info emission
+
+    // Debug symbols for expression evaluation
+#ifndef MAX_DEBUG_SYMBOLS
+#define MAX_DEBUG_SYMBOLS 4096
+#endif
+    DebugSymbol debug_symbols[MAX_DEBUG_SYMBOLS]; // Symbol table for debugger
+    int num_debug_symbols;              // Number of symbols
+
+    // Watchpoints (data breakpoints)
+    Watchpoint watchpoints[MAX_WATCHPOINTS]; // Watchpoint table
+    int num_watchpoints;                // Number of active watchpoints
 
     // Preprocessor state
     bool skip_preprocess;  // Skip preprocessing step
@@ -1224,6 +1302,65 @@ void cc_remove_breakpoint(JCC *vm, int index);
              - help/h: Show help
 */
 void cc_debug_repl(JCC *vm);
+
+/*!
+ @function cc_add_watchpoint
+ @abstract Add a watchpoint at a specific memory address.
+ @param vm The JCC instance.
+ @param address Memory address to watch.
+ @param size Size of memory region to watch (in bytes).
+ @param type Watchpoint type flags (WATCH_READ | WATCH_WRITE | WATCH_CHANGE).
+ @param expr Original expression string (for display purposes).
+ @return Watchpoint index, or -1 if failed (too many watchpoints).
+*/
+int cc_add_watchpoint(JCC *vm, void *address, int size, int type, const char *expr);
+
+/*!
+ @function cc_remove_watchpoint
+ @abstract Remove a watchpoint by index.
+ @param vm The JCC instance.
+ @param index Watchpoint index to remove.
+*/
+void cc_remove_watchpoint(JCC *vm, int index);
+
+/*!
+ @function cc_get_source_location
+ @abstract Get source file location for a given program counter.
+ @param vm The JCC instance.
+ @param pc Program counter address.
+ @param out_file Pointer to receive the source File pointer (can be NULL).
+ @param out_line Pointer to receive the line number (can be NULL).
+ @return 1 if location found, 0 if not found.
+*/
+int cc_get_source_location(JCC *vm, long long *pc, File **out_file, int *out_line);
+
+/*!
+ @function cc_find_pc_for_source
+ @abstract Find program counter address for a given source location.
+ @param vm The JCC instance.
+ @param file Source file (NULL to search in any file).
+ @param line Line number to find.
+ @return Program counter address, or NULL if not found.
+*/
+long long *cc_find_pc_for_source(JCC *vm, File *file, int line);
+
+/*!
+ @function cc_find_function_entry
+ @abstract Find program counter address for a function entry point by name.
+ @param vm The JCC instance.
+ @param name Function name to find.
+ @return Program counter address, or NULL if not found.
+*/
+long long *cc_find_function_entry(JCC *vm, const char *name);
+
+/*!
+ @function cc_lookup_symbol
+ @abstract Look up a debug symbol by name in current scope.
+ @param vm The JCC instance.
+ @param name Symbol name to look up.
+ @return Pointer to DebugSymbol if found, NULL otherwise.
+*/
+DebugSymbol *cc_lookup_symbol(JCC *vm, const char *name);
 
 /*!
  @function cc_dlopen
