@@ -74,10 +74,10 @@ typedef enum {
     // Memory safety opcodes
     CHKB,   // Check array bounds
     CHKP,   // Check pointer validity (UAF detection)
-    // CHKT,   // Check type on dereference (TODO)
+    CHKT,   // Check type on dereference
+    CHKI,   // Check initialization
+    MARKI,  // Mark as initialized
     // SANP,   // Full pointer sanitizer check (TODO)
-    // CHKI,   // Check initialization (TODO)
-    // MARKI,  // Mark as initialized (TODO)
     // Non-local jump instructions (setjmp/longjmp)
     SETJMP, // Save execution context to jmp_buf, return 0
     LONGJMP // Restore execution context from jmp_buf, return val
@@ -608,6 +608,7 @@ typedef struct ForeignFunc {
  @field freed Flag indicating if this block has been freed (for UAF detection)
  @field generation Generation counter incremented on each free (for UAF detection)
  @field alloc_pc Program counter at allocation site (for debugging)
+ @field type_kind Type of allocation (for type checking on dereference)
 */
 typedef struct AllocHeader {
     size_t size;            // Allocated size (rounded, excluding header)
@@ -617,6 +618,7 @@ typedef struct AllocHeader {
     int freed;              // 1 if freed (for UAF detection)
     int generation;         // Generation counter (incremented on free)
     long long alloc_pc;     // PC at allocation site (for leak detection)
+    int type_kind;          // Type of allocation (TypeKind enum, for type checking)
 } AllocHeader;
 
 /*!
@@ -716,6 +718,7 @@ struct JCC {
 
     // Memory safety tracking
     AllocRecord *alloc_list;   // List of active allocations (for leak detection)
+    HashMap init_state;        // Track initialization state of stack variables (for uninitialized detection)
 
     // Configuration
     int poolsize;              // Size of memory segments (bytes)
@@ -1184,6 +1187,27 @@ void cc_remove_breakpoint(JCC *vm, int index);
              - help/h: Show help
 */
 void cc_debug_repl(JCC *vm);
+
+/*!
+ @function cc_dlopen
+ @abstract Open a dynamic library.
+ @param vm The JCC instance.
+ @param lib_path Path to the dynamic library to open.
+ @return 0 on success, -1 on failure.
+*/
+int cc_dlopen(JCC *vm, const char *lib_path);
+
+/*!
+ @function cc_dlsym
+ @abstract Resolve a symbol in a dynamic library.
+ @param vm The JCC instance.
+ @param name Name of the symbol to resolve.
+ @param func_ptr Pointer to the function to resolve.
+ @param num_args Number of arguments the function expects.
+ @param returns_double 1 if function returns double, 0 if returns long long.
+ @return 0 on success, -1 on failure.
+*/
+int cc_dlsym(JCC *vm, const char *name, void *func_ptr, int num_args, int returns_double);
 
 #ifdef __cplusplus
 }

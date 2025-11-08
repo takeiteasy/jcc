@@ -232,12 +232,22 @@ $ ./jcc --json -o lib.json lib.h
   - CHKP opcode validates pointer is within allocated region
   - Checks against originally requested size (not rounded allocation)
   - Detects out-of-bounds array accesses with offset information
-- [ ] `--type-checks` flag for runtime type checking on pointer dereferences
-- [ ] `--uninitialized-detection` flag for uninitialized variable detection
+- [x] `--type-checks` **Runtime type checking on pointer dereferences**
+  - Tracks allocation type information in heap headers
+  - CHKT opcode validates pointer type matches expected type on dereference
+  - Detects type confusion bugs (e.g., casting `int*` to `float*`)
+  - Only checks heap allocations (stack types not tracked at runtime)
+  - Skips checks for `void*` and generic pointers (universal pointers)
+- [x] `--uninitialized-detection` **Uninitialized variable detection**
+  - Tracks initialization state of stack variables using HashMap
+  - MARKI opcode marks variables as initialized after assignment
+  - CHKI opcode validates variable is initialized before read
+  - Detects use of uninitialized local variables with stack offset info
+  - HashMap key: BP address + offset for per-function-call tracking
 - [ ] `--pointer-sanitizer` flag for full pointer tracking and validation on dereference
 - [ ] `--stack-instrumentation` flag for tracking stack variable lifetimes and accesses
-- [ ] `--ffi-whitelist` flag for whitelisting functions to be exposed to the FFI
-- [ ] `--ffi-blacklist` flag for blacklisting functions from being exposed to the FFI
+- [ ] `--ffi-type-checking` flag for runtime type checking on FFI calls
+- [ ] `--ffi-allow` and `--ffi-deny` flags for whitelisting and blacklisting functions to be exposed to the FFI
 
 #### Example Usage
 
@@ -292,6 +302,57 @@ Allocated size: 16 bytes (rounded)
 Allocated at PC offset: 11
 Current PC:    0x8c5400140 (offset: 40)
 =========================================
+```
+
+```c
+// test_type_check.c - Type checking example
+void *malloc(unsigned long size);
+
+int main() {
+    int *int_ptr = (int *)malloc(sizeof(int) * 10);
+    int_ptr[0] = 42;
+
+    // Type confusion: treating int* as float*
+    float *float_ptr = (float *)int_ptr;
+    float value = *float_ptr;  // Type mismatch!
+    return (int)value;
+}
+```
+
+```bash
+$ ./jcc --type-checks test_type_check.c
+
+========== TYPE MISMATCH DETECTED ==========
+Pointer type mismatch on dereference
+Address:       0x7f8640028
+Expected type: float
+Actual type:   int
+Allocated at PC offset: 15
+Current PC:    0x7f84002d8 (offset: 52)
+============================================
+```
+
+```c
+// test_uninit.c - Uninitialized variable example
+
+int main() {
+    int x;
+    int y = 10;
+    int z = x + y;  // Reading uninitialized variable x!
+    return z;
+}
+```
+
+```bash
+$ ./jcc --uninitialized-detection test_uninit.c
+
+========== UNINITIALIZED VARIABLE READ ==========
+Attempted to read uninitialized variable
+Stack offset: -1
+Address:      0x7ffee4b3f8
+BP:           0x7ffee4b400
+PC:           0x7ffe400120 (offset: 32)
+================================================
 ```
 
 ### Interactive Debugger
