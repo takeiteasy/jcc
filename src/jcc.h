@@ -844,6 +844,7 @@ struct JCC {
     HashMap stack_ptrs;        // Track stack pointers for dangling detection (ptr -> {bp, offset, size})
     HashMap provenance;        // Track pointer provenance (ptr -> {origin_type, base, size})
     HashMap stack_var_meta;    // Unified stack variable metadata (bp+offset -> StackVarMeta)
+    HashMap alloc_map;         // Maps base addresses to AllocHeaders (for fast pointer validation)
 
     // Configuration
     int poolsize;              // Size of memory segments (bytes)
