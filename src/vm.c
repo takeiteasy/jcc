@@ -29,6 +29,9 @@
 // Heap canary constant for detecting heap overflows
 #define HEAP_CANARY 0xCAFEBABEDEADBEEFLL
 
+// Number of stack slots occupied by stack canary
+#define STACK_CANARY_SLOTS 1
+
 static void report_memory_leaks(JCC *vm) {
     if (!vm->enable_memory_leak_detection)
         return;
@@ -124,6 +127,87 @@ static int validate_free_block(JCC *vm, FreeBlock *block, const char *context) {
     }
 
     return 1;  // Valid
+}
+
+// ========== FREE BLOCK COALESCING ==========
+
+// Coalesce adjacent free blocks to reduce fragmentation
+// This function merges contiguous free blocks in the free list
+static void coalesce_free_blocks(JCC *vm) {
+    if (!vm->free_list) {
+        return;  // No blocks to coalesce
+    }
+
+    size_t canary_overhead = vm->enable_heap_canaries ? sizeof(long long) : 0;
+
+    // Iterate through the free list and try to merge adjacent blocks
+    FreeBlock **prev = &vm->free_list;
+    FreeBlock *curr = vm->free_list;
+
+    while (curr) {
+        if (!validate_free_block(vm, curr, "coalesce_free_blocks")) {
+            return;  // Corruption detected, abort coalescing
+        }
+
+        // Calculate the end of the current block
+        char *curr_start = (char *)curr;
+        char *curr_end = curr_start + sizeof(AllocHeader) + curr->size + canary_overhead;
+
+        // Search for adjacent blocks in the rest of the list
+        FreeBlock **search_prev = &curr->next;
+        FreeBlock *search = curr->next;
+        int merged = 0;
+
+        while (search) {
+            if (!validate_free_block(vm, search, "coalesce_free_blocks")) {
+                return;  // Corruption detected, abort coalescing
+            }
+
+            char *search_start = (char *)search;
+            char *search_end = search_start + sizeof(AllocHeader) + search->size + canary_overhead;
+
+            // Check if blocks are adjacent
+            if (curr_end == search_start) {
+                // curr is immediately before search - merge search into curr
+                curr->size += sizeof(AllocHeader) + search->size + canary_overhead;
+                *search_prev = search->next;  // Remove search from list
+
+                if (vm->debug_vm) {
+                    printf("COALESCE: merged block at 0x%llx (%zu bytes) into 0x%llx (new size: %zu bytes)\n",
+                           (long long)search, search->size, (long long)curr, curr->size);
+                }
+
+                merged = 1;
+                curr_end = curr_start + sizeof(AllocHeader) + curr->size + canary_overhead;
+                // Continue searching from the same position (search_prev unchanged)
+                search = *search_prev;
+            } else if (search_end == curr_start) {
+                // search is immediately before curr - merge curr into search
+                search->size += sizeof(AllocHeader) + curr->size + canary_overhead;
+                *prev = curr->next;  // Remove curr from list
+
+                if (vm->debug_vm) {
+                    printf("COALESCE: merged block at 0x%llx (%zu bytes) into 0x%llx (new size: %zu bytes)\n",
+                           (long long)curr, curr->size, (long long)search, search->size);
+                }
+
+                // curr has been removed, move to next block
+                merged = 1;
+                curr = *prev;
+                break;  // Exit inner loop and restart with new curr
+            } else {
+                // Not adjacent, continue searching
+                search_prev = &search->next;
+                search = search->next;
+            }
+        }
+
+        // If we didn't merge curr with a later block, move to the next block
+        if (!merged || !curr) {
+            prev = &curr->next;
+            curr = curr->next;
+        }
+    }
 }
 
 int vm_eval(JCC *vm) {
@@ -336,9 +420,9 @@ int vm_eval(JCC *vm) {
             long long offset = *vm->pc++;
 
             // If stack canaries are enabled and this is a local variable (negative offset),
-            // we need to adjust by -1 because the canary occupies bp-1
+            // we need to adjust by -STACK_CANARY_SLOTS because the canary occupies bp-1
             if (vm->enable_stack_canaries && offset < 0) {
-                offset -= 1;  // Shift locals down by one slot
+                offset -= STACK_CANARY_SLOTS;  // Shift locals down by canary slots
             }
 
             vm->ax = (long long)(vm->bp + offset);
@@ -623,6 +707,9 @@ int vm_eval(JCC *vm) {
                         printf("MFRE: freed %zu bytes at 0x%llx (added to free list, gen=%d)\n",
                                size, ptr, header->generation);
                     }
+
+                    // Coalesce adjacent free blocks to reduce fragmentation
+                    coalesce_free_blocks(vm);
                 }
 
                 vm->ax = 0;
@@ -1065,7 +1152,7 @@ int vm_eval(JCC *vm) {
 
             // Adjust offset for stack canaries if enabled
             if (vm->enable_stack_canaries && offset < 0) {
-                offset -= 1;
+                offset -= STACK_CANARY_SLOTS;
             }
 
             // Create key for HashMap lookup (bp address + offset)
@@ -1103,7 +1190,7 @@ int vm_eval(JCC *vm) {
 
             // Adjust offset for stack canaries if enabled
             if (vm->enable_stack_canaries && offset < 0) {
-                offset -= 1;
+                offset -= STACK_CANARY_SLOTS;
             }
 
             // Create key for HashMap (bp address + offset)
@@ -1700,21 +1787,73 @@ void cc_destroy(JCC *vm) {
         free(vm->heap_seg);
     // return_buffer is part of data_seg, no need to free separately
 
-    // Free init_state HashMap
-    if (vm->init_state.buckets)
+    // Free init_state HashMap (string keys, no values to free)
+    if (vm->init_state.buckets) {
+        for (int i = 0; i < vm->init_state.capacity; i++) {
+            HashEntry *entry = &vm->init_state.buckets[i];
+            // Free string keys (keylen != -1 means string key, not integer key)
+            if (entry->key && entry->key != (void *)-1 && entry->keylen != -1) {
+                free(entry->key);
+            }
+        }
         free(vm->init_state.buckets);
+    }
 
-    // Free stack_var_meta HashMap and metadata structures
+    // Free stack_ptrs HashMap (string keys + StackPtrInfo values)
+    if (vm->stack_ptrs.buckets) {
+        for (int i = 0; i < vm->stack_ptrs.capacity; i++) {
+            HashEntry *entry = &vm->stack_ptrs.buckets[i];
+            if (entry->key && entry->key != (void *)-1) {
+                // Free string key
+                if (entry->keylen != -1) {
+                    free(entry->key);
+                }
+                // Free StackPtrInfo value
+                if (entry->val) {
+                    free(entry->val);
+                }
+            }
+        }
+        free(vm->stack_ptrs.buckets);
+    }
+
+    // Free provenance HashMap (string keys + ProvenanceInfo values)
+    if (vm->provenance.buckets) {
+        for (int i = 0; i < vm->provenance.capacity; i++) {
+            HashEntry *entry = &vm->provenance.buckets[i];
+            if (entry->key && entry->key != (void *)-1) {
+                // Free string key
+                if (entry->keylen != -1) {
+                    free(entry->key);
+                }
+                // Free ProvenanceInfo value
+                if (entry->val) {
+                    free(entry->val);
+                }
+            }
+        }
+        free(vm->provenance.buckets);
+    }
+
+    // Free stack_var_meta HashMap (string keys + StackVarMeta values)
     if (vm->stack_var_meta.buckets) {
         for (int i = 0; i < vm->stack_var_meta.capacity; i++) {
-            if (vm->stack_var_meta.buckets[i].key && vm->stack_var_meta.buckets[i].val) {
-                free(vm->stack_var_meta.buckets[i].val);  // Free StackVarMeta struct
+            HashEntry *entry = &vm->stack_var_meta.buckets[i];
+            if (entry->key && entry->key != (void *)-1) {
+                // Free string key
+                if (entry->keylen != -1) {
+                    free(entry->key);
+                }
+                // Free StackVarMeta value
+                if (entry->val) {
+                    free(entry->val);
+                }
             }
         }
         free(vm->stack_var_meta.buckets);
     }
 
-    // Free alloc_map HashMap (no need to free headers - they're in heap_seg)
+    // Free alloc_map HashMap (integer keys, no values to free - headers are in heap_seg)
     if (vm->alloc_map.buckets)
         free(vm->alloc_map.buckets);
 

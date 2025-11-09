@@ -4,5 +4,5 @@ int main() {
     char c = (char)i;
     // 1000 in binary: 0x3E8
     // As byte: 0xE8 = 232 unsigned, -24 signed
-    return (c == -24) ? 0 : 1;
+    return (c == -24) ? 42 : 1;
 }

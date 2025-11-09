@@ -35,7 +35,7 @@ int main() {
         // Check that we got the right value
         if (result == 42) {
             printf("SUCCESS: setjmp/longjmp working correctly!\n");
-            return 0;
+            return 42;
         } else {
             printf("ERROR: Expected 42, got %d\n", result);
             return 1;

@@ -37,5 +37,5 @@ int main(void) {
            1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
 
     printf("\n=== All tests passed! ===\n");
-    return 0;
+    return 42;
 }

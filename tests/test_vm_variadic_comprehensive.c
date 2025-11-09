@@ -93,5 +93,5 @@ int main(void) {
     print_strings(3, "Hello", "World", "!");
 
     printf("\n=== All VM variadic tests passed! ===\n");
-    return 0;
+    return 42;
 }
