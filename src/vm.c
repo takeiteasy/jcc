@@ -445,6 +445,119 @@ int vm_eval(JCC *vm) {
         else if (op == DIV) vm->ax = *vm->sp++ / vm->ax;
         else if (op == MOD) vm->ax = *vm->sp++ % vm->ax;
 
+        // Checked arithmetic operations (overflow detection)
+        else if (op == ADDC) {
+            long long b = vm->ax;
+            long long a = *vm->sp++;
+
+            // Check for signed addition overflow
+            if ((b > 0 && a > LLONG_MAX - b) ||
+                (b < 0 && a < LLONG_MIN - b)) {
+                printf("\n========== INTEGER OVERFLOW ==========\n");
+                printf("Addition overflow detected\n");
+                printf("Operands: %lld + %lld\n", a, b);
+                printf("PC:       0x%llx (offset: %lld)\n",
+                       (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                printf("======================================\n");
+                return -1;
+            }
+
+            vm->ax = a + b;
+        }
+
+        else if (op == SUBC) {
+            long long b = vm->ax;
+            long long a = *vm->sp++;
+
+            // Check for signed subtraction overflow
+            if ((b < 0 && a > LLONG_MAX + b) ||
+                (b > 0 && a < LLONG_MIN + b)) {
+                printf("\n========== INTEGER OVERFLOW ==========\n");
+                printf("Subtraction overflow detected\n");
+                printf("Operands: %lld - %lld\n", a, b);
+                printf("PC:       0x%llx (offset: %lld)\n",
+                       (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                printf("======================================\n");
+                return -1;
+            }
+
+            vm->ax = a - b;
+        }
+
+        else if (op == MULC) {
+            long long b = vm->ax;
+            long long a = *vm->sp++;
+
+            // Check for signed multiplication overflow
+            // Special cases first
+            if (a == 0 || b == 0) {
+                vm->ax = 0;
+            } else {
+                // Check if result would overflow
+                // For signed multiplication: if a * b / a != b, overflow occurred
+                if (a == LLONG_MIN || b == LLONG_MIN) {
+                    // Special case: LLONG_MIN * anything except 0, 1, -1 overflows
+                    if ((a == LLONG_MIN && (b != 0 && b != 1 && b != -1)) ||
+                        (b == LLONG_MIN && (a != 0 && a != 1 && a != -1))) {
+                        printf("\n========== INTEGER OVERFLOW ==========\n");
+                        printf("Multiplication overflow detected\n");
+                        printf("Operands: %lld * %lld\n", a, b);
+                        printf("PC:       0x%llx (offset: %lld)\n",
+                               (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                        printf("======================================\n");
+                        return -1;
+                    }
+                } else {
+                    // General overflow check using division
+                    long long result = a * b;
+                    if (result / a != b) {
+                        printf("\n========== INTEGER OVERFLOW ==========\n");
+                        printf("Multiplication overflow detected\n");
+                        printf("Operands: %lld * %lld\n", a, b);
+                        printf("PC:       0x%llx (offset: %lld)\n",
+                               (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                        printf("======================================\n");
+                        return -1;
+                    }
+                    vm->ax = result;
+                    goto mulc_done;
+                }
+
+                vm->ax = a * b;
+            }
+            mulc_done:;
+        }
+
+        else if (op == DIVC) {
+            long long b = vm->ax;
+            long long a = *vm->sp++;
+
+            // Check for division by zero
+            if (b == 0) {
+                printf("\n========== DIVISION BY ZERO ==========\n");
+                printf("Attempted division by zero\n");
+                printf("Operands: %lld / 0\n", a);
+                printf("PC:       0x%llx (offset: %lld)\n",
+                       (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                printf("======================================\n");
+                return -1;
+            }
+
+            // Check for signed division overflow (LLONG_MIN / -1)
+            if (a == LLONG_MIN && b == -1) {
+                printf("\n========== INTEGER OVERFLOW ==========\n");
+                printf("Division overflow detected\n");
+                printf("Operands: %lld / %lld\n", a, b);
+                printf("Result would overflow (LLONG_MIN / -1 = LLONG_MAX + 1)\n");
+                printf("PC:       0x%llx (offset: %lld)\n",
+                       (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                printf("======================================\n");
+                return -1;
+            }
+
+            vm->ax = a / b;
+        }
+
         // VM memory operations (self-contained, no system calls)
         else if (op == MALC) {
             // malloc: pop size from stack, allocate from heap, return pointer in ax

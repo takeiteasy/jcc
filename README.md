@@ -29,6 +29,7 @@ There are lots of memory safety features available. See [SAFETY.md](./SAFETY.md)
 - `--bounds-checks` **Runtime array bounds checking**
 - `--type-checks` **Runtime type checking on pointer dereferences**
 - `--uninitialized-detection` **Uninitialized variable detection**
+- `--overflow-checks` **Signed integer overflow detection**
 - `--pointer-sanitizer` **Comprehensive pointer checking (convenience flag)**
 - `--dangling-pointers` **Dangling stack pointer detection**
 - `--alignment-checks` **Pointer alignment validation**
