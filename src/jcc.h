@@ -870,6 +870,7 @@ struct JCC {
     int enable_alignment_checks;        // Validate pointer alignment for type
     int enable_provenance_tracking;     // Track pointer origin and validate operations
     int enable_invalid_arithmetic;      // Detect pointer arithmetic outside object bounds
+    int enable_format_string_checks;    // Validate format strings in printf-family functions
 
     // Stack instrumentation state
     int current_scope_id;               // Incremented for each scope entry

@@ -94,6 +94,19 @@ JCC includes a suite of powerful memory safety features designed to detect commo
   - Integrated with `--dangling-pointers` for comprehensive temporal safety
   - Use `--stack-errors` flag to enable runtime errors (vs logging only)
   - Use `cc_print_stack_report()` API to print access statistics
+- [x] `--format-string-checks` **Format string validation**
+  - Validates format strings in printf-family functions at runtime
+  - Counts format specifiers (%d, %s, %f, %x, %p, %c, etc.) and compares with argument count
+  - Detects mismatches before function execution to prevent undefined behavior
+  - Supports all standard format specifiers: d, i, u, o, x, X, f, F, e, E, g, G, a, A, c, s, p, n
+  - Handles %% (literal percent sign, not a specifier)
+  - Handles width (*) and precision (.*) specifiers that consume arguments
+  - Handles length modifiers: hh, h, l, ll, L, z, j, t (don't affect specifier count)
+  - Works with: printf, fprintf, sprintf, snprintf, scanf, sscanf, fscanf
+  - Detects both missing arguments (undefined behavior) and extra arguments (logic error)
+  - Prints detailed error message showing expected vs. actual argument counts
+  - Zero overhead when disabled (simple flag check at runtime)
+  - Prevents format string vulnerabilities and crashes from argument mismatches
 
 ## FFI Safety Features
 

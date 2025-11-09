@@ -55,6 +55,7 @@ static void usage(const char *argv0, int exit_code) {
     printf("\t   --alignment-checks        Validate pointer alignment for type\n");
     printf("\t   --provenance-tracking     Track pointer origin and validate operations\n");
     printf("\t   --invalid-arithmetic      Detect pointer arithmetic outside object bounds\n");
+    printf("\t-F/--format-string-checks    Validate format strings in printf-family functions\n");
     printf("\nExample:\n");
     printf("\t%s -o hello hello.c\n", argv0);
     printf("\t%s -I ./include -D DEBUG -o prog prog.c\n", argv0);
@@ -160,6 +161,7 @@ int main(int argc, const char* argv[]) {
     int enable_alignment_checks = 0;
     int enable_provenance_tracking = 0;
     int enable_invalid_arithmetic = 0;
+    int enable_format_string_checks = 0;
     int print_tokens = 0; // -P
     int preprocess_only = 0; // -E
     int skip_preprocess = 0; // -X
@@ -195,13 +197,14 @@ int main(int argc, const char* argv[]) {
         {"alignment-checks", no_argument, 0, 1002},
         {"provenance-tracking", no_argument, 0, 1003},
         {"invalid-arithmetic", no_argument, 0, 1004},
+        {"format-string-checks", no_argument, 0, 'F'},
         {"include", required_argument, 0, 'I'},
         {"define", required_argument, 0, 'D'},
         {"undef", required_argument, 0, 'U'},
         {0, 0, 0, 0}
     };
 
-    const char *optstring = "haI:D:U:o:vgbftzOskpliPEXSj";
+    const char *optstring = "haI:D:U:o:vgbftzOskpliPEXSjF";
     int opt;
     opterr = 0; // we'll handle errors explicitly
     while ((opt = getopt_long(argc, (char * const *)argv, optstring, long_options, NULL)) != -1) {
@@ -282,6 +285,9 @@ int main(int argc, const char* argv[]) {
             break;
         case 1005:
             stack_instr_errors = 1;
+            break;
+        case 'F':
+            enable_format_string_checks = 1;
             break;
         case 'P':
             print_tokens = 1;
@@ -375,6 +381,7 @@ int main(int argc, const char* argv[]) {
     vm.enable_alignment_checks = enable_alignment_checks;
     vm.enable_provenance_tracking = enable_provenance_tracking;
     vm.enable_invalid_arithmetic = enable_invalid_arithmetic;
+    vm.enable_format_string_checks = enable_format_string_checks;
 
     if (!skip_stdlib)
         cc_load_stdlib(&vm);
