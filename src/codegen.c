@@ -354,7 +354,7 @@ void gen_expr(JCC *vm, Node *node) {
             } else {
                 emit(vm, PUSH);
                 gen_expr(vm, node->rhs);
-                emit(vm, ADD);
+                emit(vm, vm->enable_overflow_checks ? ADDC : ADD);
             }
 
             // Check pointer arithmetic if result is a pointer type
@@ -372,7 +372,7 @@ void gen_expr(JCC *vm, Node *node) {
             } else {
                 emit(vm, PUSH);
                 gen_expr(vm, node->rhs);
-                emit(vm, SUB);
+                emit(vm, vm->enable_overflow_checks ? SUBC : SUB);
             }
 
             // Check pointer arithmetic if result is a pointer type
@@ -390,7 +390,7 @@ void gen_expr(JCC *vm, Node *node) {
             } else {
                 emit(vm, PUSH);
                 gen_expr(vm, node->rhs);
-                emit(vm, MUL);
+                emit(vm, vm->enable_overflow_checks ? MULC : MUL);
             }
             return;
 
@@ -403,7 +403,7 @@ void gen_expr(JCC *vm, Node *node) {
             } else {
                 emit(vm, PUSH);
                 gen_expr(vm, node->rhs);
-                emit(vm, DIV);
+                emit(vm, vm->enable_overflow_checks ? DIVC : DIV);
             }
             return;
 

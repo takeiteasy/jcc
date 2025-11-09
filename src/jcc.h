@@ -60,6 +60,8 @@ extern "C" {
 typedef enum {
     LEA, IMM, JMP, CALL, CALLI, JZ, JNZ, ENT, ADJ, LEV, LI, LC, LS, LW, SI, SC, SS, SW, PUSH,
     OR, XOR, AND, EQ, NE, LT, GT, LE, GE, SHL, SHR, ADD, SUB, MUL, DIV, MOD,
+    // Checked arithmetic operations (overflow detection)
+    ADDC, SUBC, MULC, DIVC,
     // VM memory operations (self-contained, no system calls)
     MALC, MFRE, MCPY,
     // Type conversion instructions
@@ -855,6 +857,7 @@ struct JCC {
     int enable_uaf_detection;           // Use-after-free detection
     int enable_type_checks;             // Runtime type checking on pointer dereferences
     int enable_uninitialized_detection; // Uninitialized variable detection
+    int enable_overflow_checks;         // Signed integer overflow detection
     int enable_stack_canaries;          // Stack overflow protection
     int enable_heap_canaries;           // Heap overflow protection
     int enable_pointer_sanitizer;       // Convenience flag: enables bounds, UAF, and type checks together

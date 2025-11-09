@@ -44,6 +44,7 @@ static void usage(const char *argv0, int exit_code) {
     printf("\t-f/--uaf-detection           Use-after-free detection\n");
     printf("\t-t/--type-checks             Runtime type checking on pointer dereferences\n");
     printf("\t-z/--uninitialized-detection Uninitialized variable detection\n");
+    printf("\t-O/--overflow-checks         Detect signed integer overflow\n");
     printf("\t-s/--stack-canaries          Stack overflow protection\n");
     printf("\t-k/--heap-canaries           Heap overflow protection\n");
     printf("\t-l/--memory-leak-detection   Track allocations and report leaks at exit\n");
@@ -148,6 +149,7 @@ int main(int argc, const char* argv[]) {
     int enable_uaf_detection = 0;
     int enable_type_checks = 0;
     int enable_uninitialized_detection = 0;
+    int enable_overflow_checks = 0;
     int enable_stack_canaries = 0;
     int enable_heap_canaries = 0;
     int enable_pointer_sanitizer = 0;
@@ -182,6 +184,7 @@ int main(int argc, const char* argv[]) {
         {"uaf-detection", no_argument, 0, 'f'},
         {"type-checks", no_argument, 0, 't'},
         {"uninitialized-detection", no_argument, 0, 'z'},
+        {"overflow-checks", no_argument, 0, 'O'},
         {"stack-canaries", no_argument, 0, 's'},
         {"heap-canaries", no_argument, 0, 'k'},
         {"pointer-sanitizer", no_argument, 0, 'p'},
@@ -198,7 +201,7 @@ int main(int argc, const char* argv[]) {
         {0, 0, 0, 0}
     };
 
-    const char *optstring = "haI:D:U:o:vgbftzskpliPEXSj";
+    const char *optstring = "haI:D:U:o:vgbftzOskpliPEXSj";
     int opt;
     opterr = 0; // we'll handle errors explicitly
     while ((opt = getopt_long(argc, (char * const *)argv, optstring, long_options, NULL)) != -1) {
@@ -242,6 +245,9 @@ int main(int argc, const char* argv[]) {
             break;
         case 'z':
             enable_uninitialized_detection = 1;
+            break;
+        case 'O':
+            enable_overflow_checks = 1;
             break;
         case 's':
             enable_stack_canaries = 1;
@@ -358,6 +364,7 @@ int main(int argc, const char* argv[]) {
     vm.enable_uaf_detection = enable_uaf_detection;
     vm.enable_type_checks = enable_type_checks;
     vm.enable_uninitialized_detection = enable_uninitialized_detection;
+    vm.enable_overflow_checks = enable_overflow_checks;
     vm.enable_stack_canaries = enable_stack_canaries;
     vm.enable_heap_canaries = enable_heap_canaries;
     vm.enable_pointer_sanitizer = enable_pointer_sanitizer;
