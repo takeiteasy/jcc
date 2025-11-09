@@ -36,6 +36,7 @@ There are lots of memory safety features available. See [SAFETY.md](./SAFETY.md)
 - `--provenance-tracking` **Pointer origin tracking**
 - `--invalid-arithmetic` **Pointer arithmetic bounds checking**
 - `--stack-instrumentation` **Stack variable lifetime and access tracking**
+- `--format-string-checks` **Format string validation for printf-family functions**
 
 ### Pragma Macros
 

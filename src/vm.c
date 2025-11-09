@@ -32,6 +32,86 @@
 // Number of stack slots occupied by stack canary
 #define STACK_CANARY_SLOTS 1
 
+// Helper function to count format specifiers in a format string
+// Returns -1 if format string is invalid or inaccessible
+static int count_format_specifiers(const char *fmt) {
+    if (!fmt) return -1;
+
+    int count = 0;
+    const char *p = fmt;
+
+    while (*p) {
+        if (*p == '%') {
+            p++;
+            if (*p == '%') {
+                // Literal %, not a format specifier
+                p++;
+                continue;
+            }
+
+            // Skip flags: -, +, space, #, 0
+            while (*p == '-' || *p == '+' || *p == ' ' || *p == '#' || *p == '0') {
+                p++;
+            }
+
+            // Skip width (digits or *)
+            if (*p == '*') {
+                count++;  // * consumes an argument
+                p++;
+            } else {
+                while (*p >= '0' && *p <= '9') {
+                    p++;
+                }
+            }
+
+            // Skip precision (.digits or .*)
+            if (*p == '.') {
+                p++;
+                if (*p == '*') {
+                    count++;  // * consumes an argument
+                    p++;
+                } else {
+                    while (*p >= '0' && *p <= '9') {
+                        p++;
+                    }
+                }
+            }
+
+            // Skip length modifiers: hh, h, l, ll, L, z, j, t
+            if (*p == 'h') {
+                p++;
+                if (*p == 'h') p++;  // hh
+            } else if (*p == 'l') {
+                p++;
+                if (*p == 'l') p++;  // ll
+            } else if (*p == 'L' || *p == 'z' || *p == 'j' || *p == 't') {
+                p++;
+            }
+
+            // Check for valid conversion specifier
+            // d, i, u, o, x, X, f, F, e, E, g, G, a, A, c, s, p, n
+            if (*p == 'd' || *p == 'i' || *p == 'u' || *p == 'o' ||
+                *p == 'x' || *p == 'X' || *p == 'f' || *p == 'F' ||
+                *p == 'e' || *p == 'E' || *p == 'g' || *p == 'G' ||
+                *p == 'a' || *p == 'A' || *p == 'c' || *p == 's' ||
+                *p == 'p' || *p == 'n') {
+                count++;
+                p++;
+            } else if (*p == '\0') {
+                // Format string ends with incomplete specifier
+                return -1;
+            } else {
+                // Unknown conversion specifier, skip it
+                p++;
+            }
+        } else {
+            p++;
+        }
+    }
+
+    return count;
+}
+
 static void report_memory_leaks(JCC *vm) {
     if (!vm->enable_memory_leak_detection)
         return;
@@ -1085,6 +1165,71 @@ int vm_eval(JCC *vm) {
             if (vm->debug_vm)
                 printf("CALLF: calling %s with %d args (fixed: %d, variadic: %d)\n",
                        ff->name, actual_nargs, ff->num_fixed_args, ff->is_variadic);
+
+            // Format string validation for printf-family functions
+            if (vm->enable_format_string_checks) {
+                // Check if this is a printf-family function
+                // Note: JCC creates specialized variants like printf0, printf1, etc.
+                // for different call sites, so we need to check name prefixes
+                int is_printf_family = 0;
+                int format_arg_index = -1;
+                int fixed_args_before_variadic = 0;
+
+                if (strncmp(ff->name, "printf", 6) == 0) {
+                    is_printf_family = 1;
+                    format_arg_index = 0;  // First argument is format string
+                    fixed_args_before_variadic = 1;  // format is fixed
+                } else if (strncmp(ff->name, "sprintf", 7) == 0) {
+                    is_printf_family = 1;
+                    format_arg_index = 1;  // Second argument is format string (after buffer)
+                    fixed_args_before_variadic = 2;  // buffer and format are fixed
+                } else if (strncmp(ff->name, "snprintf", 8) == 0) {
+                    is_printf_family = 1;
+                    format_arg_index = 2;  // Third argument for snprintf (buf, size, format)
+                    fixed_args_before_variadic = 3;
+                } else if (strncmp(ff->name, "fprintf", 7) == 0) {
+                    is_printf_family = 1;
+                    format_arg_index = 1;  // Second argument is format string (after FILE*)
+                    fixed_args_before_variadic = 2;  // stream and format are fixed
+                } else if (strncmp(ff->name, "scanf", 5) == 0) {
+                    is_printf_family = 1;
+                    format_arg_index = 0;  // First argument is format string
+                    fixed_args_before_variadic = 1;  // format is fixed
+                } else if (strncmp(ff->name, "sscanf", 6) == 0) {
+                    is_printf_family = 1;
+                    format_arg_index = 1;  // Second argument is format string (after string)
+                    fixed_args_before_variadic = 2;  // string and format are fixed
+                } else if (strncmp(ff->name, "fscanf", 6) == 0) {
+                    is_printf_family = 1;
+                    format_arg_index = 1;  // Second argument is format string (after FILE*)
+                    fixed_args_before_variadic = 2;  // stream and format are fixed
+                }
+
+                if (is_printf_family && format_arg_index >= 0 && format_arg_index < actual_nargs) {
+                    // After popping actual_nargs, sp points to the first argument
+                    // Arguments are at sp[0], sp[1], sp[2], ... (in the order they were declared)
+                    long long format_str_addr = vm->sp[format_arg_index];
+                    const char *format_str = (const char *)format_str_addr;
+
+                    // Validate format string pointer is readable
+                    // For simplicity, we'll just check if it's not NULL
+                    if (format_str) {
+                        int expected_args = count_format_specifiers(format_str);
+                        int variadic_args = actual_nargs - fixed_args_before_variadic;
+
+                        if (expected_args >= 0 && expected_args != variadic_args) {
+                            printf("\n========== FORMAT STRING MISMATCH ==========\n");
+                            printf("Function:     %s\n", ff->name);
+                            printf("Format string: \"%s\"\n", format_str);
+                            printf("Expected %d variadic argument(s) from format string\n", expected_args);
+                            printf("Received %d variadic argument(s) (total: %d, fixed: %d)\n",
+                                   variadic_args, actual_nargs, fixed_args_before_variadic);
+                            printf("===========================================\n");
+                            return -1;
+                        }
+                    }
+                }
+            }
 
 #ifdef JCC_HAS_FFI
             // libffi implementation - supports variadic functions
