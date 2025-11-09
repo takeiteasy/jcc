@@ -408,6 +408,10 @@ int vm_eval(JCC *vm) {
                         }
 
                         vm->ax = (long long)(header + 1);  // Return pointer after header
+
+                        // Add to alloc_map for fast pointer validation
+                        hashmap_put_int(&vm->alloc_map, vm->ax, header);
+
                         if (vm->debug_vm) {
                             printf("MALC: reused %zu bytes at 0x%llx (from free list, block size: %zu)\n",
                                    size, vm->ax, curr->size);
@@ -459,6 +463,9 @@ int vm_eval(JCC *vm) {
 
                     vm->heap_ptr += total_size;
                     vm->ax = (long long)(header + 1);  // Return pointer after header
+
+                    // Add to alloc_map for fast pointer validation
+                    hashmap_put_int(&vm->alloc_map, vm->ax, header);
 
                     if (vm->debug_vm) {
                         printf("MALC: allocated %zu bytes at 0x%llx (bump allocator, total: %zu)\n",
@@ -594,6 +601,9 @@ int vm_eval(JCC *vm) {
                 header->freed = 1;
                 header->generation++;
 
+                // Remove from alloc_map
+                hashmap_delete_int(&vm->alloc_map, ptr);
+
                 // If UAF detection enabled, quarantine the memory (don't reuse)
                 if (vm->enable_uaf_detection) {
                     // Keep memory quarantined - do NOT add to free list
@@ -720,22 +730,31 @@ int vm_eval(JCC *vm) {
 
             // Check if pointer is in heap range
             if (ptr >= (long long)vm->heap_seg && ptr < (long long)vm->heap_end) {
-                // Find the allocation that contains this pointer
-                // We need to search for it since ptr might be offset from the base
-                char *search_ptr = vm->heap_seg;
+                // Find the allocation that contains this pointer using hash map
+                // We iterate through alloc_map (O(m) where m = number of allocations)
+                // instead of scanning the entire heap (O(n) where n = heap bytes)
                 AllocHeader *found_header = NULL;
                 long long base_addr = 0;
 
-                while (search_ptr < vm->heap_ptr) {
-                    AllocHeader *header = (AllocHeader *)search_ptr;
+                // Iterate through all allocations in hash map
+                for (int i = 0; i < vm->alloc_map.capacity; i++) {
+                    HashEntry *entry = &vm->alloc_map.buckets[i];
 
-                    if (header->magic != 0xDEADBEEF) {
-                        // Not a valid allocation, skip
-                        search_ptr += sizeof(AllocHeader) + 8;  // Minimum allocation
+                    // Skip empty or deleted entries
+                    if (!entry->key || entry->key == (void *)-1)
                         continue;
-                    }
 
-                    long long alloc_start = (long long)(header + 1);
+                    // Integer keys have keylen == -1
+                    if (entry->keylen != -1)
+                        continue;
+
+                    // Get base address and header
+                    long long alloc_start = (long long)entry->key;
+                    AllocHeader *header = (AllocHeader *)entry->val;
+
+                    if (!header || header->magic != 0xDEADBEEF)
+                        continue;
+
                     long long alloc_end = alloc_start + header->size;
 
                     // Allow pointer up to (and including) one past the end
@@ -745,10 +764,6 @@ int vm_eval(JCC *vm) {
                         base_addr = alloc_start;
                         break;
                     }
-
-                    // Move to next allocation
-                    size_t canary_overhead = vm->enable_heap_canaries ? sizeof(long long) : 0;
-                    search_ptr += sizeof(AllocHeader) + header->size + canary_overhead;
                 }
 
                 if (found_header) {
@@ -1131,28 +1146,35 @@ int vm_eval(JCC *vm) {
 
             // Only check heap allocations (we can't track stack variable types at runtime)
             if (ptr >= (long long)vm->heap_seg && ptr < (long long)vm->heap_end) {
-                // Find the allocation header
-                char *search_ptr = vm->heap_seg;
+                // Find the allocation header using hash map
+                // O(m) iteration where m = number of allocations (much better than O(n) heap scan)
                 AllocHeader *found_header = NULL;
 
-                while (search_ptr < vm->heap_ptr) {
-                    AllocHeader *header = (AllocHeader *)search_ptr;
+                // Iterate through all allocations in hash map
+                for (int i = 0; i < vm->alloc_map.capacity; i++) {
+                    HashEntry *entry = &vm->alloc_map.buckets[i];
 
-                    if (header->magic != 0xDEADBEEF) {
-                        search_ptr += sizeof(AllocHeader) + 8;
+                    // Skip empty or deleted entries
+                    if (!entry->key || entry->key == (void *)-1)
                         continue;
-                    }
 
-                    long long alloc_start = (long long)(header + 1);
+                    // Integer keys have keylen == -1
+                    if (entry->keylen != -1)
+                        continue;
+
+                    // Get base address and header
+                    long long alloc_start = (long long)entry->key;
+                    AllocHeader *header = (AllocHeader *)entry->val;
+
+                    if (!header || header->magic != 0xDEADBEEF)
+                        continue;
+
                     long long alloc_end = alloc_start + header->size;
 
                     if (ptr >= alloc_start && ptr <= alloc_end) {
                         found_header = header;
                         break;
                     }
-
-                    size_t canary_overhead = vm->enable_heap_canaries ? sizeof(long long) : 0;
-                    search_ptr += sizeof(AllocHeader) + header->size + canary_overhead;
                 }
 
                 if (found_header) {
@@ -1640,6 +1662,11 @@ void cc_init(JCC *vm, bool enable_debugger) {
     vm->stack_var_meta.buckets = NULL;
     vm->stack_var_meta.used = 0;
 
+    // Initialize alloc_map HashMap for fast heap pointer validation
+    vm->alloc_map.capacity = 0;
+    vm->alloc_map.buckets = NULL;
+    vm->alloc_map.used = 0;
+
     // Initialize stack instrumentation state
     vm->current_scope_id = 0;
     vm->current_function_scope_id = 0;
@@ -1686,6 +1713,10 @@ void cc_destroy(JCC *vm) {
         }
         free(vm->stack_var_meta.buckets);
     }
+
+    // Free alloc_map HashMap (no need to free headers - they're in heap_seg)
+    if (vm->alloc_map.buckets)
+        free(vm->alloc_map.buckets);
 
     // Free FFI table
     if (vm->ffi_table) {

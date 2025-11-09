@@ -139,6 +139,11 @@ void hashmap_put(HashMap *map, char *key, void *val);
 void hashmap_put2(HashMap *map, char *key, int keylen, void *val);
 void hashmap_delete(HashMap *map, char *key);
 void hashmap_delete2(HashMap *map, char *key, int keylen);
+
+// Integer key HashMap functions (avoid overhead of snprintf/strdup)
+void *hashmap_get_int(HashMap *map, long long key);
+void hashmap_put_int(HashMap *map, long long key, void *val);
+void hashmap_delete_int(HashMap *map, long long key);
 void hashmap_test(void);
 
 // HashMap iteration
