@@ -45,6 +45,18 @@ static uint64_t fnv_hash(char *s, int len) {
     return hash;
 }
 
+// Simple hash function for integer keys
+static uint64_t int_hash(long long key) {
+    // Mix the bits using a simple multiplicative hash
+    uint64_t hash = (uint64_t)key;
+    hash ^= hash >> 33;
+    hash *= 0xff51afd7ed558ccd;
+    hash ^= hash >> 33;
+    hash *= 0xc4ceb9fe1a85ec53;
+    hash ^= hash >> 33;
+    return hash;
+}
+
 void hashmap_put2(HashMap *map, char *key, int keylen, void *val);
 
 // Make room for new entires in a given hashmap by removing
@@ -64,6 +76,10 @@ static void rehash(HashMap *map) {
     // Create a new hashmap and copy all key-values.
     HashMap map2 = {};
     map2.buckets = calloc(cap, sizeof(HashEntry));
+    if (!map2.buckets) {
+        fprintf(stderr, "FATAL: calloc failed in rehash\n");
+        return;
+    }
     map2.capacity = cap;
 
     for (int ii = 0; ii < map->capacity; ii++) {
@@ -73,6 +89,9 @@ static void rehash(HashMap *map) {
     }
 
     assert(map2.used == nkeys);
+
+    // Free the old buckets before replacing with new ones
+    free(map->buckets);
     *map = map2;
 }
 
@@ -158,6 +177,81 @@ void hashmap_delete2(HashMap *map, char *key, int keylen) {
 
 void hashmap_delete(HashMap *map, char *key) {
     hashmap_delete2(map, key, strlen(key));
+}
+
+// Integer key HashMap functions
+// These avoid the overhead of snprintf() and strdup() for integer keys
+
+static bool match_int(HashEntry *ent, long long key) {
+    // For integer keys, we store the key as a pointer value
+    // keylen is set to -1 to distinguish from string keys
+    return ent->key && ent->key != TOMBSTONE &&
+           ent->keylen == -1 && (long long)ent->key == key;
+}
+
+static HashEntry *get_entry_int(HashMap *map, long long key) {
+    if (!map->buckets)
+        return NULL;
+
+    uint64_t hash = int_hash(key);
+
+    for (int i = 0; i < map->capacity; i++) {
+        HashEntry *ent = &map->buckets[(hash + i) % map->capacity];
+        if (match_int(ent, key))
+            return ent;
+        if (ent->key == NULL)
+            return NULL;
+    }
+    return NULL;
+}
+
+static HashEntry *get_or_insert_entry_int(HashMap *map, long long key) {
+    if (!map->buckets) {
+        map->buckets = calloc(INIT_SIZE, sizeof(HashEntry));
+        map->capacity = INIT_SIZE;
+    } else if ((map->used * 100) / map->capacity >= HIGH_WATERMARK) {
+        rehash(map);
+    }
+
+    uint64_t hash = int_hash(key);
+
+    for (int i = 0; i < map->capacity; i++) {
+        HashEntry *ent = &map->buckets[(hash + i) % map->capacity];
+
+        if (match_int(ent, key))
+            return ent;
+
+        if (ent->key == TOMBSTONE) {
+            ent->key = (char *)key;
+            ent->keylen = -1;  // Mark as integer key
+            return ent;
+        }
+
+        if (ent->key == NULL) {
+            ent->key = (char *)key;
+            ent->keylen = -1;  // Mark as integer key
+            map->used++;
+            return ent;
+        }
+    }
+    unreachable();
+    return NULL;
+}
+
+void *hashmap_get_int(HashMap *map, long long key) {
+    HashEntry *ent = get_entry_int(map, key);
+    return ent ? ent->val : NULL;
+}
+
+void hashmap_put_int(HashMap *map, long long key, void *val) {
+    HashEntry *ent = get_or_insert_entry_int(map, key);
+    ent->val = val;
+}
+
+void hashmap_delete_int(HashMap *map, long long key) {
+    HashEntry *ent = get_entry_int(map, key);
+    if (ent)
+        ent->key = TOMBSTONE;
 }
 
 // Iterate over all entries in the map, calling the iterator function

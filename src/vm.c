@@ -72,6 +72,60 @@ static void report_memory_leaks(JCC *vm) {
     vm->alloc_list = NULL;
 }
 
+// ========== FREE LIST VALIDATION ==========
+
+// Validate a free block to detect corruption
+// Returns 1 if valid, 0 if corrupted
+static int validate_free_block(JCC *vm, FreeBlock *block, const char *context) {
+    if (!block) {
+        return 1;  // NULL is valid (end of list)
+    }
+
+    // Check 1: Size must be non-zero (free blocks always have size)
+    if (block->size == 0) {
+        printf("\n========== FREE LIST CORRUPTION ==========\n");
+        printf("Context: %s\n", context);
+        printf("Block address: 0x%llx\n", (long long)block);
+        printf("ERROR: Free block has zero size\n");
+        printf("This indicates free list corruption.\n");
+        printf("=========================================\n");
+        return 0;
+    }
+
+    // Check 2: Size must not exceed total heap capacity
+    if (block->size > (size_t)vm->poolsize) {
+        printf("\n========== FREE LIST CORRUPTION ==========\n");
+        printf("Context: %s\n", context);
+        printf("Block address: 0x%llx\n", (long long)block);
+        printf("Block size:    %zu bytes\n", block->size);
+        printf("Heap capacity: %d bytes\n", vm->poolsize);
+        printf("ERROR: Free block size exceeds heap capacity\n");
+        printf("This indicates free list corruption.\n");
+        printf("=========================================\n");
+        return 0;
+    }
+
+    // Check 3: Block must be within heap bounds
+    char *block_start = (char *)block;
+    char *block_end = block_start + sizeof(AllocHeader) + block->size;
+    if (block_start < vm->heap_seg || block_end > vm->heap_end) {
+        printf("\n========== FREE LIST CORRUPTION ==========\n");
+        printf("Context: %s\n", context);
+        printf("Block address: 0x%llx\n", (long long)block);
+        printf("Block size:    %zu bytes\n", block->size);
+        printf("Block range:   [0x%llx - 0x%llx]\n",
+               (long long)block_start, (long long)block_end);
+        printf("Heap range:    [0x%llx - 0x%llx]\n",
+               (long long)vm->heap_seg, (long long)vm->heap_end);
+        printf("ERROR: Free block extends outside heap bounds\n");
+        printf("This indicates free list corruption.\n");
+        printf("=========================================\n");
+        return 0;
+    }
+
+    return 1;  // Valid
+}
+
 int vm_eval(JCC *vm) {
     int op;
 
@@ -325,6 +379,12 @@ int vm_eval(JCC *vm) {
                 FreeBlock **prev = &vm->free_list;
                 FreeBlock *curr = vm->free_list;
                 while (curr) {
+                    // Validate free block before accessing its fields
+                    if (!validate_free_block(vm, curr, "MALC free list search")) {
+                        // Corruption detected - stop searching and allocate from bump pointer
+                        break;
+                    }
+
                     if (curr->size >= size) {
                         // Found a suitable block - remove from free list
                         *prev = curr->next;
@@ -359,11 +419,24 @@ int vm_eval(JCC *vm) {
                 }
 
                 // No suitable free block - allocate from bump pointer
-                if (vm->heap_ptr + total_size > vm->heap_end) {
-                    vm->ax = 0;  // Out of memory
+
+                // Check for overflow/OOM (safer than pointer arithmetic which can have UB)
+                size_t available = (size_t)(vm->heap_end - vm->heap_ptr);
+                if (total_size > available) {
+                    vm->ax = 0;  // Out of memory or would overflow
                     if (vm->debug_vm) {
-                        printf("MALC: out of memory (requested %zu bytes, need %zu total)\n",
-                               size, total_size);
+                        printf("MALC: out of memory (requested %zu bytes, need %zu total, available %zu)\n",
+                               size, total_size, available);
+                    }
+                    if (total_size > (size_t)vm->poolsize) {
+                        // This is a wraparound/overflow case - requested size is impossibly large
+                        printf("\n========== HEAP ALLOCATION OVERFLOW ==========\n");
+                        printf("Allocation size exceeds heap capacity!\n");
+                        printf("Requested size: %zu bytes\n", size);
+                        printf("Total size:     %zu bytes\n", total_size);
+                        printf("Heap capacity:  %d bytes\n", vm->poolsize);
+                        printf("This may indicate integer overflow or corruption.\n");
+                        printf("=============================================\n");
                     }
                 } else {
                     // Allocate new block with header
