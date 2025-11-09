@@ -497,8 +497,24 @@ int vm_eval(JCC *vm) {
         else if (op == JMP)   { vm->pc = (long long *)*vm->pc; }                             // jump to the address
         else if (op == JZ)    { vm->pc = vm->ax ? vm->pc + 1 : (long long *)*vm->pc; }       // jump if ax is zero
         else if (op == JNZ)   { vm->pc = vm->ax ? (long long *)*vm->pc : vm->pc + 1; }       // jump if ax is not zero
-        else if (op == CALL)  { *--vm->sp = (long long)(vm->pc+1); vm->pc = (long long *)*vm->pc; } // call subroutine
-        else if (op == CALLI) { *--vm->sp = (long long)vm->pc; vm->pc = (long long *)vm->ax; } // call subroutine indirect (address in ax)
+        else if (op == CALL)  {
+            // Call subroutine: push return address to main stack and shadow stack
+            long long ret_addr = (long long)(vm->pc+1);
+            *--vm->sp = ret_addr;
+            if (vm->enable_cfi) {
+                *--vm->shadow_sp = ret_addr;  // Also push to shadow stack for CFI
+            }
+            vm->pc = (long long *)*vm->pc;
+        }
+        else if (op == CALLI) {
+            // Call subroutine indirect: push return address to main stack and shadow stack
+            long long ret_addr = (long long)vm->pc;
+            *--vm->sp = ret_addr;
+            if (vm->enable_cfi) {
+                *--vm->shadow_sp = ret_addr;  // Also push to shadow stack for CFI
+            }
+            vm->pc = (long long *)vm->ax;
+        }
         else if (op == ENT)   {
             // Enter function: create new stack frame
             *--vm->sp = (long long)vm->bp;  // Save old base pointer
@@ -580,9 +596,12 @@ int vm_eval(JCC *vm) {
             }
 
             vm->bp = (long long *)*vm->sp++;  // Restore old base pointer
+
+            // Get return address from main stack
             vm->pc = (long long *)*vm->sp++;  // Restore program counter (return address)
 
             // Check if we've returned from main (pc is NULL sentinel)
+            // Skip CFI check for main's return since it was never called
             if (vm->pc == 0 || vm->pc == NULL) {
                 // Main has returned, exit with return value in ax
                 int ret_val = (int)vm->ax;
@@ -591,6 +610,25 @@ int vm_eval(JCC *vm) {
                 report_memory_leaks(vm);
 
                 return ret_val;
+            }
+
+            // CFI check: validate return address against shadow stack
+            // Only for normal function returns (not main's exit)
+            if (vm->enable_cfi) {
+                long long shadow_ret_addr = *vm->shadow_sp++;  // Pop return address from shadow stack
+                long long main_ret_addr = (long long)vm->pc;   // Return address we just loaded
+
+                if (main_ret_addr != shadow_ret_addr) {
+                    printf("\n========== CFI VIOLATION ==========\n");
+                    printf("Control flow integrity violation detected!\n");
+                    printf("Expected return address: 0x%llx\n", shadow_ret_addr);
+                    printf("Actual return address:   0x%llx\n", main_ret_addr);
+                    printf("Current PC offset:       %lld\n",
+                           (long long)(vm->pc - vm->text_seg));
+                    printf("This indicates a ROP attack or stack corruption.\n");
+                    printf("====================================\n");
+                    return -1;  // Abort execution
+                }
             }
         }
         else if (op == LEA)  {
@@ -2255,6 +2293,10 @@ void cc_init(JCC *vm, bool enable_debugger) {
     vm->ptr_tags.buckets = NULL;
     vm->ptr_tags.used = 0;
 
+    // Initialize CFI shadow stack (will be allocated if enable_cfi is set)
+    vm->shadow_stack = NULL;
+    vm->shadow_sp = NULL;
+
     // Initialize segregated free lists
     for (int i = 0; i < 12; i++) {  // NUM_SIZE_CLASSES
         vm->size_class_lists[i] = NULL;
@@ -2297,6 +2339,8 @@ void cc_destroy(JCC *vm) {
         free(vm->stack_seg);
     if (vm->heap_seg)
         free(vm->heap_seg);
+    if (vm->shadow_stack)
+        free(vm->shadow_stack);
     // return_buffer is part of data_seg, no need to free separately
 
     // Free init_state HashMap (string keys, no values to free)
@@ -2673,7 +2717,12 @@ int cc_run(JCC *vm, int argc, char **argv) {
     // Setup stack
     vm->sp = (long long *)((char *)vm->stack_seg + vm->poolsize * sizeof(long long));
     vm->bp = vm->sp;  // Initialize base pointer to top of stack
-    
+
+    // Setup shadow stack for CFI if enabled
+    if (vm->enable_cfi) {
+        vm->shadow_sp = (long long *)((char *)vm->shadow_stack + vm->poolsize * sizeof(long long));
+    }
+
     // Save initial stack/base pointers for exit detection in vm_eval
     vm->initial_sp = vm->sp;
     vm->initial_bp = vm->bp;

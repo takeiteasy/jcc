@@ -646,6 +646,11 @@ int debugger_run(JCC *vm, int argc, char **argv) {
     vm->initial_sp = vm->stack_seg;
     vm->initial_bp = vm->stack_seg;
 
+    // Setup shadow stack for CFI if enabled
+    if (vm->enable_cfi) {
+        vm->shadow_sp = vm->shadow_stack;
+    }
+
     // Push argv (pointer to array of strings)
     *--vm->sp = (long long)argv;
     // Push argc

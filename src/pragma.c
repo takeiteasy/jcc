@@ -168,7 +168,12 @@ static bool compile_single_pragma_macro(JCC *parent_vm, PragmaMacro *pm) {
     pm->macro_vm->bp = pm->macro_vm->sp;
     pm->macro_vm->initial_sp = pm->macro_vm->sp;
     pm->macro_vm->initial_bp = pm->macro_vm->bp;
-    
+
+    // Setup shadow stack for CFI if enabled
+    if (pm->macro_vm->enable_cfi) {
+        pm->macro_vm->shadow_sp = (long long *)((char *)pm->macro_vm->shadow_stack + pm->macro_vm->poolsize * sizeof(long long));
+    }
+
     if (parent_vm->debug_vm)
         printf("Compiled pragma macro '%s' at address %lld\n", pm->name, func->code_addr);
     

@@ -882,6 +882,11 @@ struct JCC {
     int enable_format_string_checks;    // Validate format strings in printf-family functions
     int enable_memory_tagging;          // Temporal memory tagging (track pointer generation tags)
     int enable_vm_heap;                 // Force all malloc/free through VM heap (MALC/MFRE)
+    int enable_cfi;                     // Control flow integrity (shadow stack for return address validation)
+
+    // Control Flow Integrity (shadow stack)
+    long long *shadow_stack;            // Shadow stack for return addresses (CFI)
+    long long *shadow_sp;               // Shadow stack pointer
 
     // Stack instrumentation state
     int current_scope_id;               // Incremented for each scope entry

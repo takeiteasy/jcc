@@ -40,6 +40,7 @@ There are lots of memory safety features available. See [SAFETY.md](./SAFETY.md)
 - `--stack-instrumentation` **Stack variable lifetime and access tracking**
 - `--format-string-checks` **Format string validation for printf-family functions**
 - `--memory-tagging` **Temporal memory tagging (track pointer generation tags)**
+- `--control-flow-integrity` **Control flow integrity (shadow stack for return address validation)**
 - `--vm-heap` **Route all malloc/free through VM heap (enables memory safety features)**
 
 > [!NOTE]
