@@ -13,6 +13,23 @@ JCC includes a suite of powerful memory safety features designed to detect commo
   - Rear canary after user data
   - Both canaries (0xCAFEBABEDEADBEEF) validated on free()
   - Detects heap buffer over/underflows with allocation site information
+- [x] `--random-canaries` **Random stack canaries**
+  - Generates cryptographically random canary value on VM initialization
+  - Uses /dev/urandom on Unix-like systems for strong randomness
+  - Falls back to time-seeded rand() if /dev/urandom unavailable
+  - Prevents predictable canary bypass attacks
+  - Works with `--stack-canaries` flag (canaries are fixed by default)
+  - Minimal performance overhead (one-time generation at startup)
+  - Canary value stored in `vm->stack_canary` field
+- [x] `--memory-poisoning` **Uninitialized memory poisoning**
+  - Fills newly allocated memory with 0xCD pattern (clean/allocated)
+  - Fills freed memory with 0xDD pattern (dead/freed)
+  - Makes uninitialized reads return consistent bad values (0xCDCDCDCD...)
+  - Makes use-after-free reads return dead memory pattern (0xDDDDDDDD...)
+  - Helps detect uninitialized variable bugs and UAF issues
+  - Works independently of other safety features
+  - Performance overhead proportional to allocation size (memset on alloc/free)
+  - Compatible with both VM heap and regular malloc/free
 - [x] `--memory-leak-detection` **Memory leak detection**
   - Tracks all VM heap allocations in a linked list
   - Removes from list on free()

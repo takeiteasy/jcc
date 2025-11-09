@@ -869,6 +869,9 @@ struct JCC {
     int enable_memory_leak_detection;   // Track allocations and report leaks at exit
     int enable_stack_instrumentation;   // Track stack variable lifetimes and accesses
     int stack_instr_errors;             // Enable runtime errors for stack instrumentation (vs logging only)
+    int enable_random_canaries;         // Use random stack canaries (prevents predictable bypass)
+    int enable_memory_poisoning;        // Poison allocated/freed memory (0xCD/0xDD patterns)
+    long long stack_canary;             // Stack canary value (random if enable_random_canaries, else fixed)
 
     // Advanced pointer tracking features
     int enable_dangling_detection;      // Detect use of stack pointers after function return
