@@ -80,10 +80,32 @@ JCC includes a suite of powerful memory safety features designed to detect commo
   - Use `--stack-errors` flag to enable runtime errors (vs logging only)
   - Use `cc_print_stack_report()` API to print access statistics
 
-## Future Memory Safety Features
+## FFI Safety Features
 
-- [ ] `--ffi-type-checking` flag for runtime type checking on FFI calls
-- [ ] `--ffi-allow` and `--ffi-deny` flags for whitelisting and blacklisting functions to be exposed to the FFI
+- [x] `--ffi-allow=func1,func2` **FFI function whitelist**
+  - Comma-separated list of allowed FFI function names
+  - When allow list is non-empty, only listed functions can be called via FFI
+  - Enforced at runtime during CALLF instruction execution
+  - Use with `cc_ffi_allow()` API for programmatic configuration
+- [x] `--ffi-deny=func1,func2` **FFI function blacklist**
+  - Comma-separated list of denied FFI function names
+  - Prevents specific functions from being called via FFI
+  - Only checked when allow list is empty
+  - Use with `cc_ffi_deny()` API for programmatic configuration
+- [x] `--disable-ffi` **Disable all FFI calls**
+  - Completely blocks all foreign function calls at runtime
+  - Overrides both allow and deny lists
+  - Useful for sandboxing untrusted code
+- [x] `--ffi-errors-fatal` **Make FFI errors abort execution**
+  - By default, FFI safety violations print warnings and skip the call
+  - With this flag, violations cause the program to abort with exit code 1
+  - Provides strict enforcement mode for production environments
+- [x] `--ffi-type-checking` **Runtime type validation on FFI calls**
+  - Validates argument counts match registered FFI function signatures
+  - Checks argument types are compatible with expected parameter types
+  - Detects type mismatches at compile time before calling native code
+  - Supports variadic functions (only checks fixed parameters)
+  - Uses lenient compatibility rules (void* with any pointer, all integers, all floats)
 
 ## Example Usage
 
@@ -251,4 +273,187 @@ Type size:     4 bytes
 Required alignment: 4 bytes
 Current PC:    0xb98800148 (offset: 41)
 =====================================
+```
+
+### FFI Deny List
+```c
+// test_ffi_deny.c - FFI deny list example
+
+int printf0(const char *fmt);
+
+int main() {
+    printf0("Attempting to call blocked function\n");
+    return 0;
+}
+```
+
+```bash
+$ ./jcc --ffi-deny=printf0 test_ffi_deny.c
+
+========== FFI SAFETY ERROR ==========
+Error type: FFI Access Denied
+Function:   printf0
+Details:    Function in deny list
+PC offset:  12
+======================================
+```
+
+### FFI Allow List
+```c
+// test_ffi_allow.c - FFI allow list example
+
+int printf0(const char *fmt);
+void *malloc(unsigned long size);
+
+int main() {
+    printf0("This call is allowed\n");
+    malloc(100);  // This will be blocked
+    return 0;
+}
+```
+
+```bash
+$ ./jcc --ffi-allow=printf0 test_ffi_allow.c
+
+This call is allowed
+
+========== FFI SAFETY ERROR ==========
+Error type: FFI Access Denied
+Function:   malloc
+Details:    Function not in allow list
+PC offset:  25
+======================================
+```
+
+### Disable All FFI
+```c
+// test_disable_ffi.c - Disable all FFI calls
+
+int printf0(const char *fmt);
+
+int main() {
+    printf0("This FFI call will be blocked\n");
+    return 0;
+}
+```
+
+```bash
+$ ./jcc --disable-ffi test_disable_ffi.c
+
+========== FFI SAFETY ERROR ==========
+Error type: FFI Disabled
+Function:   printf0
+Details:    All FFI calls are disabled via --disable-ffi
+PC offset:  12
+======================================
+```
+
+### Fatal FFI Errors
+```bash
+# Default behavior: warnings only
+$ ./jcc --ffi-deny=printf0 test.c
+<FFI error printed, program continues, returns 0>
+
+# Fatal mode: abort on error
+$ ./jcc --ffi-deny=printf0 --ffi-errors-fatal test.c
+<FFI error printed, program aborts with exit code 1>
+```
+
+### FFI Type Checking - Argument Count Mismatch
+```c
+// test_ffi_arg_count.c - Wrong number of arguments
+int strcmp(const char *s1, const char *s2);
+
+int main() {
+    // strcmp expects 2 arguments, but only 1 provided
+    int result = strcmp("hello");
+    return result;
+}
+```
+
+```bash
+$ ./jcc --ffi-type-checking test_ffi_arg_count.c
+
+test_ffi_arg_count.c:6: FFI function 'strcmp': argument count mismatch (expected 2, got 1)
+    int result = strcmp("hello");
+                 ^
+```
+
+### FFI Type Checking - Type Mismatch
+```c
+// test_ffi_type_mismatch.c - Wrong argument type
+unsigned long strlen(const char *s);
+
+int main() {
+    int not_a_string = 42;
+    // strlen expects char*, but we're passing int
+    unsigned long len = strlen(not_a_string);
+    return len;
+}
+```
+
+```bash
+$ ./jcc --ffi-type-checking test_ffi_type_mismatch.c
+
+test_ffi_type_mismatch.c:7: FFI function 'strlen': argument 1 type mismatch
+  Expected: char*
+  Actual:   int
+    unsigned long len = strlen(not_a_string);
+                               ^
+```
+
+### FFI Type Checking - Valid Calls
+```c
+// test_ffi_valid.c - All types match correctly
+void *malloc(unsigned long size);
+void free(void *ptr);
+int strcmp(const char *s1, const char *s2);
+
+int main() {
+    void *ptr = malloc(100);  // OK: unsigned long argument
+    int cmp = strcmp("a", "b");  // OK: two char* arguments
+    free(ptr);  // OK: void* argument
+    return 0;
+}
+```
+
+```bash
+$ ./jcc --ffi-type-checking test_ffi_valid.c
+<Program compiles and runs successfully>
+```
+
+## API Usage
+
+The FFI safety features can also be controlled programmatically using the JCC API:
+
+```c
+#include "jcc.h"
+
+int main() {
+    JCC vm;
+    cc_init(&vm, false);
+
+    // Configure FFI safety
+    cc_ffi_allow(&vm, "malloc");
+    cc_ffi_allow(&vm, "free");
+    cc_ffi_deny(&vm, "system");
+    cc_ffi_deny(&vm, "exec");
+
+    vm.disable_all_ffi = 0;           // Allow FFI (with restrictions)
+    vm.ffi_errors_fatal = 1;          // Make errors fatal
+    vm.enable_ffi_type_checking = 1;  // Enable type checking
+
+    // Compile and run code...
+    Token *tok = cc_preprocess(&vm, "program.c");
+    Obj *prog = cc_parse(&vm, tok);
+    cc_compile(&vm, prog);
+    int exit_code = cc_run(&vm, argc, argv);
+
+    // Clean up allow/deny lists
+    cc_ffi_clear_allow_list(&vm);
+    cc_ffi_clear_deny_list(&vm);
+
+    cc_destroy(&vm);
+    return exit_code;
+}
 ```
