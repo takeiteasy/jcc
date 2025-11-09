@@ -1448,7 +1448,8 @@ static void add_stack_var_meta(JCC *vm, const char *name, long long offset, Type
     // For now, use offset as key during codegen, runtime will use bp+offset
     char key[32];
     snprintf(key, sizeof(key), "%lld", offset);
-    hashmap_put(&vm->stack_var_meta, key, meta);
+    // Heap-allocate key since HashMap stores pointer (consistent with other HashMap usage)
+    hashmap_put(&vm->stack_var_meta, strdup(key), meta);
 }
 
 // Generate code for a function

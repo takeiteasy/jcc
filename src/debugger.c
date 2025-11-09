@@ -793,8 +793,9 @@ static long long eval_ast_node(JCC *vm, Node *node, int *error) {
                 // Local variable - BP-relative
                 long long offset = sym->offset;
                 // Adjust for stack canaries if enabled
+                // Use same value as STACK_CANARY_SLOTS in vm.c
                 if (vm->enable_stack_canaries && offset < 0) {
-                    offset -= 1;
+                    offset -= 1;  // STACK_CANARY_SLOTS
                 }
                 addr = vm->bp + offset;
             } else {

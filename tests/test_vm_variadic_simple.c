@@ -30,5 +30,5 @@ int main(void) {
     result = sum_ints(5, 1, 2, 3, 4, 5);
     printf("sum_ints(5, 1, 2, 3, 4, 5) = %d (expected 15)\n", result);
 
-    return 0;
+    return 42;
 }

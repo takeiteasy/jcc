@@ -25,7 +25,7 @@ set -l total 0
 set -l failed_tests
 
 # Get all test files
-set -l test_files (find "$tests_dir" -name "test_*.c" | sort)
+set -l test_files (find "$tests_dir" -name "test_*.c" -maxdepth 1 | sort)
 
 if test (count $test_files) -eq 0
     echo "No test files found in $tests_dir"
