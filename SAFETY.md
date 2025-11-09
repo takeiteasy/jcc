@@ -23,6 +23,12 @@ JCC includes a suite of powerful memory safety features designed to detect commo
   - Increments generation counter on each free
   - CHKP opcode checks if accessed pointer has been freed
   - Reports UAF with allocation details and generation number
+- [x] **Double-free detection** (always enabled)
+  - Automatically detects attempts to free the same pointer twice
+  - Works independently of UAF detection setting
+  - Tracks freed state in allocation header
+  - Prevents free list corruption and security vulnerabilities
+  - Aborts execution with detailed error message including address, size, and generation
 - [x] `--bounds-checks` **Runtime array bounds checking**
   - Tracks requested vs allocated sizes for all heap allocations
   - CHKP opcode validates pointer is within allocated region
@@ -136,6 +142,34 @@ Generation:  1 (freed)
 Current PC:  0x7f34002b0 (offset: 86)
 ============================================
 ```
+
+### Double-Free Detection
+```c
+// test_double_free.c - Double-free example
+void *malloc(unsigned long size);
+void free(void *ptr);
+
+int main() {
+    void *ptr = malloc(100);
+    free(ptr);
+    free(ptr);  // Double-free detected!
+    return 0;
+}
+```
+
+```bash
+$ ./jcc -f test_double_free.c
+
+========== DOUBLE-FREE DETECTED ==========
+Attempted to free already-freed memory
+Address:  0x897640038
+Size:     104 bytes
+Allocated at PC offset: 11
+Generation: 1
+=========================================
+```
+
+**Note:** Double-free detection is always enabled when using VM heap (MALC/MFRE), regardless of which safety flags are active. It works with any memory safety feature (`-f`, `-k`, `-l`, `-b`, etc.) that routes allocations through the VM heap.
 
 ### Bounds Checking
 ```c
