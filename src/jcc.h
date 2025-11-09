@@ -852,6 +852,7 @@ struct JCC {
     HashMap provenance;        // Track pointer provenance (ptr -> {origin_type, base, size})
     HashMap stack_var_meta;    // Unified stack variable metadata (bp+offset -> StackVarMeta)
     HashMap alloc_map;         // Maps base addresses to AllocHeaders (for fast pointer validation)
+    HashMap ptr_tags;          // Maps pointers to their creation generation tags (for temporal safety)
 
     // Configuration
     int poolsize;              // Size of memory segments (bytes)
@@ -879,6 +880,8 @@ struct JCC {
     int enable_provenance_tracking;     // Track pointer origin and validate operations
     int enable_invalid_arithmetic;      // Detect pointer arithmetic outside object bounds
     int enable_format_string_checks;    // Validate format strings in printf-family functions
+    int enable_memory_tagging;          // Temporal memory tagging (track pointer generation tags)
+    int enable_vm_heap;                 // Force all malloc/free through VM heap (MALC/MFRE)
 
     // Stack instrumentation state
     int current_scope_id;               // Incremented for each scope entry

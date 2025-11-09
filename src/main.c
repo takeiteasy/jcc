@@ -58,6 +58,8 @@ static void usage(const char *argv0, int exit_code) {
     printf("\t-F/--format-string-checks    Validate format strings in printf-family functions\n");
     printf("\t   --random-canaries         Use random stack canaries (prevents predictable bypass)\n");
     printf("\t   --memory-poisoning        Poison allocated/freed memory (0xCD/0xDD patterns)\n");
+    printf("\t-T/--memory-tagging          Temporal memory tagging (track pointer generation tags)\n");
+    printf("\t-V/--vm-heap                 Route all malloc/free through VM heap (enables memory safety)\n");
     printf("\nExample:\n");
     printf("\t%s -o hello hello.c\n", argv0);
     printf("\t%s -I ./include -D DEBUG -o prog prog.c\n", argv0);
@@ -166,6 +168,8 @@ int main(int argc, const char* argv[]) {
     int enable_format_string_checks = 0;
     int enable_random_canaries = 0;
     int enable_memory_poisoning = 0;
+    int enable_memory_tagging = 0;
+    int enable_vm_heap = 0;
     int print_tokens = 0; // -P
     int preprocess_only = 0; // -E
     int skip_preprocess = 0; // -X
@@ -204,13 +208,15 @@ int main(int argc, const char* argv[]) {
         {"format-string-checks", no_argument, 0, 'F'},
         {"random-canaries", no_argument, 0, 1006},
         {"memory-poisoning", no_argument, 0, 1007},
+        {"memory-tagging", no_argument, 0, 'T'},
+        {"vm-heap", no_argument, 0, 'V'},
         {"include", required_argument, 0, 'I'},
         {"define", required_argument, 0, 'D'},
         {"undef", required_argument, 0, 'U'},
         {0, 0, 0, 0}
     };
 
-    const char *optstring = "haI:D:U:o:vgbftzOskpliPEXSjF";
+    const char *optstring = "haI:D:U:o:vgbftzOskpliPEXSjFTV";
     int opt;
     opterr = 0; // we'll handle errors explicitly
     while ((opt = getopt_long(argc, (char * const *)argv, optstring, long_options, NULL)) != -1) {
@@ -300,6 +306,12 @@ int main(int argc, const char* argv[]) {
             break;
         case 1007:
             enable_memory_poisoning = 1;
+            break;
+        case 'T':
+            enable_memory_tagging = 1;
+            break;
+        case 'V':
+            enable_vm_heap = 1;
             break;
         case 'P':
             print_tokens = 1;
@@ -396,6 +408,8 @@ int main(int argc, const char* argv[]) {
     vm.enable_format_string_checks = enable_format_string_checks;
     vm.enable_random_canaries = enable_random_canaries;
     vm.enable_memory_poisoning = enable_memory_poisoning;
+    vm.enable_memory_tagging = enable_memory_tagging;
+    vm.enable_vm_heap = enable_vm_heap;
 
     // If random canaries are enabled, regenerate the stack canary
     if (enable_random_canaries) {
