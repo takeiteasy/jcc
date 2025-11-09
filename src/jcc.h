@@ -840,6 +840,11 @@ struct JCC {
     char *heap_end;            // End of heap segment
     FreeBlock *free_list;      // Head of free blocks list (for memory reuse)
 
+    // Segregated free lists for optimized allocation
+    // Size classes: 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, LARGE (>8192)
+    FreeBlock *size_class_lists[12];  // One free list per size class (NUM_SIZE_CLASSES)
+    FreeBlock *large_list;            // For allocations > MAX_SMALL_ALLOC (8192)
+
     // Memory safety tracking
     AllocRecord *alloc_list;   // List of active allocations (for leak detection)
     HashMap init_state;        // Track initialization state of stack variables (for uninitialized detection)

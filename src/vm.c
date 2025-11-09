@@ -32,6 +32,31 @@
 // Number of stack slots occupied by stack canary
 #define STACK_CANARY_SLOTS 1
 
+// Segregated free list constants
+#define NUM_SIZE_CLASSES 12
+#define MAX_SMALL_ALLOC 8192
+
+// Size classes for segregated free lists:
+// 0:8, 1:16, 2:32, 3:64, 4:128, 5:256, 6:512, 7:1024, 8:2048, 9:4096, 10:8192, 11:LARGE
+
+// Helper function: map size to size class index
+// Returns index into size_class_lists array, or -1 for large allocations
+static int size_to_class(size_t size) {
+    // Binary search for appropriate size class
+    if (size <= 8) return 0;
+    if (size <= 16) return 1;
+    if (size <= 32) return 2;
+    if (size <= 64) return 3;
+    if (size <= 128) return 4;
+    if (size <= 256) return 5;
+    if (size <= 512) return 6;
+    if (size <= 1024) return 7;
+    if (size <= 2048) return 8;
+    if (size <= 4096) return 9;
+    if (size <= 8192) return 10;
+    return 11;  // LARGE class
+}
+
 // Helper function to count format specifiers in a format string
 // Returns -1 if format string is invalid or inaccessible
 static int count_format_specifiers(const char *fmt) {
@@ -213,79 +238,118 @@ static int validate_free_block(JCC *vm, FreeBlock *block, const char *context) {
 
 // Coalesce adjacent free blocks to reduce fragmentation
 // This function merges contiguous free blocks in the free list
-static void coalesce_free_blocks(JCC *vm) {
-    if (!vm->free_list) {
-        return;  // No blocks to coalesce
-    }
+// Helper function to remove a block from any segregated list
+static int remove_from_segregated_lists(JCC *vm, FreeBlock *target) {
+    // Search through all size class lists
+    for (int i = 0; i < NUM_SIZE_CLASSES - 1; i++) {
+        FreeBlock **prev = &vm->size_class_lists[i];
+        FreeBlock *curr = vm->size_class_lists[i];
 
-    size_t canary_overhead = vm->enable_heap_canaries ? sizeof(long long) : 0;
-
-    // Iterate through the free list and try to merge adjacent blocks
-    FreeBlock **prev = &vm->free_list;
-    FreeBlock *curr = vm->free_list;
-
-    while (curr) {
-        if (!validate_free_block(vm, curr, "coalesce_free_blocks")) {
-            return;  // Corruption detected, abort coalescing
-        }
-
-        // Calculate the end of the current block
-        char *curr_start = (char *)curr;
-        char *curr_end = curr_start + sizeof(AllocHeader) + curr->size + canary_overhead;
-
-        // Search for adjacent blocks in the rest of the list
-        FreeBlock **search_prev = &curr->next;
-        FreeBlock *search = curr->next;
-        int merged = 0;
-
-        while (search) {
-            if (!validate_free_block(vm, search, "coalesce_free_blocks")) {
-                return;  // Corruption detected, abort coalescing
+        while (curr) {
+            if (curr == target) {
+                *prev = curr->next;
+                return i;  // Return the size class it was found in
             }
-
-            char *search_start = (char *)search;
-            char *search_end = search_start + sizeof(AllocHeader) + search->size + canary_overhead;
-
-            // Check if blocks are adjacent
-            if (curr_end == search_start) {
-                // curr is immediately before search - merge search into curr
-                curr->size += sizeof(AllocHeader) + search->size + canary_overhead;
-                *search_prev = search->next;  // Remove search from list
-
-                if (vm->debug_vm) {
-                    printf("COALESCE: merged block at 0x%llx (%zu bytes) into 0x%llx (new size: %zu bytes)\n",
-                           (long long)search, search->size, (long long)curr, curr->size);
-                }
-
-                merged = 1;
-                curr_end = curr_start + sizeof(AllocHeader) + curr->size + canary_overhead;
-                // Continue searching from the same position (search_prev unchanged)
-                search = *search_prev;
-            } else if (search_end == curr_start) {
-                // search is immediately before curr - merge curr into search
-                search->size += sizeof(AllocHeader) + curr->size + canary_overhead;
-                *prev = curr->next;  // Remove curr from list
-
-                if (vm->debug_vm) {
-                    printf("COALESCE: merged block at 0x%llx (%zu bytes) into 0x%llx (new size: %zu bytes)\n",
-                           (long long)curr, curr->size, (long long)search, search->size);
-                }
-
-                // curr has been removed, move to next block
-                merged = 1;
-                curr = *prev;
-                break;  // Exit inner loop and restart with new curr
-            } else {
-                // Not adjacent, continue searching
-                search_prev = &search->next;
-                search = search->next;
-            }
-        }
-
-        // If we didn't merge curr with a later block, move to the next block
-        if (!merged || !curr) {
             prev = &curr->next;
             curr = curr->next;
+        }
+    }
+
+    // Search large list
+    FreeBlock **prev = &vm->large_list;
+    FreeBlock *curr = vm->large_list;
+    while (curr) {
+        if (curr == target) {
+            *prev = curr->next;
+            return NUM_SIZE_CLASSES - 1;  // Large class
+        }
+        prev = &curr->next;
+        curr = curr->next;
+    }
+
+    return -1;  // Not found
+}
+
+// Coalesce adjacent free blocks across all segregated lists
+// This is more complex than single-list coalescing because blocks can be in different size classes
+static void coalesce_free_blocks(JCC *vm) {
+    size_t canary_overhead = vm->enable_heap_canaries ? sizeof(long long) : 0;
+    int coalesced = 0;
+
+    // Collect all free blocks into a temporary array for easier processing
+    FreeBlock *all_blocks[1024];  // Reasonable limit
+    int block_count = 0;
+
+    // Gather blocks from all size classes
+    for (int i = 0; i < NUM_SIZE_CLASSES - 1; i++) {
+        FreeBlock *curr = vm->size_class_lists[i];
+        while (curr && block_count < 1024) {
+            all_blocks[block_count++] = curr;
+            curr = curr->next;
+        }
+    }
+
+    // Gather blocks from large list
+    FreeBlock *curr = vm->large_list;
+    while (curr && block_count < 1024) {
+        all_blocks[block_count++] = curr;
+        curr = curr->next;
+    }
+
+    // Try to merge adjacent blocks
+    for (int i = 0; i < block_count; i++) {
+        if (!all_blocks[i]) continue;  // Already merged
+
+        FreeBlock *block1 = all_blocks[i];
+        char *block1_start = (char *)block1;
+        char *block1_end = block1_start + sizeof(AllocHeader) + block1->size + canary_overhead;
+
+        for (int j = i + 1; j < block_count; j++) {
+            if (!all_blocks[j]) continue;
+
+            FreeBlock *block2 = all_blocks[j];
+            char *block2_start = (char *)block2;
+            char *block2_end = block2_start + sizeof(AllocHeader) + block2->size + canary_overhead;
+
+            // Check if blocks are adjacent
+            if (block1_end == block2_start) {
+                // block1 is immediately before block2 - merge block2 into block1
+                remove_from_segregated_lists(vm, block2);
+                block1->size += sizeof(AllocHeader) + block2->size + canary_overhead;
+                all_blocks[j] = NULL;  // Mark as merged
+                block1_end = block1_start + sizeof(AllocHeader) + block1->size + canary_overhead;
+                coalesced = 1;
+
+                if (vm->debug_vm) {
+                    printf("COALESCE: merged adjacent blocks (new size: %zu bytes)\n", block1->size);
+                }
+            } else if (block2_end == block1_start) {
+                // block2 is immediately before block1 - merge block1 into block2
+                remove_from_segregated_lists(vm, block1);
+                block2->size += sizeof(AllocHeader) + block1->size + canary_overhead;
+                all_blocks[i] = block2;  // Update reference
+                all_blocks[j] = NULL;     // Mark block2's old position
+                block1 = block2;
+                block1_start = (char *)block1;
+                block1_end = block1_start + sizeof(AllocHeader) + block1->size + canary_overhead;
+                coalesced = 1;
+
+                if (vm->debug_vm) {
+                    printf("COALESCE: merged adjacent blocks (new size: %zu bytes)\n", block2->size);
+                }
+            }
+        }
+
+        // After potential merges, re-insert block1 into appropriate size class
+        if (coalesced && all_blocks[i]) {
+            int new_class = size_to_class(all_blocks[i]->size);
+            if (new_class < NUM_SIZE_CLASSES - 1) {
+                all_blocks[i]->next = vm->size_class_lists[new_class];
+                vm->size_class_lists[new_class] = all_blocks[i];
+            } else {
+                all_blocks[i]->next = vm->large_list;
+                vm->large_list = all_blocks[i];
+            }
         }
     }
 }
@@ -652,51 +716,100 @@ int vm_eval(JCC *vm) {
                 size_t canary_overhead = vm->enable_heap_canaries ? sizeof(long long) : 0;
                 size_t total_size = size + sizeof(AllocHeader) + canary_overhead;
 
-                // Try to find a suitable block in free list (first-fit strategy)
-                FreeBlock **prev = &vm->free_list;
-                FreeBlock *curr = vm->free_list;
-                while (curr) {
-                    // Validate free block before accessing its fields
-                    if (!validate_free_block(vm, curr, "MALC free list search")) {
-                        // Corruption detected - stop searching and allocate from bump pointer
-                        break;
+                // Try to find a suitable block using segregated free lists
+                // This provides O(1) allocation for common sizes
+                int size_class = size_to_class(size);
+                FreeBlock *block = NULL;
+                FreeBlock **list_ptr = NULL;
+
+                // Try the appropriate size class first
+                if (size_class < 11) {  // Not LARGE class
+                    list_ptr = &vm->size_class_lists[size_class];
+                    if (*list_ptr) {
+                        // Found a block in the exact size class
+                        block = *list_ptr;
+                        if (validate_free_block(vm, block, "MALC segregated list")) {
+                            *list_ptr = block->next;  // Remove from list
+                        } else {
+                            block = NULL;  // Corruption detected
+                        }
+                    }
+                }
+
+                // If no exact match, try next larger size classes
+                if (!block && size_class < 11) {
+                    for (int i = size_class + 1; i < 11; i++) {
+                        if (vm->size_class_lists[i]) {
+                            list_ptr = &vm->size_class_lists[i];
+                            block = *list_ptr;
+                            if (validate_free_block(vm, block, "MALC segregated list")) {
+                                *list_ptr = block->next;  // Remove from list
+                                break;
+                            } else {
+                                block = NULL;  // Corruption detected
+                            }
+                        }
+                    }
+                }
+
+                // If still no block, try large list with best-fit
+                if (!block && vm->large_list) {
+                    FreeBlock **prev = &vm->large_list;
+                    FreeBlock *curr = vm->large_list;
+                    FreeBlock **best_prev = NULL;
+                    size_t best_size = SIZE_MAX;
+
+                    while (curr) {
+                        if (!validate_free_block(vm, curr, "MALC large list")) {
+                            break;
+                        }
+                        if (curr->size >= size && curr->size < best_size) {
+                            block = curr;
+                            best_prev = prev;
+                            best_size = curr->size;
+                            if (curr->size == size) break;  // Perfect fit
+                        }
+                        prev = &curr->next;
+                        curr = curr->next;
                     }
 
-                    if (curr->size >= size) {
-                        // Found a suitable block - remove from free list
-                        *prev = curr->next;
-
-                        // Restore the header (it was overwritten by FreeBlock)
-                        AllocHeader *header = (AllocHeader *)curr;
-                        header->size = curr->size;  // Use the actual block size
-                        header->requested_size = size;  // Store requested size for bounds checking
-                        header->magic = 0xDEADBEEF;
-                        header->freed = 0;
-                        header->generation = 0;
-                        header->alloc_pc = vm->text_seg ? (long long)(vm->pc - vm->text_seg) : 0;
-                        header->type_kind = TY_VOID;  // Default to void* (generic pointer)
-
-                        // If heap canaries enabled, write canaries
-                        if (vm->enable_heap_canaries) {
-                            header->canary = HEAP_CANARY;
-                            // Write rear canary after user data
-                            long long *rear_canary = (long long *)((char *)(header + 1) + header->size);
-                            *rear_canary = HEAP_CANARY;
-                        }
-
-                        vm->ax = (long long)(header + 1);  // Return pointer after header
-
-                        // Add to alloc_map for fast pointer validation
-                        hashmap_put_int(&vm->alloc_map, vm->ax, header);
-
-                        if (vm->debug_vm) {
-                            printf("MALC: reused %zu bytes at 0x%llx (from free list, block size: %zu)\n",
-                                   size, vm->ax, curr->size);
-                        }
-                        goto malc_done;
+                    if (block && best_prev) {
+                        *best_prev = block->next;  // Remove from large list
                     }
-                    prev = &curr->next;
-                    curr = curr->next;
+                }
+
+                // If we found a suitable block, use it
+                if (block) {
+                    // Remove block from whichever list it came from (already done above)
+
+                    // Restore the header (it was overwritten by FreeBlock)
+                    AllocHeader *header = (AllocHeader *)block;
+                    header->size = block->size;  // Use the actual block size
+                    header->requested_size = size;  // Store requested size for bounds checking
+                    header->magic = 0xDEADBEEF;
+                    header->freed = 0;
+                    header->generation = 0;
+                    header->alloc_pc = vm->text_seg ? (long long)(vm->pc - vm->text_seg) : 0;
+                    header->type_kind = TY_VOID;  // Default to void* (generic pointer)
+
+                    // If heap canaries enabled, write canaries
+                    if (vm->enable_heap_canaries) {
+                        header->canary = HEAP_CANARY;
+                        // Write rear canary after user data
+                        long long *rear_canary = (long long *)((char *)(header + 1) + header->size);
+                        *rear_canary = HEAP_CANARY;
+                    }
+
+                    vm->ax = (long long)(header + 1);  // Return pointer after header
+
+                    // Add to alloc_map for fast pointer validation
+                    hashmap_put_int(&vm->alloc_map, vm->ax, header);
+
+                    if (vm->debug_vm) {
+                        printf("MALC: reused %zu bytes at 0x%llx (segregated list, block size: %zu, class: %d)\n",
+                               size, vm->ax, block->size, size_class);
+                    }
+                    goto malc_done;
                 }
 
                 // No suitable free block - allocate from bump pointer
@@ -775,13 +888,9 @@ int vm_eval(JCC *vm) {
                         info->base = vm->ax;
                         info->size = header->requested_size;  // Use requested size, not rounded
 
-                        // Create key from pointer value
-                        char key_buf[32];
-                        snprintf(key_buf, sizeof(key_buf), "%lld", vm->ax);
-                        char *key = strdup(key_buf);
-
                         // Store in HashMap
-                        hashmap_put(&vm->provenance, key, info);
+                        // Use integer key API to avoid snprintf/strdup overhead
+                        hashmap_put_int(&vm->provenance, vm->ax, info);
                     }
                 }
             }
@@ -889,19 +998,36 @@ int vm_eval(JCC *vm) {
                                size, ptr, header->generation);
                     }
                 } else {
-                    // Normal free: add this block to the free list for reuse
+                    // Normal free: add this block to appropriate segregated list for reuse
                     // We reuse the memory for the FreeBlock structure
                     FreeBlock *block = (FreeBlock *)header;
                     block->size = size;
-                    block->next = vm->free_list;
-                    vm->free_list = block;
 
-                    if (vm->debug_vm) {
-                        printf("MFRE: freed %zu bytes at 0x%llx (added to free list, gen=%d)\n",
-                               size, ptr, header->generation);
+                    // Determine which size class this block belongs to
+                    int size_class = size_to_class(size);
+
+                    if (size_class < 11) {  // Small/medium allocation
+                        // Insert at head of appropriate size class list
+                        block->next = vm->size_class_lists[size_class];
+                        vm->size_class_lists[size_class] = block;
+
+                        if (vm->debug_vm) {
+                            printf("MFRE: freed %zu bytes at 0x%llx (class %d, gen=%d)\n",
+                                   size, ptr, size_class, header->generation);
+                        }
+                    } else {  // Large allocation
+                        // Insert at head of large list
+                        block->next = vm->large_list;
+                        vm->large_list = block;
+
+                        if (vm->debug_vm) {
+                            printf("MFRE: freed %zu bytes at 0x%llx (large list, gen=%d)\n",
+                                   size, ptr, header->generation);
+                        }
                     }
 
                     // Coalesce adjacent free blocks to reduce fragmentation
+                    // Updated to work with segregated lists
                     coalesce_free_blocks(vm);
                 }
 
@@ -981,9 +1107,8 @@ int vm_eval(JCC *vm) {
                 }
 
                 if (vm->stack_ptrs.buckets) {
-                    char key_buf[32];
-                    snprintf(key_buf, sizeof(key_buf), "%lld", ptr);
-                    void *val = hashmap_get2(&vm->stack_ptrs, key_buf, strlen(key_buf));
+                    // Use integer key API to avoid snprintf overhead
+                    void *val = hashmap_get_int(&vm->stack_ptrs, ptr);
 
                     if (vm->debug_vm) {
                         printf("CHKP: hashmap lookup returned %p\n", val);
@@ -1415,11 +1540,10 @@ int vm_eval(JCC *vm) {
 
             // Create key for HashMap lookup (bp address + offset)
             long long addr = (long long)(vm->bp + offset);
-            char key[32];
-            snprintf(key, sizeof(key), "%lld", addr);
 
             // Check if variable is initialized
-            void *init = hashmap_get(&vm->init_state, key);
+            // Use integer key API to avoid snprintf overhead
+            void *init = hashmap_get_int(&vm->init_state, addr);
             if (!init) {
                 printf("\n========== UNINITIALIZED VARIABLE READ ==========\n");
                 printf("Attempted to read uninitialized variable\n");
@@ -1453,14 +1577,10 @@ int vm_eval(JCC *vm) {
 
             // Create key for HashMap (bp address + offset)
             long long addr = (long long)(vm->bp + offset);
-            char key_buf[32];
-            snprintf(key_buf, sizeof(key_buf), "%lld", addr);
-
-            // strdup() the key since hashmap stores the pointer
-            char *key = strdup(key_buf);
 
             // Mark as initialized (use non-NULL value)
-            hashmap_put(&vm->init_state, key, (void*)1);
+            // Use integer key API to avoid snprintf/strdup overhead
+            hashmap_put_int(&vm->init_state, addr, (void*)1);
 
             marki_done:;
         }
@@ -1593,18 +1713,9 @@ int vm_eval(JCC *vm) {
             info->size = size;
             info->scope_id = scope_id;
 
-            // Create key from pointer value
-            char key_buf[32];
-            snprintf(key_buf, sizeof(key_buf), "%lld", ptr);
-            char *key = strdup(key_buf);
-            if (!key) {
-                free(info);
-                fprintf(stderr, "MARKA: failed to allocate key\n");
-                goto marka_done;
-            }
-
             // Store in HashMap
-            hashmap_put(&vm->stack_ptrs, key, info);
+            // Use integer key API to avoid snprintf/strdup overhead
+            hashmap_put_int(&vm->stack_ptrs, ptr, info);
 
             if (vm->debug_vm) {
                 printf("MARKA: stored pointer info (capacity=%d, used=%d)\n",
@@ -1663,9 +1774,8 @@ int vm_eval(JCC *vm) {
             }
 
             // Look up provenance information for this pointer
-            char key_buf[32];
-            snprintf(key_buf, sizeof(key_buf), "%lld", ptr);
-            void *val = hashmap_get2(&vm->provenance, key_buf, strlen(key_buf));
+            // Use integer key API to avoid snprintf overhead
+            void *val = hashmap_get_int(&vm->provenance, ptr);
 
             if (val) {
                 ProvenanceInfo *info = (ProvenanceInfo *)val;
@@ -1716,13 +1826,9 @@ int vm_eval(JCC *vm) {
             info->base = base;
             info->size = size;
 
-            // Create key from pointer value
-            char key_buf[32];
-            snprintf(key_buf, sizeof(key_buf), "%lld", ptr);
-            char *key = strdup(key_buf);
-
             // Store in HashMap
-            hashmap_put(&vm->provenance, key, info);
+            // Use integer key API to avoid snprintf/strdup overhead
+            hashmap_put_int(&vm->provenance, ptr, info);
 
             markp_done:;
         }
@@ -1825,9 +1931,8 @@ int vm_eval(JCC *vm) {
             long long offset = *vm->pc++;
 
             // Look up variable metadata
-            char key_buf[32];
-            snprintf(key_buf, sizeof(key_buf), "%lld", offset);
-            StackVarMeta *meta = (StackVarMeta *)hashmap_get(&vm->stack_var_meta, key_buf);
+            // Use integer key API to avoid snprintf overhead
+            StackVarMeta *meta = (StackVarMeta *)hashmap_get_int(&vm->stack_var_meta, offset);
 
             if (meta) {
                 // Check if variable matches current BP (different frames shouldn't interfere)
@@ -1877,9 +1982,8 @@ int vm_eval(JCC *vm) {
             long long offset = *vm->pc++;
 
             // Look up variable metadata
-            char key_buf[32];
-            snprintf(key_buf, sizeof(key_buf), "%lld", offset);
-            StackVarMeta *meta = (StackVarMeta *)hashmap_get(&vm->stack_var_meta, key_buf);
+            // Use integer key API to avoid snprintf overhead
+            StackVarMeta *meta = (StackVarMeta *)hashmap_get_int(&vm->stack_var_meta, offset);
 
             if (meta && meta->bp == (long long)vm->bp) {
                 meta->read_count++;
@@ -1902,9 +2006,8 @@ int vm_eval(JCC *vm) {
             long long offset = *vm->pc++;
 
             // Look up variable metadata
-            char key_buf[32];
-            snprintf(key_buf, sizeof(key_buf), "%lld", offset);
-            StackVarMeta *meta = (StackVarMeta *)hashmap_get(&vm->stack_var_meta, key_buf);
+            // Use integer key API to avoid snprintf overhead
+            StackVarMeta *meta = (StackVarMeta *)hashmap_get_int(&vm->stack_var_meta, offset);
 
             if (meta && meta->bp == (long long)vm->bp) {
                 meta->write_count++;
@@ -2011,6 +2114,12 @@ void cc_init(JCC *vm, bool enable_debugger) {
     vm->alloc_map.capacity = 0;
     vm->alloc_map.buckets = NULL;
     vm->alloc_map.used = 0;
+
+    // Initialize segregated free lists
+    for (int i = 0; i < 12; i++) {  // NUM_SIZE_CLASSES
+        vm->size_class_lists[i] = NULL;
+    }
+    vm->large_list = NULL;
 
     // Initialize stack instrumentation state
     vm->current_scope_id = 0;
