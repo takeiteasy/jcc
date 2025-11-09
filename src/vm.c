@@ -563,6 +563,18 @@ int vm_eval(JCC *vm) {
 
                 size_t size = header->size;
 
+                // ALWAYS check for double-free (even if UAF detection is disabled)
+                if (header->freed) {
+                    printf("\n========== DOUBLE-FREE DETECTED ==========\n");
+                    printf("Attempted to free already-freed memory\n");
+                    printf("Address:  0x%llx\n", ptr);
+                    printf("Size:     %zu bytes\n", header->size);
+                    printf("Allocated at PC offset: %lld\n", header->alloc_pc);
+                    printf("Generation: %d\n", header->generation);
+                    printf("=========================================\n");
+                    return -1;  // Abort execution
+                }
+
                 // If leak detection enabled, remove from tracking list
                 if (vm->enable_memory_leak_detection) {
                     AllocRecord **prev = &vm->alloc_list;
@@ -578,16 +590,19 @@ int vm_eval(JCC *vm) {
                     }
                 }
 
-                // If UAF detection enabled, mark as freed but don't reuse
+                // ALWAYS mark as freed and increment generation (for double-free detection)
+                header->freed = 1;
+                header->generation++;
+
+                // If UAF detection enabled, quarantine the memory (don't reuse)
                 if (vm->enable_uaf_detection) {
-                    header->freed = 1;
-                    header->generation++;
+                    // Keep memory quarantined - do NOT add to free list
                     if (vm->debug_vm) {
                         printf("MFRE: marked %zu bytes at 0x%llx as freed (UAF detection active, gen=%d)\n",
                                size, ptr, header->generation);
                     }
                 } else {
-                    // Normal free: add this block to the free list
+                    // Normal free: add this block to the free list for reuse
                     // We reuse the memory for the FreeBlock structure
                     FreeBlock *block = (FreeBlock *)header;
                     block->size = size;
@@ -595,7 +610,8 @@ int vm_eval(JCC *vm) {
                     vm->free_list = block;
 
                     if (vm->debug_vm) {
-                        printf("MFRE: freed %zu bytes at 0x%llx (added to free list)\n", size, ptr);
+                        printf("MFRE: freed %zu bytes at 0x%llx (added to free list, gen=%d)\n",
+                               size, ptr, header->generation);
                     }
                 }
 

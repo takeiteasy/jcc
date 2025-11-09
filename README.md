@@ -19,12 +19,13 @@ The debugger is a GDB-like interface for controlling program flow and inspecting
 
 ### Memory Safety
 
-There are lots of memory safety features available. See [Memory Safety](./MEMORY_SAFETY.md) for more details.
+There are lots of memory safety features available. See [SAFETY.md](./SAFETY.md) for more details.
 
 - `--stack-canaries` **Stack overflow protection**
 - `--heap-canaries` **Heap overflow protection**
 - `--memory-leak-detection` **Memory leak detection**
 - `--uaf-detection` **Use-after-free detection**
+- **Double-free detection** (always enabled with VM heap)
 - `--bounds-checks` **Runtime array bounds checking**
 - `--type-checks` **Runtime type checking on pointer dereferences**
 - `--uninitialized-detection` **Uninitialized variable detection**
