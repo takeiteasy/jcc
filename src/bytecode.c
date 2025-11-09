@@ -352,10 +352,21 @@ void cc_compile(JCC *vm, Obj *prog) {
             error("could not malloc for heap area");
         }
 
+        // Allocate shadow stack for CFI if enabled
+        if (vm->enable_cfi) {
+            if (!(vm->shadow_stack = malloc(vm->poolsize * sizeof(long long)))) {
+                error("could not malloc for shadow stack (CFI)");
+            }
+        }
+
         memset(vm->text_seg, 0, vm->poolsize * sizeof(long long));
         memset(vm->data_seg, 0, vm->poolsize);
         memset(vm->stack_seg, 0, vm->poolsize * sizeof(long long));
         memset(vm->heap_seg, 0, vm->poolsize);
+
+        if (vm->enable_cfi) {
+            memset(vm->shadow_stack, 0, vm->poolsize * sizeof(long long));
+        }
 
         vm->old_text_seg = vm->text_seg;
         vm->text_ptr = vm->text_seg;

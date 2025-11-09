@@ -170,6 +170,7 @@ int main(int argc, const char* argv[]) {
     int enable_memory_poisoning = 0;
     int enable_memory_tagging = 0;
     int enable_vm_heap = 0;
+    int enable_cfi = 0;
     int print_tokens = 0; // -P
     int preprocess_only = 0; // -E
     int skip_preprocess = 0; // -X
@@ -210,13 +211,14 @@ int main(int argc, const char* argv[]) {
         {"memory-poisoning", no_argument, 0, 1007},
         {"memory-tagging", no_argument, 0, 'T'},
         {"vm-heap", no_argument, 0, 'V'},
+        {"control-flow-integrity", no_argument, 0, 'C'},
         {"include", required_argument, 0, 'I'},
         {"define", required_argument, 0, 'D'},
         {"undef", required_argument, 0, 'U'},
         {0, 0, 0, 0}
     };
 
-    const char *optstring = "haI:D:U:o:vgbftzOskpliPEXSjFTV";
+    const char *optstring = "haI:D:U:o:vgbftzOskpliPEXSjFTVC";
     int opt;
     opterr = 0; // we'll handle errors explicitly
     while ((opt = getopt_long(argc, (char * const *)argv, optstring, long_options, NULL)) != -1) {
@@ -312,6 +314,9 @@ int main(int argc, const char* argv[]) {
             break;
         case 'V':
             enable_vm_heap = 1;
+            break;
+        case 'C':
+            enable_cfi = 1;
             break;
         case 'P':
             print_tokens = 1;
@@ -410,6 +415,7 @@ int main(int argc, const char* argv[]) {
     vm.enable_memory_poisoning = enable_memory_poisoning;
     vm.enable_memory_tagging = enable_memory_tagging;
     vm.enable_vm_heap = enable_vm_heap;
+    vm.enable_cfi = enable_cfi;
 
     // If random canaries are enabled, regenerate the stack canary
     if (enable_random_canaries) {
