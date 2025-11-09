@@ -225,3 +225,9 @@ char *serialize_node_to_source(JCC *vm, Node *node);
 void serialize_type_json(FILE *f, Type *ty, int indent);
 void print_indent(FILE *f, int indent);
 void print_escaped_string(FILE *f, const char *str);
+
+//
+// vm.c
+//
+
+long long generate_random_canary(void);

@@ -23,6 +23,8 @@ There are lots of memory safety features available. See [SAFETY.md](./SAFETY.md)
 
 - `--stack-canaries` **Stack overflow protection**
 - `--heap-canaries` **Heap overflow protection**
+- `--random-canaries` **Random stack canaries (prevents predictable bypass)**
+- `--memory-poisoning` **Poison allocated/freed memory (0xCD/0xDD patterns)**
 - `--memory-leak-detection` **Memory leak detection**
 - `--uaf-detection` **Use-after-free detection**
 - **Double-free detection** (always enabled with VM heap)

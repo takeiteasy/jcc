@@ -23,7 +23,7 @@
 #include "jcc.h"
 #include "./internal.h"
 
-// Stack canary constant for detecting stack overflows
+// Stack canary constant for detecting stack overflows (used when random canaries disabled)
 #define STACK_CANARY 0xDEADBEEFCAFEBABELL
 
 // Heap canary constant for detecting heap overflows
@@ -31,6 +31,40 @@
 
 // Number of stack slots occupied by stack canary
 #define STACK_CANARY_SLOTS 1
+
+// Generate a random canary value for stack protection
+long long generate_random_canary(void) {
+    long long canary = 0;
+
+#if defined(_WIN32) || defined(_WIN64)
+    // Windows: Use rand() with time seed
+    srand((unsigned int)time(NULL));
+    canary = ((long long)rand() << 32) | rand();
+#else
+    // Unix-like: Try to read from /dev/urandom for cryptographic randomness
+    FILE *f = fopen("/dev/urandom", "rb");
+    if (f) {
+        if (fread(&canary, sizeof(canary), 1, f) != 1) {
+            // Failed to read, fall back to time-based random
+            fclose(f);
+            srand((unsigned int)time(NULL));
+            canary = ((long long)rand() << 32) | rand();
+        } else {
+            fclose(f);
+        }
+    } else {
+        // /dev/urandom not available, fall back to time-based random
+        srand((unsigned int)time(NULL));
+        canary = ((long long)rand() << 32) | rand();
+    }
+#endif
+
+    // Ensure canary is non-zero (zero would be too easy to produce accidentally)
+    if (canary == 0)
+        canary = STACK_CANARY;
+
+    return canary;
+}
 
 // Segregated free list constants
 #define NUM_SIZE_CLASSES 12
@@ -472,7 +506,7 @@ int vm_eval(JCC *vm) {
 
             // If stack canaries are enabled, write canary after old bp
             if (vm->enable_stack_canaries) {
-                *--vm->sp = STACK_CANARY;
+                *--vm->sp = vm->stack_canary;
             }
 
             // Allocate space for local variables
@@ -516,10 +550,10 @@ int vm_eval(JCC *vm) {
             if (vm->enable_stack_canaries) {
                 // Canary is one slot below the saved bp
                 long long canary = vm->sp[-1];
-                if (canary != STACK_CANARY) {
+                if (canary != vm->stack_canary) {
                     printf("\n========== STACK OVERFLOW DETECTED ==========\n");
                     printf("Stack canary corrupted!\n");
-                    printf("Expected: 0x%llx\n", STACK_CANARY);
+                    printf("Expected: 0x%llx\n", vm->stack_canary);
                     printf("Found:    0x%llx\n", canary);
                     printf("PC:       0x%llx (offset: %lld)\n",
                            (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
@@ -805,6 +839,11 @@ int vm_eval(JCC *vm) {
                     // Add to alloc_map for fast pointer validation
                     hashmap_put_int(&vm->alloc_map, vm->ax, header);
 
+                    // If memory poisoning enabled, fill with 0xCD pattern
+                    if (vm->enable_memory_poisoning) {
+                        memset((void *)vm->ax, 0xCD, header->size);
+                    }
+
                     if (vm->debug_vm) {
                         printf("MALC: reused %zu bytes at 0x%llx (segregated list, block size: %zu, class: %d)\n",
                                size, vm->ax, block->size, size_class);
@@ -856,6 +895,11 @@ int vm_eval(JCC *vm) {
 
                     // Add to alloc_map for fast pointer validation
                     hashmap_put_int(&vm->alloc_map, vm->ax, header);
+
+                    // If memory poisoning enabled, fill with 0xCD pattern
+                    if (vm->enable_memory_poisoning) {
+                        memset((void *)vm->ax, 0xCD, size);
+                    }
 
                     if (vm->debug_vm) {
                         printf("MALC: allocated %zu bytes at 0x%llx (bump allocator, total: %zu)\n",
@@ -981,6 +1025,11 @@ int vm_eval(JCC *vm) {
                         prev = &curr->next;
                         curr = curr->next;
                     }
+                }
+
+                // If memory poisoning enabled, fill with 0xDD (dead memory) pattern
+                if (vm->enable_memory_poisoning) {
+                    memset((void *)ptr, 0xDD, size);
                 }
 
                 // ALWAYS mark as freed and increment generation (for double-free detection)
@@ -2125,6 +2174,11 @@ void cc_init(JCC *vm, bool enable_debugger) {
     vm->current_scope_id = 0;
     vm->current_function_scope_id = 0;
     vm->stack_high_water = 0;
+
+    // Initialize stack canary (will be set to random or fixed value based on flag)
+    // The flag enable_random_canaries will be set by CLI parsing in main.c
+    // For now, initialize to fixed value; it will be regenerated if random canaries enabled
+    vm->stack_canary = STACK_CANARY;
 
     // Add default system include path for <...> includes
     cc_system_include(vm, "./include");

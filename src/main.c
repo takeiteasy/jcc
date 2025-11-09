@@ -56,6 +56,8 @@ static void usage(const char *argv0, int exit_code) {
     printf("\t   --provenance-tracking     Track pointer origin and validate operations\n");
     printf("\t   --invalid-arithmetic      Detect pointer arithmetic outside object bounds\n");
     printf("\t-F/--format-string-checks    Validate format strings in printf-family functions\n");
+    printf("\t   --random-canaries         Use random stack canaries (prevents predictable bypass)\n");
+    printf("\t   --memory-poisoning        Poison allocated/freed memory (0xCD/0xDD patterns)\n");
     printf("\nExample:\n");
     printf("\t%s -o hello hello.c\n", argv0);
     printf("\t%s -I ./include -D DEBUG -o prog prog.c\n", argv0);
@@ -162,6 +164,8 @@ int main(int argc, const char* argv[]) {
     int enable_provenance_tracking = 0;
     int enable_invalid_arithmetic = 0;
     int enable_format_string_checks = 0;
+    int enable_random_canaries = 0;
+    int enable_memory_poisoning = 0;
     int print_tokens = 0; // -P
     int preprocess_only = 0; // -E
     int skip_preprocess = 0; // -X
@@ -198,6 +202,8 @@ int main(int argc, const char* argv[]) {
         {"provenance-tracking", no_argument, 0, 1003},
         {"invalid-arithmetic", no_argument, 0, 1004},
         {"format-string-checks", no_argument, 0, 'F'},
+        {"random-canaries", no_argument, 0, 1006},
+        {"memory-poisoning", no_argument, 0, 1007},
         {"include", required_argument, 0, 'I'},
         {"define", required_argument, 0, 'D'},
         {"undef", required_argument, 0, 'U'},
@@ -288,6 +294,12 @@ int main(int argc, const char* argv[]) {
             break;
         case 'F':
             enable_format_string_checks = 1;
+            break;
+        case 1006:
+            enable_random_canaries = 1;
+            break;
+        case 1007:
+            enable_memory_poisoning = 1;
             break;
         case 'P':
             print_tokens = 1;
@@ -382,6 +394,13 @@ int main(int argc, const char* argv[]) {
     vm.enable_provenance_tracking = enable_provenance_tracking;
     vm.enable_invalid_arithmetic = enable_invalid_arithmetic;
     vm.enable_format_string_checks = enable_format_string_checks;
+    vm.enable_random_canaries = enable_random_canaries;
+    vm.enable_memory_poisoning = enable_memory_poisoning;
+
+    // If random canaries are enabled, regenerate the stack canary
+    if (enable_random_canaries) {
+        vm.stack_canary = generate_random_canary();
+    }
 
     if (!skip_stdlib)
         cc_load_stdlib(&vm);
