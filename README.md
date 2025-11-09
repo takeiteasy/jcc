@@ -39,6 +39,11 @@ There are lots of memory safety features available. See [SAFETY.md](./SAFETY.md)
 - `--invalid-arithmetic` **Pointer arithmetic bounds checking**
 - `--stack-instrumentation` **Stack variable lifetime and access tracking**
 - `--format-string-checks` **Format string validation for printf-family functions**
+- `--memory-tagging` **Temporal memory tagging (track pointer generation tags)**
+- `--vm-heap` **Route all malloc/free through VM heap (enables memory safety features)**
+
+> [!NOTE]
+> **VM Heap Mode**: Most memory safety features require heap allocations to go through the VM's internal allocator (MALC/MFRE opcodes) rather than system malloc/free. The `--vm-heap` flag automatically intercepts malloc/free calls at compile time and routes them through the VM heap. Without this flag, memory safety checks only apply to code that directly uses VM heap opcodes. Use `--vm-heap` in combination with other safety flags for comprehensive protection.
 
 ### Pragma Macros
 

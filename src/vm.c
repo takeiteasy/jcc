@@ -817,12 +817,14 @@ int vm_eval(JCC *vm) {
                     // Remove block from whichever list it came from (already done above)
 
                     // Restore the header (it was overwritten by FreeBlock)
+                    // NOTE: FreeBlock only overwrites first 16 bytes (next+size), so generation is preserved!
                     AllocHeader *header = (AllocHeader *)block;
+                    int old_generation = header->generation;  // Preserve generation from previous allocation
                     header->size = block->size;  // Use the actual block size
                     header->requested_size = size;  // Store requested size for bounds checking
                     header->magic = 0xDEADBEEF;
                     header->freed = 0;
-                    header->generation = 0;
+                    header->generation = old_generation;  // Keep generation (will be incremented on next free)
                     header->alloc_pc = vm->text_seg ? (long long)(vm->pc - vm->text_seg) : 0;
                     header->type_kind = TY_VOID;  // Default to void* (generic pointer)
 
@@ -842,6 +844,17 @@ int vm_eval(JCC *vm) {
                     // If memory poisoning enabled, fill with 0xCD pattern
                     if (vm->enable_memory_poisoning) {
                         memset((void *)vm->ax, 0xCD, header->size);
+                    }
+
+                    // If memory tagging enabled, record pointer creation generation
+                    if (vm->enable_memory_tagging) {
+                        // Store pointer -> generation mapping
+                        hashmap_put_int(&vm->ptr_tags, vm->ax, (void *)(long long)header->generation);
+
+                        if (vm->debug_vm) {
+                            printf("MALC: tagged reused pointer 0x%llx with generation %d\n",
+                                   vm->ax, header->generation);
+                        }
                     }
 
                     if (vm->debug_vm) {
@@ -935,6 +948,22 @@ int vm_eval(JCC *vm) {
                         // Store in HashMap
                         // Use integer key API to avoid snprintf/strdup overhead
                         hashmap_put_int(&vm->provenance, vm->ax, info);
+                    }
+                }
+
+                // If memory tagging enabled, record pointer creation generation
+                if (vm->enable_memory_tagging && vm->ax != 0) {
+                    AllocHeader *header = (AllocHeader *)((char *)vm->ax - sizeof(AllocHeader));
+
+                    // Store pointer -> generation mapping
+                    // NOTE: We store generation+1 because generation 0 would be (void*)0 (NULL),
+                    // which the HashMap can't distinguish from "key not found"
+                    // Cast generation to void* (HashMap stores void* values)
+                    hashmap_put_int(&vm->ptr_tags, vm->ax, (void *)(long long)(header->generation + 1));
+
+                    if (vm->debug_vm) {
+                        printf("MALC: tagged pointer 0x%llx with generation %d\n",
+                               vm->ax, header->generation);
                     }
                 }
             }
@@ -1036,17 +1065,30 @@ int vm_eval(JCC *vm) {
                 header->freed = 1;
                 header->generation++;
 
-                // Remove from alloc_map
-                hashmap_delete_int(&vm->alloc_map, ptr);
+                // If UAF detection or temporal tagging enabled, quarantine the memory (don't reuse)
+                // Temporal tagging requires quarantine to prevent address reuse, which would
+                // make it impossible to distinguish stale pointers from valid ones
+                int quarantine = vm->enable_uaf_detection || vm->enable_memory_tagging;
 
-                // If UAF detection enabled, quarantine the memory (don't reuse)
-                if (vm->enable_uaf_detection) {
-                    // Keep memory quarantined - do NOT add to free list
+                if (quarantine) {
+                    // Keep memory quarantined:
+                    // - Do NOT remove from alloc_map (needed for CHKP validation)
+                    // - Do NOT remove ptr_tags (needed for generation comparison)
+                    // - Do NOT add to free list (prevents reuse)
                     if (vm->debug_vm) {
-                        printf("MFRE: marked %zu bytes at 0x%llx as freed (UAF detection active, gen=%d)\n",
-                               size, ptr, header->generation);
+                        const char *reason = vm->enable_uaf_detection ? "UAF detection" : "memory tagging";
+                        printf("MFRE: quarantined %zu bytes at 0x%llx (%s active, gen=%d)\n",
+                               size, ptr, reason, header->generation);
                     }
                 } else {
+                    // Normal free: remove tracking and allow reuse
+                    // Remove from alloc_map (no longer tracking this allocation)
+                    hashmap_delete_int(&vm->alloc_map, ptr);
+
+                    // Remove from ptr_tags if present
+                    if (vm->ptr_tags.capacity > 0) {
+                        hashmap_delete_int(&vm->ptr_tags, ptr);
+                    }
                     // Normal free: add this block to appropriate segregated list for reuse
                     // We reuse the memory for the FreeBlock structure
                     FreeBlock *block = (FreeBlock *)header;
@@ -1129,11 +1171,11 @@ int vm_eval(JCC *vm) {
         else if (op == F2I)   { vm->ax = (long long)vm->fax; }                          // convert fax to ax
 
         else if (op == CHKP) {
-            // Check pointer validity (for UAF detection and bounds checking)
+            // Check pointer validity (for UAF detection, bounds checking, memory tagging)
             // ax contains the pointer to check
             long long ptr = vm->ax;
 
-            if (!vm->enable_uaf_detection && !vm->enable_bounds_checks && !vm->enable_dangling_detection) {
+            if (!vm->enable_uaf_detection && !vm->enable_bounds_checks && !vm->enable_dangling_detection && !vm->enable_memory_tagging) {
                 // No pointer checking enabled, skip
                 goto chkp_done;
             }
@@ -1178,6 +1220,50 @@ int vm_eval(JCC *vm) {
                             printf("==========================================\n");
                             return -1;
                         }
+                    }
+                }
+            }
+
+            // Check temporal memory tagging (generation mismatch)
+            if (vm->enable_memory_tagging && ptr >= (long long)vm->heap_seg && ptr < (long long)vm->heap_end) {
+                // Check if this memory is currently allocated
+                void *header_val = hashmap_get_int(&vm->alloc_map, ptr);
+
+                if (header_val) {
+                    AllocHeader *header = (AllocHeader *)header_val;
+
+                    // Validate header magic
+                    if (header && header->magic == 0xDEADBEEF) {
+                        // Look up the pointer's creation generation tag
+                        void *tag_val = hashmap_get_int(&vm->ptr_tags, ptr);
+
+                        if (tag_val) {
+                            // Pointer has a tag - check if it matches current generation
+                            // NOTE: We stored generation+1, so subtract 1 to get actual generation
+                            int creation_generation = (int)(long long)tag_val - 1;
+
+                            if (creation_generation != header->generation) {
+                                printf("\n========== TEMPORAL SAFETY VIOLATION ==========\n");
+                                printf("Pointer references memory from a different allocation generation\n");
+                                printf("Address:            0x%llx\n", ptr);
+                                printf("Pointer tag:        %d (creation generation)\n", creation_generation);
+                                printf("Current generation: %d (memory was freed and reallocated)\n", header->generation);
+                                printf("Size:               %zu bytes\n", header->size);
+                                printf("Allocated at PC offset: %lld\n", header->alloc_pc);
+                                printf("Current PC:         0x%llx (offset: %lld)\n",
+                                       (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                                printf("This indicates use-after-free where memory was freed and reallocated\n");
+                                printf("================================================\n");
+                                return -1;
+                            }
+
+                            if (vm->debug_vm) {
+                                printf("CHKP: temporal tag valid - ptr 0x%llx, generation %d matches\n",
+                                       ptr, creation_generation);
+                            }
+                        }
+                        // Note: If no tag exists, it could be a derived pointer (offset from malloc'd address)
+                        // We don't flag this as an error since legitimate pointer arithmetic is common
                     }
                 }
             }
@@ -2164,6 +2250,11 @@ void cc_init(JCC *vm, bool enable_debugger) {
     vm->alloc_map.buckets = NULL;
     vm->alloc_map.used = 0;
 
+    // Initialize ptr_tags HashMap for temporal memory tagging
+    vm->ptr_tags.capacity = 0;
+    vm->ptr_tags.buckets = NULL;
+    vm->ptr_tags.used = 0;
+
     // Initialize segregated free lists
     for (int i = 0; i < 12; i++) {  // NUM_SIZE_CLASSES
         vm->size_class_lists[i] = NULL;
@@ -2277,6 +2368,10 @@ void cc_destroy(JCC *vm) {
     // Free alloc_map HashMap (integer keys, no values to free - headers are in heap_seg)
     if (vm->alloc_map.buckets)
         free(vm->alloc_map.buckets);
+
+    // Free ptr_tags HashMap (integer keys, values are casted integers - no heap allocation)
+    if (vm->ptr_tags.buckets)
+        free(vm->ptr_tags.buckets);
 
     // Free FFI table
     if (vm->ffi_table) {

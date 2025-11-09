@@ -34,9 +34,9 @@ static void emit_with_arg(JCC *vm, int instruction, long long arg) {
 // Emit appropriate load instruction based on type
 // If is_deref is true, this is a pointer dereference and should be checked
 static void emit_load(JCC *vm, Type *ty, int is_deref) {
-    // If UAF detection, bounds checking, or dangling detection enabled, check pointer before dereferencing
+    // If UAF detection, bounds checking, dangling detection, or memory tagging enabled, check pointer before dereferencing
     // Only check on actual dereferences, not when loading pointer values
-    if (is_deref && (vm->enable_uaf_detection || vm->enable_bounds_checks || vm->enable_dangling_detection))
+    if (is_deref && (vm->enable_uaf_detection || vm->enable_bounds_checks || vm->enable_dangling_detection || vm->enable_memory_tagging))
         emit(vm, CHKP);  // Check that pointer in ax is valid
 
     // If alignment checking enabled, check pointer alignment before dereferencing
@@ -864,9 +864,10 @@ void gen_expr(JCC *vm, Node *node) {
 
             // Check if this is malloc/free and memory safety is enabled
             // When safety features are active, use VM heap (MALC/MFRE) instead of FFI
-            int use_vm_heap = vm->enable_heap_canaries || vm->enable_memory_leak_detection ||
-                             vm->enable_uaf_detection || vm->enable_pointer_sanitizer ||
-                             vm->enable_bounds_checks;
+            int use_vm_heap = vm->enable_vm_heap ||  // Explicit flag to force VM heap
+                              vm->enable_heap_canaries || vm->enable_memory_leak_detection ||
+                              vm->enable_uaf_detection || vm->enable_pointer_sanitizer ||
+                              vm->enable_bounds_checks || vm->enable_memory_tagging;
 
             if (use_vm_heap && node->lhs->kind == ND_VAR && node->lhs->var->name) {
                 if (strcmp(node->lhs->var->name, "malloc") == 0) {

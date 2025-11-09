@@ -124,6 +124,25 @@ JCC includes a suite of powerful memory safety features designed to detect commo
   - Prints detailed error message showing expected vs. actual argument counts
   - Zero overhead when disabled (simple flag check at runtime)
   - Prevents format string vulnerabilities and crashes from argument mismatches
+- [x] `--memory-tagging` **Temporal memory tagging**
+  - Tracks generation counter for each heap allocation
+  - Records pointer-to-generation mapping at allocation time (MALC opcode)
+  - Increments generation counter when memory is freed
+  - CHKP opcode validates pointer's creation generation matches current memory generation
+  - Detects use-after-free even when memory is freed and reallocated (cross-generation UAF)
+  - Requires memory quarantine (freed memory is not reused, similar to UAF detection)
+  - Uses HashMap with integer keys for O(1) pointer tag lookup
+  - Generation stored as generation+1 to avoid HashMap NULL ambiguity
+  - Works with `--vm-heap` flag to intercept malloc/free calls
+  - Provides stronger temporal safety than UAF detection alone
+- [x] `--vm-heap` **Force VM heap allocation**
+  - Intercepts malloc/free calls at compile time (codegen phase)
+  - Routes malloc → MALC opcode, free → MFRE opcode
+  - Enables memory safety features for user code using standard malloc/free
+  - Without this flag, safety checks only apply to code directly using VM heap
+  - Automatically enabled when any heap-related safety flag is used
+  - Can be used standalone to enable double-free detection
+  - Zero overhead when no safety features are enabled
 
 ## FFI Safety Features
 
@@ -487,6 +506,64 @@ Type size:     4 bytes
 Required alignment: 4 bytes
 Current PC:    0xb98800148 (offset: 41)
 =====================================
+```
+
+### Temporal Memory Tagging
+```c
+// test_temporal_tagging.c - Cross-generation use-after-free
+void *malloc(unsigned long size);
+void free(void *ptr);
+
+int main() {
+    // Allocate memory (generation 0)
+    int *ptr1 = (int *)malloc(sizeof(int) * 10);
+    *ptr1 = 42;
+
+    // Save pointer for later use
+    int *stale_ptr = ptr1;
+
+    // Free the memory (generation becomes 1)
+    free(ptr1);
+
+    // Allocate new memory at different address
+    // Without -T flag, this might reuse same address
+    // With -T flag, memory is quarantined, gets new address
+    int *ptr2 = (int *)malloc(sizeof(int) * 10);
+    *ptr2 = 100;
+
+    // Try to use the stale pointer
+    // stale_ptr has generation 0 tag, but memory was freed
+    // This is caught even though ptr1's memory isn't reused
+    int value = *stale_ptr;  // Temporal safety violation!
+
+    return value;
+}
+```
+
+```bash
+$ ./jcc --memory-tagging test_temporal_tagging.c
+
+========== TEMPORAL SAFETY VIOLATION ==========
+Pointer references memory from a different allocation generation
+Address:            0x8c4a40038
+Pointer tag:        0 (creation generation)
+Current generation: 1 (memory was freed and reallocated)
+Size:               40 bytes
+Allocated at PC offset: 15
+Current PC:         0x8c48001f0 (offset: 62)
+This indicates use-after-free where memory was freed and reallocated
+================================================
+```
+
+**Note:** Temporal memory tagging requires memory quarantine to work correctly. When `-T/--memory-tagging` is enabled, freed memory is not returned to the free list for reuse. This prevents address collisions that would make it impossible to distinguish between stale and valid pointers to the same address. The memory overhead is similar to `--uaf-detection`.
+
+**Combining with VM Heap Mode:**
+```bash
+# For code using malloc/free, combine with --vm-heap
+$ ./jcc --memory-tagging --vm-heap my_program.c
+
+# Or use short flags
+$ ./jcc -TV my_program.c
 ```
 
 ### FFI Deny List
