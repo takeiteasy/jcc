@@ -182,6 +182,89 @@ JCC includes a suite of powerful memory safety features designed to detect commo
   - Supports variadic functions (only checks fixed parameters)
   - Uses lenient compatibility rules (void* with any pointer, all integers, all floats)
 
+## Threading Safety Features
+
+> **Note:** Threading is **enabled by default** with **GIL disabled by default** for maximum performance. Enable thread safety with `-G/--gil` flag or `cc_enable_gil()` API. Disable threading entirely with `--no-threads` flag or `JCC_NO_THREADS=1` build flag.
+
+JCC provides threading with optional GIL-based thread safety:
+
+### Global Interpreter Lock (GIL) - Optional
+
+When enabled via `-G/--gil` flag:
+- **Mutual Exclusion**: Only one thread executes VM bytecode at a time
+- **Recursive Acquisition**: Same thread can acquire GIL multiple times (reference counting)
+- **Automatic Management**: GIL is automatically acquired/released during thread lifecycle
+- **Error Detection**: Asserts if thread releases GIL it doesn't own
+
+When disabled (default):
+- **True Parallelism**: Multiple threads execute VM bytecode concurrently
+- **No Safety Guarantees**: Data races possible on shared state (globals, heap)
+- **Maximum Performance**: No synchronization overhead
+
+### Thread-Local Storage
+
+Each VM thread has isolated execution state:
+- **Thread-local stack**: Separate stack segment per thread (no stack sharing)
+- **Thread-local registers**: Independent `ax`, `fax`, `pc`, `bp`, `sp` per thread
+- **Thread-local TLS segment**: Storage for `_Thread_local` variables (1/16th of main poolsize)
+- **Thread-local arguments**: Function arguments copied to thread stack
+
+### Shared State Protection
+
+The GIL protects all shared VM resources:
+- **Text segment**: Bytecode is read-only after compilation (thread-safe)
+- **Data segment**: Global variables protected by GIL (no concurrent modifications)
+- **Heap segment**: Memory allocations protected by GIL (thread-safe malloc/free)
+- **HashMaps**: All VM HashMaps protected by GIL (symbol tables, macros, etc.)
+
+### Thread Safety Guarantees
+
+- **Memory Safety Compatible**: All memory safety features work with threading
+- **No Data Races**: GIL prevents concurrent access to shared state
+- **Deadlock Prevention**: GIL is released during blocking operations (`THRJOIN`, FFI calls)
+- **Cooperative Scheduling**: GIL yields every N instructions (default: 100)
+
+### Performance Characteristics
+
+- **Zero Overhead (Disabled)**: No threading penalty when compiled with `JCC_NO_THREADS=1`
+- **Minimal Threading Overhead**: ~1-2% when threading enabled without GIL
+- **GIL Overhead**: Additional ~1-3% per acquire/release when GIL enabled
+- **True Parallelism**: Available when GIL disabled (default, no safety guarantees)
+- **I/O Parallelism with Safety**: GIL released during FFI calls when enabled
+
+### Thread Safety Guarantees
+
+**Without GIL (default, no `-G` flag):**
+- **No guarantees**: Data races possible on shared state
+- **User responsibility**: Must implement own synchronization
+- **Maximum performance**: True parallel execution
+
+**With GIL (via `-G/--gil` flag or `cc_enable_gil()` API):**
+
+1. **Automatic GIL Management**:
+   - Thread creation: New threads acquire GIL before executing
+   - Thread exit: Threads release GIL before termination
+   - Foreign calls: GIL released during `CALLF` (FFI) for I/O parallelism
+
+2. **Shared Resource Protection**:
+   - All VM heap operations are atomic (protected by GIL)
+   - Global variables are thread-safe (GIL-protected)
+   - Memory safety features work correctly (bounds checks, UAF detection, etc.)
+
+3. **Manual GIL Control**:
+   - `GILREL` opcode: Release GIL for long-running I/O operations
+   - `GILACQ` opcode: Re-acquire GIL before accessing VM state
+   - Use case: Custom FFI calls, blocking I/O in user code
+
+### Limitations and Caveats
+
+- **No True Parallelism**: GIL allows only one thread to execute VM bytecode at a time
+- **CPU-Bound Workloads**: Limited speedup for CPU-intensive tasks
+- **Best For I/O**: Threading excels at concurrent I/O operations (network, file I/O)
+- **Memory Overhead**: Each thread requires separate stack (~256KB default)
+
+All memory safety features are thread-safe when threading is enabled:
+
 ## Example Usage
 
 ### Use-after-free

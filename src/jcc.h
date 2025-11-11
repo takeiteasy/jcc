@@ -42,6 +42,10 @@
 #include <dlfcn.h>
 #endif
 
+// pthread support for threading
+#include <pthread.h>
+#include <sched.h>
+
 // libffi support for variadic foreign functions
 #ifdef JCC_HAS_FFI
 #include <ffi.h>
@@ -91,7 +95,16 @@ typedef enum {
     MARKW,    // Mark variable write access
     // Non-local jump instructions (setjmp/longjmp)
     SETJMP, // Save execution context to jmp_buf, return 0
-    LONGJMP // Restore execution context from jmp_buf, return val
+    LONGJMP, // Restore execution context from jmp_buf, return val
+#ifndef JCC_NO_THREADS
+    // Threading opcodes
+    THRCREATE, // Create new VM thread
+    THRJOIN,   // Wait for thread completion
+    THRSELF,   // Get current thread handle
+    THREXIT,   // Exit current thread
+    GILREL,    // Release GIL manually
+    GILACQ,    // Acquire GIL manually
+#endif
 } JCC_OP;
 
 /*!
@@ -570,6 +583,71 @@ typedef struct GotoPatch {
     long long *location;  // Location of JMP instruction's address operand
 } GotoPatch;
 
+/*!
+ @struct GIL
+ @abstract Global Interpreter Lock for thread-safe VM execution.
+ @field lock pthread mutex protecting VM execution
+ @field owner_thread Thread currently holding the GIL
+ @field recursion_count Allow recursive GIL acquisition
+ */
+typedef struct {
+    pthread_mutex_t lock;        // The global interpreter lock
+    pthread_t owner_thread;      // Thread currently holding GIL
+    int recursion_count;         // Allow recursive GIL acquisition
+} GIL;
+
+/*!
+ @struct VMThread
+ @abstract Represents a single VM thread with thread-local execution state.
+ @field thread_id OS thread identifier
+ @field vm Pointer to shared VM instance
+ @field sp Thread-local stack pointer
+ @field bp Thread-local base pointer
+ @field pc Thread-local program counter
+ @field ax Thread-local integer accumulator
+ @field fax Thread-local floating-point accumulator
+ @field stack_seg Thread-local stack segment
+ @field initial_sp Initial stack pointer for exit detection
+ @field initial_bp Initial base pointer for exit detection
+ @field tls_seg Thread-local storage segment (for _Thread_local variables)
+ @field tls_ptr Current TLS allocation pointer
+ @field entry_point Bytecode offset of function to execute
+ @field entry_args Arguments to pass to entry function
+ @field num_args Number of arguments
+ @field exit_code Thread return value
+ @field terminated Flag indicating thread has finished
+ @field detached Flag indicating thread is detached
+ @field next Linked list pointer to next thread
+ */
+typedef struct VMThread {
+    pthread_t thread_id;         // OS thread ID
+    struct JCC *vm;              // VM instance (shared, forward declaration)
+
+    // Per-thread VM state (moved from JCC struct when threading enabled)
+    long long *sp;               // Thread-local stack pointer
+    long long *bp;               // Thread-local base pointer
+    long long *pc;               // Thread-local program counter
+    long long ax;                // Thread-local integer accumulator
+    double fax;                  // Thread-local floating-point accumulator
+    long long *stack_seg;        // Thread-local stack segment
+    long long *initial_sp;       // Initial stack pointer
+    long long *initial_bp;       // Initial base pointer
+
+    // TLS segment (for _Thread_local variables)
+    char *tls_seg;               // Thread-local storage segment
+    char *tls_ptr;               // Current TLS allocation pointer
+
+    // Thread management
+    long long entry_point;       // Function offset to execute
+    long long *entry_args;       // Arguments for entry function
+    int num_args;                // Number of arguments
+    int exit_code;               // Thread return value
+    int terminated;              // Thread has finished execution
+    int detached;                // Thread is detached (no join needed)
+
+    struct VMThread *next;       // Linked list of threads
+} VMThread;
+
 typedef struct JCC JCC;
 
 /*!
@@ -1016,7 +1094,50 @@ struct JCC {
     // Error handling (setjmp/longjmp for exception-like behavior)
     jmp_buf *error_jmp_buf;            // Jump buffer for error handling (NULL = use exit())
     char *error_message;               // Last error message (when using longjmp)
+
+    // Threading support
+#ifndef JCC_NO_THREADS
+    int enable_threading;              // Threading feature flag (default: 1, disable with JCC_NO_THREADS=1)
+    int enable_gil;                    // GIL feature flag (default: 0, enable for thread safety)
+    GIL gil;                           // Global interpreter lock
+    VMThread *threads;                 // Linked list of all VM threads
+    pthread_key_t thread_key;          // Thread-local storage key for VMThread*
+    int gil_check_interval;            // Yield GIL every N instructions (default: 100)
+    VMThread *main_thread;             // Main thread (NULL if threading disabled)
+#endif
 };
+
+/*!
+ @function cc_enable_threading
+ @abstract Enable threading support in the VM.
+ @discussion Must be called BEFORE cc_init(). Enables thread-local storage
+             for VM state. When enabled, multiple threads can execute VM
+             bytecode concurrently. Threading is ENABLED BY DEFAULT (use
+             JCC_NO_THREADS=1 build flag to disable completely).
+ @param vm Pointer to an uninitialized JCC struct.
+*/
+void cc_enable_threading(JCC *vm);
+
+/*!
+ @function cc_disable_threading
+ @abstract Disable threading support in the VM.
+ @discussion Must be called BEFORE cc_init(). Disables threading at runtime
+             even if compiled with threading support. Use this if you want
+             single-threaded execution with lower overhead.
+ @param vm Pointer to an uninitialized JCC struct.
+*/
+void cc_disable_threading(JCC *vm);
+
+/*!
+ @function cc_enable_gil
+ @abstract Enable Global Interpreter Lock for thread safety.
+ @discussion Must be called BEFORE cc_init(). Enables the GIL which ensures
+             thread-safe execution by serializing bytecode execution. GIL is
+             DISABLED BY DEFAULT for maximum performance. Enable if you need
+             thread safety guarantees.
+ @param vm Pointer to an uninitialized JCC struct.
+*/
+void cc_enable_gil(JCC *vm);
 
 /*!
  @function cc_init

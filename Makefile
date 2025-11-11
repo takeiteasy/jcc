@@ -2,6 +2,14 @@ SRCS := $(wildcard src/*.c)
 CFLAGS := -Wall -O0 -g -std=c99 -Wno-switch -Wdeprecated-declarations
 LDFLAGS :=
 
+# Optional threading support (enabled by default)
+# Disable with: make JCC_NO_THREADS=1 or export JCC_NO_THREADS=1
+ifdef JCC_NO_THREADS
+  ifneq ($(JCC_NO_THREADS),0)
+    CFLAGS += -DJCC_NO_THREADS=1
+  endif
+endif
+
 # Optional libffi support for variadic foreign functions
 # Enable with: make JCC_HAS_FFI=1 or export JCC_HAS_FFI=1
 # Disable with: make JCC_HAS_FFI=0

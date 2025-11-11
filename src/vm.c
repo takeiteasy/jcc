@@ -23,6 +23,13 @@
 #include "jcc.h"
 #include "./internal.h"
 
+#ifndef JCC_NO_THREADS
+// Forward declarations for threading support
+static void gil_acquire(GIL *gil);
+static void gil_release(GIL *gil);
+static VMThread *vm_thread_get_current(JCC *vm);
+#endif
+
 // Stack canary constant for detecting stack overflows (used when random canaries disabled)
 #define STACK_CANARY 0xDEADBEEFCAFEBABELL
 
@@ -65,6 +72,220 @@ long long generate_random_canary(void) {
 
     return canary;
 }
+
+#ifndef JCC_NO_THREADS
+// ============================================================================
+// Global Interpreter Lock (GIL) Implementation
+// ============================================================================
+
+/*!
+ * @function gil_init
+ * @abstract Initialize the Global Interpreter Lock
+ */
+static void gil_init(GIL *gil) {
+    pthread_mutex_init(&gil->lock, NULL);
+    gil->owner_thread = 0;
+    gil->recursion_count = 0;
+}
+
+/*!
+ * @function gil_acquire
+ * @abstract Acquire the GIL, with support for recursive acquisition
+ * @discussion If the current thread already owns the GIL, increment recursion count.
+ *             Otherwise, block until GIL is available.
+ */
+static void gil_acquire(GIL *gil) {
+    pthread_t self = pthread_self();
+
+    // Check for recursive acquisition
+    if (pthread_equal(gil->owner_thread, self)) {
+        gil->recursion_count++;
+        return;
+    }
+
+    // Block until we can acquire the lock
+    pthread_mutex_lock(&gil->lock);
+    gil->owner_thread = self;
+    gil->recursion_count = 1;
+}
+
+/*!
+ * @function gil_release
+ * @abstract Release the GIL, decrementing recursion count
+ * @discussion Only actually releases the mutex when recursion count reaches 0
+ */
+static void gil_release(GIL *gil) {
+    pthread_t self = pthread_self();
+    assert(pthread_equal(gil->owner_thread, self) && "GIL released by non-owner");
+
+    gil->recursion_count--;
+    if (gil->recursion_count == 0) {
+        gil->owner_thread = 0;
+        pthread_mutex_unlock(&gil->lock);
+    }
+}
+
+/*!
+ * @function gil_check_owned
+ * @abstract Check if current thread holds the GIL
+ * @return 1 if current thread owns GIL, 0 otherwise
+ */
+static int gil_check_owned(GIL *gil) {
+    return pthread_equal(gil->owner_thread, pthread_self());
+}
+
+/*!
+ * @function gil_destroy
+ * @abstract Clean up GIL resources
+ */
+static void gil_destroy(GIL *gil) {
+    pthread_mutex_destroy(&gil->lock);
+    gil->owner_thread = 0;
+    gil->recursion_count = 0;
+}
+
+// ============================================================================
+// VM Thread Management
+// ============================================================================
+
+/*!
+ * @function vm_thread_get_current
+ * @abstract Get the current thread's VMThread structure
+ * @discussion Uses pthread_getspecific with thread_key. Returns main_thread
+ *             if threading is disabled.
+ */
+static VMThread *vm_thread_get_current(JCC *vm) {
+    if (!vm->enable_threading) {
+        return vm->main_thread;  // Single-threaded mode
+    }
+
+    VMThread *thread = (VMThread *)pthread_getspecific(vm->thread_key);
+    return thread;
+}
+
+/*!
+ * @function vm_thread_set_current
+ * @abstract Set the current thread's VMThread structure in TLS
+ */
+static void vm_thread_set_current(JCC *vm, VMThread *thread) {
+    pthread_setspecific(vm->thread_key, thread);
+}
+
+/*!
+ * @function vm_thread_allocate
+ * @abstract Allocate and initialize a new VMThread structure
+ * @param vm The VM instance
+ * @param entry_point Bytecode offset of function to execute
+ * @param args Array of arguments to pass to function
+ * @param num_args Number of arguments
+ * @return Pointer to newly allocated VMThread
+ */
+static VMThread *vm_thread_allocate(JCC *vm, long long entry_point, long long *args, int num_args) {
+    VMThread *thread = (VMThread *)calloc(1, sizeof(VMThread));
+    if (!thread) {
+        fprintf(stderr, "Failed to allocate VMThread\n");
+        return NULL;
+    }
+
+    thread->vm = vm;
+    thread->entry_point = entry_point;
+    thread->num_args = num_args;
+    thread->terminated = 0;
+    thread->detached = 0;
+    thread->exit_code = 0;
+    thread->next = NULL;
+
+    // Allocate thread-local stack (same size as main stack)
+    thread->stack_seg = (long long *)calloc(vm->poolsize, 1);
+    if (!thread->stack_seg) {
+        fprintf(stderr, "Failed to allocate thread stack\n");
+        free(thread);
+        return NULL;
+    }
+
+    // Initialize stack pointers (stack grows downward)
+    // poolsize is in bytes, divide by element size to get element count
+    size_t stack_elements = vm->poolsize / sizeof(long long);
+    thread->sp = thread->stack_seg + stack_elements;
+    thread->bp = thread->sp;
+    thread->initial_sp = thread->sp;
+    thread->initial_bp = thread->bp;
+
+    // Initialize accumulators
+    thread->ax = 0;
+    thread->fax = 0.0;
+
+    // Allocate TLS segment (for _Thread_local variables)
+    thread->tls_seg = (char *)calloc(vm->poolsize / 16, 1);  // 1/16th of main poolsize
+    thread->tls_ptr = thread->tls_seg;
+
+    // Copy arguments to thread's stack
+    if (num_args > 0 && args) {
+        thread->entry_args = (long long *)malloc(num_args * sizeof(long long));
+        memcpy(thread->entry_args, args, num_args * sizeof(long long));
+    } else {
+        thread->entry_args = NULL;
+    }
+
+    // Set PC to entry point
+    thread->pc = vm->text_seg + entry_point;
+
+    return thread;
+}
+
+/*!
+ * @function vm_thread_destroy
+ * @abstract Free all resources associated with a VMThread
+ */
+static void vm_thread_destroy(VMThread *thread) {
+    if (!thread) return;
+
+    if (thread->stack_seg) {
+        free(thread->stack_seg);
+    }
+    if (thread->tls_seg) {
+        free(thread->tls_seg);
+    }
+    if (thread->entry_args) {
+        free(thread->entry_args);
+    }
+    free(thread);
+}
+
+/*!
+ * @function vm_thread_entry
+ * @abstract Entry point for new OS threads - executes VM bytecode
+ * @param arg Pointer to VMThread structure
+ */
+static void *vm_thread_entry(void *arg) {
+    VMThread *thread = (VMThread *)arg;
+    JCC *vm = thread->vm;
+
+    // Set thread-local VMThread pointer
+    vm_thread_set_current(vm, thread);
+
+    // Push arguments onto thread's stack (right-to-left)
+    for (int i = thread->num_args - 1; i >= 0; i--) {
+        *--thread->sp = thread->entry_args[i];
+    }
+
+    // Acquire GIL before executing (if enabled)
+    if (vm->enable_gil) {
+        gil_acquire(&vm->gil);
+    }
+
+    // Execute VM bytecode (vm_eval will use thread-local state)
+    thread->exit_code = vm_eval(vm);
+    thread->terminated = 1;
+
+    // Release GIL (if enabled)
+    if (vm->enable_gil) {
+        gil_release(&vm->gil);
+    }
+
+    return NULL;
+}
+#endif // JCC_NO_THREADS
 
 // Segregated free list constants
 #define NUM_SIZE_CLASSES 12
@@ -2242,6 +2463,136 @@ int vm_eval(JCC *vm) {
             vm->ax = (val == 0) ? 1 : val;
         }
 
+        // ========== THREADING OPCODES ==========
+
+#ifndef JCC_NO_THREADS
+        else if (op == THRCREATE) {
+            // Create new VM thread
+            // Stack: [arg1, arg2, ..., argN, func_addr, num_args]
+            int num_args = (int)*vm->sp++;
+            long long func_addr = *vm->sp++;
+
+            // Collect arguments from stack
+            long long *args = NULL;
+            if (num_args > 0) {
+                args = (long long *)malloc(num_args * sizeof(long long));
+                for (int i = num_args - 1; i >= 0; i--) {
+                    args[i] = *vm->sp++;
+                }
+            }
+
+            // Create new VM thread
+            VMThread *new_thread = vm_thread_allocate(vm, func_addr, args, num_args);
+            if (!new_thread) {
+                fprintf(stderr, "Failed to create thread\n");
+                vm->ax = 0;
+                if (args) free(args);
+                goto thrcreate_done;
+            }
+
+            // Launch OS thread
+            int result = pthread_create(&new_thread->thread_id, NULL, vm_thread_entry, new_thread);
+            if (result != 0) {
+                fprintf(stderr, "pthread_create failed: %d\n", result);
+                vm_thread_destroy(new_thread);
+                vm->ax = 0;
+                if (args) free(args);
+                goto thrcreate_done;
+            }
+
+            // Add to thread list
+            new_thread->next = vm->threads;
+            vm->threads = new_thread;
+
+            // Return thread handle in ax
+            vm->ax = (long long)new_thread;
+            if (args) free(args);
+            thrcreate_done:;
+        }
+
+        else if (op == THRJOIN) {
+            // Wait for thread completion
+            // Stack: [thread_handle]
+            VMThread *join_thread = (VMThread *)*vm->sp++;
+
+            if (!join_thread) {
+                fprintf(stderr, "THRJOIN: NULL thread handle\n");
+                vm->ax = -1;
+                goto thrjoin_done;
+            }
+
+            // Release GIL while waiting (don't block other threads)
+            if (vm->enable_gil) {
+                gil_release(&vm->gil);
+            }
+
+            // Wait for thread to finish
+            pthread_join(join_thread->thread_id, NULL);
+
+            if (vm->enable_gil) {
+                gil_acquire(&vm->gil);
+            }
+
+            // Return thread's exit code in ax
+            vm->ax = join_thread->exit_code;
+
+            // Remove from thread list and clean up
+            VMThread **ptr = &vm->threads;
+            while (*ptr) {
+                if (*ptr == join_thread) {
+                    *ptr = join_thread->next;
+                    break;
+                }
+                ptr = &(*ptr)->next;
+            }
+            vm_thread_destroy(join_thread);
+            thrjoin_done:;
+        }
+
+        else if (op == THRSELF) {
+            // Return current thread handle
+            VMThread *current = vm_thread_get_current(vm);
+            vm->ax = (long long)current;
+        }
+
+        else if (op == THREXIT) {
+            // Exit current thread
+            // Stack: [exit_code]
+            int exit_code = (int)*vm->sp++;
+
+            VMThread *current = vm_thread_get_current(vm);
+            if (current && current != vm->main_thread) {
+                current->exit_code = exit_code;
+                current->terminated = 1;
+
+                // Release GIL (if enabled)
+                if (vm->enable_gil) {
+                    gil_release(&vm->gil);
+                }
+
+                // Exit thread
+                pthread_exit(NULL);
+            } else {
+                // Main thread: just return normally
+                vm->ax = exit_code;
+            }
+        }
+
+        else if (op == GILREL) {
+            // Explicitly release GIL (for long-running user code)
+            if (vm->enable_gil) {
+                gil_release(&vm->gil);
+            }
+        }
+
+        else if (op == GILACQ) {
+            // Re-acquire GIL after manual release
+            if (vm->enable_gil) {
+                gil_acquire(&vm->gil);
+            }
+        }
+#endif // JCC_NO_THREADS
+
         else {
             printf("unknown instruction:%d\n", op);
             return -1;
@@ -2249,9 +2600,51 @@ int vm_eval(JCC *vm) {
     }
 }
 
+#ifndef JCC_NO_THREADS
+void cc_enable_threading(JCC *vm) {
+    vm->enable_threading = 1;
+    vm->gil_check_interval = 100;  // Default: yield every 100 instructions
+}
+
+void cc_disable_threading(JCC *vm) {
+    vm->enable_threading = -1;  // -1 = explicitly disabled (vs 0 = not set)
+}
+
+void cc_enable_gil(JCC *vm) {
+    vm->enable_gil = 1;
+}
+#else
+// Stub functions when threading is disabled at compile time
+void cc_enable_threading(JCC *vm) { (void)vm; }
+void cc_disable_threading(JCC *vm) { (void)vm; }
+void cc_enable_gil(JCC *vm) { (void)vm; }
+#endif
+
 void cc_init(JCC *vm, bool enable_debugger) {
+#ifndef JCC_NO_THREADS
+    // Save threading configuration (must be set before cc_init via cc_enable_threading/cc_enable_gil)
+    int saved_enable_threading = vm->enable_threading;
+    int saved_enable_gil = vm->enable_gil;
+    int saved_gil_check_interval = vm->gil_check_interval;
+#endif
+
     // Zero-initialize the VM struct
     memset(vm, 0, sizeof(JCC));
+
+#ifndef JCC_NO_THREADS
+    // Restore/set threading configuration (threading enabled by default, GIL disabled by default)
+    // If user called cc_disable_threading before cc_init, respect that (saved_enable_threading will be 0 with a marker)
+    // Otherwise, enable threading by default
+    if (saved_enable_threading == -1) {
+        // User explicitly disabled threading
+        vm->enable_threading = 0;
+    } else {
+        // Enable threading by default
+        vm->enable_threading = 1;
+    }
+    vm->enable_gil = saved_enable_gil;  // Keep disabled unless explicitly enabled
+    vm->gil_check_interval = saved_gil_check_interval ? saved_gil_check_interval : 100;
+#endif
 
     // Set defaults
     vm->poolsize = 256 * 1024;  // 256KB default
@@ -2319,6 +2712,36 @@ void cc_init(JCC *vm, bool enable_debugger) {
     // If VM was built with libffi support, define JCC_HAS_FFI for user code
 #ifdef JCC_HAS_FFI
     cc_define(vm, "JCC_HAS_FFI", "1");
+#endif
+
+#ifndef JCC_NO_THREADS
+    // Initialize threading if enabled
+    if (vm->enable_threading) {
+        // Initialize GIL (always initialize structure, even if not used)
+        gil_init(&vm->gil);
+
+        // Create thread-local storage key
+        pthread_key_create(&vm->thread_key, NULL);
+
+        // Allocate main thread structure
+        vm->main_thread = vm_thread_allocate(vm, 0, NULL, 0);
+        if (!vm->main_thread) {
+            fprintf(stderr, "Failed to create main thread\n");
+            exit(1);
+        }
+
+        // Note: stack_seg will be allocated later during compilation
+        // We'll update main_thread's stack pointers after stack allocation
+
+        // Set main thread as current
+        vm_thread_set_current(vm, vm->main_thread);
+
+        vm->threads = NULL;  // Empty thread list initially
+    } else {
+        // Single-threaded mode: use VM's direct fields
+        vm->main_thread = NULL;
+        vm->threads = NULL;
+    }
 #endif
 
     if (enable_debugger) {
@@ -2434,6 +2857,35 @@ void cc_destroy(JCC *vm) {
         free(vm->error_message);
         vm->error_message = NULL;
     }
+
+#ifndef JCC_NO_THREADS
+    // Clean up threading resources
+    if (vm->enable_threading) {
+        // Clean up all threads
+        VMThread *thread = vm->threads;
+        while (thread) {
+            VMThread *next = thread->next;
+            vm_thread_destroy(thread);
+            thread = next;
+        }
+
+        // Clean up main thread (if it was separately allocated)
+        if (vm->main_thread && vm->main_thread != vm->threads) {
+            // Don't free stack_seg if it's the same as vm->stack_seg
+            if (vm->main_thread->stack_seg != vm->stack_seg) {
+                free(vm->main_thread->stack_seg);
+            }
+            vm->main_thread->stack_seg = NULL;  // Prevent double-free
+            vm_thread_destroy(vm->main_thread);
+        }
+
+        // Destroy GIL
+        gil_destroy(&vm->gil);
+
+        // Delete thread-local storage key
+        pthread_key_delete(vm->thread_key);
+    }
+#endif
 }
 
 void cc_print_stack_report(JCC *vm) {

@@ -5,13 +5,13 @@
 
 `JCC` is a ~~C89~~/~~C99~~/C11* JIT C Compiler. The preprocessor/lexer/parser is taken from [chibicc](http://https://github.com/rui314/chibicc) and the VM was built off [c4](https://github.com/rswier/c4) and [write-a-C-interpreter](https://github.com/lotabout/write-a-C-interpreter). 
 
+## Features
+
 **\*** Most C11 features implemented, see [TODO](#todo) for features still missing
 
 The goal of this project is correctness and safety. This is just a toy, and won't be 🚀🔥 **BLAZING FAST** 🔥🚀. I wouldn't recommend using this for anything important or in any production code. I'm not an expert, so safety features may not be perfect and will have *minimal* to **significant** performance overhead (depending on which features are enabled).
 
 `JCC` is not just a JIT compiler. It also extends the C preprocessor with new features, see [Pragma Macros](#pragma-macros) for more details. I have lots of other ideas for more `#pragma` extensions too.
-
-## Features
 
 ### Debugger
 
@@ -181,12 +181,66 @@ $ ./jcc --json -o lib.json lib.h
 - `_Alignas` specifier (control variable alignment)
 - `_Static_assert` (compile-time assertions with custom error messages)
 
-### Threading + Atomics Support
+### Threading Support
 
-> [!WARNING]
-> Not supported (yet)
+> [!NOTE]
+> This is a very early wip. There is no public way to access the threading API yet. This documentation is for future reference.
 
-JCC is single-threaded and does not implement any threading or atomic operations yet.
+JCC supports **threading with optional GIL** and POSIX threads (pthread) integration. Threading is **enabled by default** for maximum performance. The Global Interpreter Lock (GIL) is **disabled by default** to allow true parallel execution, with optional thread safety via the `-G/--gil` flag.
+
+See [SAFETY.md](./SAFETY.md) for more details.
+
+#### Configuration Options
+
+**Threading is enabled by default.** Use these options to customize behavior:
+
+**Option 1: Enable GIL for Thread Safety**
+```bash
+./jcc -G program.c          # Enable GIL for thread-safe execution
+./jcc --gil program.c       # Long form
+```
+
+**Option 2: Disable Threading Completely**
+```bash
+./jcc --no-threads program.c      # Disable threading at runtime
+make JCC_NO_THREADS=1             # Disable at compile time (smaller binary)
+```
+
+**Option 3: Programmatic API**
+```c
+#include "jcc.h"
+
+JCC vm;
+
+// Threading is enabled by default
+// Optionally disable threading BEFORE initialization
+cc_disable_threading(&vm);
+
+// Or enable GIL for thread safety
+cc_enable_gil(&vm);
+
+// Initialize VM (preserves threading configuration)
+cc_init(&vm, false);
+
+// Compile and run code
+Token *tok = cc_preprocess(&vm, "program.c");
+Obj *prog = cc_parse(&vm, tok);
+cc_compile(&vm, prog);
+int exit_code = cc_run(&vm, argc, argv);
+
+// Clean up (automatically cleans threading resources)
+cc_destroy(&vm);
+```
+
+#### Threading Status
+
+- [X] Foundation for threading (op codes + structs)
+- [X] Very basic GIL implementation
+- [ ] `pthread.h` wrapper
+- [ ] `_Thread_local` support for variables (global + local)
+- [ ] `threads.h` wrapper
+- [ ] `stdatomic.h` wrapper
+- [ ] WinAPI thread wrapper (Maybe? Not a priority)
 
 ## TODO
 
@@ -225,6 +279,10 @@ JCC is single-threaded and does not implement any threading or atomic operations
 - [ ] **Optimization passes** - Constant folding, dead code elimination
 - [ ] **Better error messages** - Line numbers in runtime errors
 - [ ] **Specify C versions** - `-std=c89`, `-std=c11` etc
+- [ ] **Multi Register VM Architecture** - Replace `ax` and `fax` with 8 registers (R0-R7, F0-F7)
+    - [ ] Add new opcodes to operate on registers
+    - [ ] Update codegen to use registers
+    - [ ] Ensure all tests pass
 
 ## Building
 

@@ -60,6 +60,10 @@ static void usage(const char *argv0, int exit_code) {
     printf("\t   --memory-poisoning        Poison allocated/freed memory (0xCD/0xDD patterns)\n");
     printf("\t-T/--memory-tagging          Temporal memory tagging (track pointer generation tags)\n");
     printf("\t-V/--vm-heap                 Route all malloc/free through VM heap (enables memory safety)\n");
+    printf("\t-C/--control-flow-integrity  Enable control flow integrity (shadow stack)\n");
+    printf("\nThreading Options:\n");
+    printf("\t-G/--gil                     Enable GIL for thread-safe execution (threading enabled by default)\n");
+    printf("\t   --no-threads              Disable threading support entirely\n");
     printf("\nExample:\n");
     printf("\t%s -o hello hello.c\n", argv0);
     printf("\t%s -I ./include -D DEBUG -o prog prog.c\n", argv0);
@@ -171,6 +175,8 @@ int main(int argc, const char* argv[]) {
     int enable_memory_tagging = 0;
     int enable_vm_heap = 0;
     int enable_cfi = 0;
+    int enable_gil = 0; // -G / --gil
+    int disable_threading = 0; // --no-threads
     int print_tokens = 0; // -P
     int preprocess_only = 0; // -E
     int skip_preprocess = 0; // -X
@@ -212,13 +218,15 @@ int main(int argc, const char* argv[]) {
         {"memory-tagging", no_argument, 0, 'T'},
         {"vm-heap", no_argument, 0, 'V'},
         {"control-flow-integrity", no_argument, 0, 'C'},
+        {"gil", no_argument, 0, 'G'},
+        {"no-threads", no_argument, 0, 1008},
         {"include", required_argument, 0, 'I'},
         {"define", required_argument, 0, 'D'},
         {"undef", required_argument, 0, 'U'},
         {0, 0, 0, 0}
     };
 
-    const char *optstring = "haI:D:U:o:vgbftzOskpliPEXSjFTVC";
+    const char *optstring = "haI:D:U:o:vgbftzOskpliPEXSjFTVCG";
     int opt;
     opterr = 0; // we'll handle errors explicitly
     while ((opt = getopt_long(argc, (char * const *)argv, optstring, long_options, NULL)) != -1) {
@@ -309,6 +317,9 @@ int main(int argc, const char* argv[]) {
         case 1007:
             enable_memory_poisoning = 1;
             break;
+        case 1008:
+            disable_threading = 1;
+            break;
         case 'T':
             enable_memory_tagging = 1;
             break;
@@ -317,6 +328,9 @@ int main(int argc, const char* argv[]) {
             break;
         case 'C':
             enable_cfi = 1;
+            break;
+        case 'G':
+            enable_gil = 1;
             break;
         case 'P':
             print_tokens = 1;
@@ -390,6 +404,18 @@ int main(int argc, const char* argv[]) {
     }
 
     JCC vm;
+
+    // Configure threading before initialization
+    // Threading is enabled by default - disable only if explicitly requested
+    if (disable_threading) {
+        cc_disable_threading(&vm);
+    }
+
+    // Enable GIL if requested (disabled by default for performance)
+    if (enable_gil) {
+        cc_enable_gil(&vm);
+    }
+
     cc_init(&vm, enable_debugger);
 
     if (verbose)
