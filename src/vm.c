@@ -650,8 +650,8 @@ int vm_eval(JCC *vm) {
                     "FLD  ,FST  ,FADD ,FSUB ,FMUL ,FDIV ,FNEG ,FEQ  ,FNE  ,FLT  ,FLE  ,FGT  ,FGE  ,I2F  ,F2I  ,FPSH ,"
                     "CALLF,CHKB ,CHKP ,CHKT ,CHKI ,MARKI,MARKA,CHKA ,CHKPA,MARKP,"
                     "SCPIN,SCPOT,CHKL ,MARKR,MARKW,"
-                    "SETJP,LONJP"[op * 6]);
-            if (op <= ADJ || op == CHKB || op == CHKT || op == CHKI || op == MARKI || op == MARKA || op == CHKA || op == MARKP || op == SCOPEIN || op == SCOPEOUT || op == CHKL || op == MARKR || op == MARKW)
+                    "SETJP,LONJP,CAS  ,EXCH "[op * 6]);
+            if (op <= ADJ || op == CHKB || op == CHKT || op == CHKI || op == MARKI || op == MARKA || op == CHKA || op == MARKP || op == SCOPEIN || op == SCOPEOUT || op == CHKL || op == MARKR || op == MARKW || op == CAS || op == EXCH)
                 printf(" %lld\n", *vm->pc);
             else
                 printf("\n");
@@ -2592,6 +2592,31 @@ int vm_eval(JCC *vm) {
             }
         }
 #endif // JCC_NO_THREADS
+
+        else if (op == CAS) {
+            // Compare-and-swap
+            // Stack (top to bottom): [expected, addr]  ax = new_value
+            long long expected = *vm->sp++;                // Pop expected (top of stack)
+            long long *addr = (long long *)*vm->sp++;      // Pop addr (next on stack)
+            long long new_val = vm->ax;
+            long long current = *addr;
+
+            if (current == expected) {
+                *addr = new_val;
+                vm->ax = 1;  // Success
+            } else {
+                vm->ax = 0;  // Failure
+            }
+        }
+        else if (op == EXCH) {
+            // Atomic exchange
+            // Stack: [addr]  ax = new_value
+            long long *addr = (long long *)*vm->sp++;
+            long long new_val = vm->ax;
+            long long old_val = *addr;
+            *addr = new_val;
+            vm->ax = old_val;  // Return old value
+        }
 
         else {
             printf("unknown instruction:%d\n", op);

@@ -96,6 +96,9 @@ typedef enum {
     // Non-local jump instructions (setjmp/longjmp)
     SETJMP, // Save execution context to jmp_buf, return 0
     LONGJMP, // Restore execution context from jmp_buf, return val
+    // Atomic operations
+    CAS,      // Compare-and-swap
+    EXCH,     // Atomic exchange
 #ifndef JCC_NO_THREADS
     // Threading opcodes
     THRCREATE, // Create new VM thread

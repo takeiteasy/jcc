@@ -3,3 +3,4 @@
 *.so
 jcc.exe
 jcc
+*.dSYM

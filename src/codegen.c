@@ -1037,6 +1037,39 @@ void gen_expr(JCC *vm, Node *node) {
             }
             return;
 
+        case ND_CAS: {
+            // Compare-and-swap: __jcc_compare_and_swap(addr, old_ptr, new_val)
+            // node->cas_addr: address to CAS
+            // node->cas_old: pointer to expected value
+            // node->cas_new: new value to write
+
+            gen_expr(vm, node->cas_addr);      // Evaluate address
+            emit(vm, PUSH);                     // Push address
+
+            gen_expr(vm, node->cas_old);        // Get pointer to expected
+            emit_load(vm, node->ty, 1);         // Dereference to load expected
+            emit(vm, PUSH);                     // Push expected value
+
+            gen_expr(vm, node->cas_new);        // Evaluate new value into ax
+
+            emit(vm, CAS);                      // Perform CAS
+            return;
+        }
+
+        case ND_EXCH: {
+            // Atomic exchange: __jcc_atomic_exchange(addr, new_val)
+            // node->lhs: address
+            // node->rhs: new value
+
+            gen_expr(vm, node->lhs);            // Evaluate address
+            emit(vm, PUSH);                     // Push address
+
+            gen_expr(vm, node->rhs);            // Evaluate new value into ax
+
+            emit(vm, EXCH);                     // Perform exchange
+            return;
+        }
+
         default:
             error_tok(vm, node->tok, "codegen: unsupported expression node kind %d", node->kind);
     }

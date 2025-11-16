@@ -282,6 +282,8 @@ function disclosure_triangle(elt) {
 <!-- a logicalPath="//apple_ref/doc/header/windows.h" machineGenerated="true" -->&lt;windows.h&gt;<!-- /a --><br>
 <!-- a logicalPath="//apple_ref/doc/header/unistd.h" machineGenerated="true" -->&lt;unistd.h&gt;<!-- /a --><br>
 <!-- a logicalPath="//apple_ref/doc/header/dlfcn.h" machineGenerated="true" -->&lt;dlfcn.h&gt;<!-- /a --><br>
+<!-- a logicalPath="//apple_ref/doc/header/pthread.h" machineGenerated="true" -->&lt;pthread.h&gt;<!-- /a --><br>
+<!-- a logicalPath="//apple_ref/doc/header/sched.h" machineGenerated="true" -->&lt;sched.h&gt;<!-- /a --><br>
 <!-- a logicalPath="//apple_ref/doc/header/ffi.h" machineGenerated="true" -->&lt;ffi.h&gt;<!-- /a -->
 </div></div></td>
 </tr>
@@ -311,6 +313,9 @@ function disclosure_triangle(elt) {
 <dt><tt><a href="index.html#//apple_ref/c/func/cc_destroy" target="_top">cc_destroy</a></tt></dt>
 <dd><p>Free resources owned by an JCC instance.
 </p></dd>
+<dt><tt><a href="index.html#//apple_ref/c/func/cc_disable_threading" target="_top">cc_disable_threading</a></tt></dt>
+<dd><p>Disable threading support in the VM.
+</p></dd>
 <dt><tt><a href="index.html#//apple_ref/c/func/cc_dlopen" target="_top">cc_dlopen(JCC *, const char *)</a></tt></dt>
 <dd><p>Load a dynamic library and resolve all registered FFI functions.
 </p></dd>
@@ -322,6 +327,12 @@ function disclosure_triangle(elt) {
 </p></dd>
 <dt><tt><a href="index.html#//apple_ref/c/func/cc_dlsym_DONTLINK_1" target="_top">cc_dlsym(JCC *, const char *, void *, int, int)</a></tt></dt>
 <dd><p>Resolve a symbol in a dynamic library.
+</p></dd>
+<dt><tt><a href="index.html#//apple_ref/c/func/cc_enable_gil" target="_top">cc_enable_gil</a></tt></dt>
+<dd><p>Enable Global Interpreter Lock for thread safety.
+</p></dd>
+<dt><tt><a href="index.html#//apple_ref/c/func/cc_enable_threading" target="_top">cc_enable_threading</a></tt></dt>
+<dd><p>Enable threading support in the VM.
 </p></dd>
 <dt><tt><a href="index.html#//apple_ref/c/func/cc_find_function_entry" target="_top">cc_find_function_entry</a></tt></dt>
 <dd><p>Find program counter address for a function entry point by name.
@@ -633,6 +644,35 @@ dynamically allocated.
 <!-- headerDoc=discussion;uid=//apple_ref/c/func/cc_destroy;name=end --><!-- end discussion -->
 </p>
 <hr class="betweenAPIEntries">
+<!-- headerDoc=func;  uid=//apple_ref/c/func/cc_disable_threading;   name=cc_disable_threading -->
+<a name="//apple_ref/c/func/cc_disable_threading"></a>
+<h3><a name="cc_disable_threading">cc_disable_threading</a></h3>
+<hr class="afterName">
+<p><!-- headerDoc=abstract;uid=//apple_ref/c/func/cc_disable_threading;name=start --><!-- begin abstract --></p>
+<p>Disable threading support in the VM.
+<!-- end abstract --><!-- headerDoc=abstract;uid=//apple_ref/c/func/cc_disable_threading;name=end --></p>
+<div class="declaration_indent">
+<pre><!-- headerDoc=declaration;uid=//apple_ref/c/func/cc_disable_threading;name=start --><!-- a logicalPath="//apple_ref/c/cl/void //apple_ref/c/tdef/void //apple_ref/c/tag/void //apple_ref/c/struct/void //apple_ref/c/intf/void //apple_ref/doc/anysymbol/void" machineGenerated="true" --><span class="type">void</span><!-- /a --> <a machinegenerated="true" href="index.html#//apple_ref/c/func/cc_disable_threading" logicalPath="//apple_ref/c/instm/cc_disable_threading //apple_ref/c/clm/cc_disable_threading //apple_ref/c/intfcm/cc_disable_threading //apple_ref/c/intfm/cc_disable_threading //apple_ref/c/func/cc_disable_threading" target="_top"><span class="function">cc_disable_threading</span></a>(
+    <a machinegenerated="true" href="index.html#//apple_ref/c/tag/JCC" logicalPath="//apple_ref/c/cl/JCC //apple_ref/c/tdef/JCC //apple_ref/c/tag/JCC" target="_top"><span class="type">JCC</span></a> <span class="type">*</span><span class="param">vm</span>);  <!-- headerDoc=declaration;uid=//apple_ref/c/func/cc_disable_threading;name=end --></pre>
+</div>
+<h5 class="tight"><font face="Lucida Grande,Helvetica,Arial">Parameters</font></h5>
+<div class="param_indent">
+<dl>
+<dt>
+<!-- headerDoc=functionparam;  uid=//apple_ref/doc/functionparam/cc_disable_threading/vm;   name=vm -->
+<a name="//apple_ref/doc/functionparam/cc_disable_threading/vm"></a>
+<code>vm</code>
+</dt>
+<dd><p>Pointer to an uninitialized JCC struct.</p></dd>
+</dl>
+</div>
+<h5 class="tight"><font face="Lucida Grande,Helvetica,Arial">Discussion</font></h5>
+<!-- begin discussion --><!-- headerDoc=discussion;uid=//apple_ref/c/func/cc_disable_threading;name=start --><p>Must be called BEFORE cc_init(). Disables threading at runtime
+even if compiled with threading support. Use this if you want
+single-threaded execution with lower overhead.
+<!-- headerDoc=discussion;uid=//apple_ref/c/func/cc_disable_threading;name=end --><!-- end discussion -->
+</p>
+<hr class="betweenAPIEntries">
 <!-- headerDoc=func;  uid=//apple_ref/c/func/cc_dlopen;   name=cc_dlopen -->
 <a name="//apple_ref/c/func/cc_dlopen"></a>
 <h3><a name="cc_dlopen(JCC*,constchar*)">cc_dlopen(JCC *, const char *)</a></h3>
@@ -834,6 +874,66 @@ cc_register_variadic_cfunc.
 <p>0 on success, -1 on failure.
 
 <!-- end return value --></p>
+<hr class="betweenAPIEntries">
+<!-- headerDoc=func;  uid=//apple_ref/c/func/cc_enable_gil;   name=cc_enable_gil -->
+<a name="//apple_ref/c/func/cc_enable_gil"></a>
+<h3><a name="cc_enable_gil">cc_enable_gil</a></h3>
+<hr class="afterName">
+<p><!-- headerDoc=abstract;uid=//apple_ref/c/func/cc_enable_gil;name=start --><!-- begin abstract --></p>
+<p>Enable Global Interpreter Lock for thread safety.
+<!-- end abstract --><!-- headerDoc=abstract;uid=//apple_ref/c/func/cc_enable_gil;name=end --></p>
+<div class="declaration_indent">
+<pre><!-- headerDoc=declaration;uid=//apple_ref/c/func/cc_enable_gil;name=start --><!-- a logicalPath="//apple_ref/c/cl/void //apple_ref/c/tdef/void //apple_ref/c/tag/void //apple_ref/c/struct/void //apple_ref/c/intf/void //apple_ref/doc/anysymbol/void" machineGenerated="true" --><span class="type">void</span><!-- /a --> <a machinegenerated="true" href="index.html#//apple_ref/c/func/cc_enable_gil" logicalPath="//apple_ref/c/instm/cc_enable_gil //apple_ref/c/clm/cc_enable_gil //apple_ref/c/intfcm/cc_enable_gil //apple_ref/c/intfm/cc_enable_gil //apple_ref/c/func/cc_enable_gil" target="_top"><span class="function">cc_enable_gil</span></a>(
+    <a machinegenerated="true" href="index.html#//apple_ref/c/tag/JCC" logicalPath="//apple_ref/c/cl/JCC //apple_ref/c/tdef/JCC //apple_ref/c/tag/JCC" target="_top"><span class="type">JCC</span></a> <span class="type">*</span><span class="param">vm</span>);  <!-- headerDoc=declaration;uid=//apple_ref/c/func/cc_enable_gil;name=end --></pre>
+</div>
+<h5 class="tight"><font face="Lucida Grande,Helvetica,Arial">Parameters</font></h5>
+<div class="param_indent">
+<dl>
+<dt>
+<!-- headerDoc=functionparam;  uid=//apple_ref/doc/functionparam/cc_enable_gil/vm;   name=vm -->
+<a name="//apple_ref/doc/functionparam/cc_enable_gil/vm"></a>
+<code>vm</code>
+</dt>
+<dd><p>Pointer to an uninitialized JCC struct.</p></dd>
+</dl>
+</div>
+<h5 class="tight"><font face="Lucida Grande,Helvetica,Arial">Discussion</font></h5>
+<!-- begin discussion --><!-- headerDoc=discussion;uid=//apple_ref/c/func/cc_enable_gil;name=start --><p>Must be called BEFORE cc_init(). Enables the GIL which ensures
+thread-safe execution by serializing bytecode execution. GIL is
+DISABLED BY DEFAULT for maximum performance. Enable if you need
+thread safety guarantees.
+<!-- headerDoc=discussion;uid=//apple_ref/c/func/cc_enable_gil;name=end --><!-- end discussion -->
+</p>
+<hr class="betweenAPIEntries">
+<!-- headerDoc=func;  uid=//apple_ref/c/func/cc_enable_threading;   name=cc_enable_threading -->
+<a name="//apple_ref/c/func/cc_enable_threading"></a>
+<h3><a name="cc_enable_threading">cc_enable_threading</a></h3>
+<hr class="afterName">
+<p><!-- headerDoc=abstract;uid=//apple_ref/c/func/cc_enable_threading;name=start --><!-- begin abstract --></p>
+<p>Enable threading support in the VM.
+<!-- end abstract --><!-- headerDoc=abstract;uid=//apple_ref/c/func/cc_enable_threading;name=end --></p>
+<div class="declaration_indent">
+<pre><!-- headerDoc=declaration;uid=//apple_ref/c/func/cc_enable_threading;name=start --><!-- a logicalPath="//apple_ref/c/cl/void //apple_ref/c/tdef/void //apple_ref/c/tag/void //apple_ref/c/struct/void //apple_ref/c/intf/void //apple_ref/doc/anysymbol/void" machineGenerated="true" --><span class="type">void</span><!-- /a --> <a machinegenerated="true" href="index.html#//apple_ref/c/func/cc_enable_threading" logicalPath="//apple_ref/c/instm/cc_enable_threading //apple_ref/c/clm/cc_enable_threading //apple_ref/c/intfcm/cc_enable_threading //apple_ref/c/intfm/cc_enable_threading //apple_ref/c/func/cc_enable_threading" target="_top"><span class="function">cc_enable_threading</span></a>(
+    <a machinegenerated="true" href="index.html#//apple_ref/c/tag/JCC" logicalPath="//apple_ref/c/cl/JCC //apple_ref/c/tdef/JCC //apple_ref/c/tag/JCC" target="_top"><span class="type">JCC</span></a> <span class="type">*</span><span class="param">vm</span>);  <!-- headerDoc=declaration;uid=//apple_ref/c/func/cc_enable_threading;name=end --></pre>
+</div>
+<h5 class="tight"><font face="Lucida Grande,Helvetica,Arial">Parameters</font></h5>
+<div class="param_indent">
+<dl>
+<dt>
+<!-- headerDoc=functionparam;  uid=//apple_ref/doc/functionparam/cc_enable_threading/vm;   name=vm -->
+<a name="//apple_ref/doc/functionparam/cc_enable_threading/vm"></a>
+<code>vm</code>
+</dt>
+<dd><p>Pointer to an uninitialized JCC struct.</p></dd>
+</dl>
+</div>
+<h5 class="tight"><font face="Lucida Grande,Helvetica,Arial">Discussion</font></h5>
+<!-- begin discussion --><!-- headerDoc=discussion;uid=//apple_ref/c/func/cc_enable_threading;name=start --><p>Must be called BEFORE cc_init(). Enables thread-local storage
+for VM state. When enabled, multiple threads can execute VM
+bytecode concurrently. Threading is ENABLED BY DEFAULT (use
+JCC_NO_THREADS=1 build flag to disable completely).
+<!-- headerDoc=discussion;uid=//apple_ref/c/func/cc_enable_threading;name=end --><!-- end discussion -->
+</p>
 <hr class="betweenAPIEntries">
 <!-- headerDoc=func;  uid=//apple_ref/c/func/cc_find_function_entry;   name=cc_find_function_entry -->
 <a name="//apple_ref/c/func/cc_find_function_entry"></a>
@@ -1966,6 +2066,9 @@ during preprocessing.
 <dt><tt><a href="index.html#//apple_ref/c/tdef/FreeBlock" target="_top">FreeBlock</a></tt></dt>
 <dd><p>Free list node for tracking freed memory blocks.
 </p></dd>
+<dt><tt><a href="index.html#//apple_ref/c/tdef/GIL" target="_top">GIL</a></tt></dt>
+<dd><p>Global Interpreter Lock for thread-safe VM execution.
+</p></dd>
 <dt><tt><a href="index.html#//apple_ref/c/tdef/GotoPatch" target="_top">GotoPatch</a></tt></dt>
 <dd><p>Records a forward jump (JMP) that must be patched once the
 destination label is defined.
@@ -2034,6 +2137,9 @@ used by the preprocessor and parser.
 </p></dd>
 <dt><tt><a href="index.html#//apple_ref/c/tdef/TypeKind" target="_top">TypeKind</a></tt></dt>
 <dd><p>Kind tag for the `Type` structure describing C types.
+</p></dd>
+<dt><tt><a href="index.html#//apple_ref/c/tdef/VMThread" target="_top">VMThread</a></tt></dt>
+<dd><p>Represents a single VM thread with thread-local execution state.
 </p></dd>
 </dl>
 <hr class="betweenAPIEntries">
@@ -2423,6 +2529,44 @@ during preprocessing.
 </dl>
 </div>
 <hr class="betweenAPIEntries">
+<!-- headerDoc=tdef;  uid=//apple_ref/c/tdef/GIL;   name=GIL -->
+<a name="//apple_ref/c/tdef/GIL"></a>
+<h3><a name="GIL">GIL</a></h3>
+<hr class="afterName">
+<p><!-- headerDoc=abstract;uid=//apple_ref/c/tdef/GIL;name=start --><!-- begin abstract --></p>
+<p>Global Interpreter Lock for thread-safe VM execution.
+<!-- end abstract --><!-- headerDoc=abstract;uid=//apple_ref/c/tdef/GIL;name=end --></p>
+<div class="declaration_indent">
+<pre><!-- headerDoc=declaration;uid=//apple_ref/c/tdef/GIL;name=start --><span class="keyword">typedef</span> <span class="keyword">struct</span> { 
+    <!-- a logicalPath="//apple_ref/c/cl/pthread_mutex_t //apple_ref/c/tdef/pthread_mutex_t //apple_ref/c/tag/pthread_mutex_t //apple_ref/c/struct/pthread_mutex_t //apple_ref/c/intf/pthread_mutex_t //apple_ref/doc/anysymbol/pthread_mutex_t" machineGenerated="true" --><span class="type">pthread_mutex_t</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/lock //apple_ref/c/data/lock //apple_ref/c/clconst/lock " machineGenerated="true" --><span class="var">lock</span><!-- /a -->; <span class="comment">// The global interpreter lock</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/pthread_t //apple_ref/c/tdef/pthread_t //apple_ref/c/tag/pthread_t //apple_ref/c/struct/pthread_t //apple_ref/c/intf/pthread_t //apple_ref/doc/anysymbol/pthread_t" machineGenerated="true" --><span class="type">pthread_t</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/owner_thread //apple_ref/c/data/owner_thread //apple_ref/c/clconst/owner_thread " machineGenerated="true" --><span class="var">owner_thread</span><!-- /a -->; <span class="comment">// Thread currently holding GIL</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/recursion_count //apple_ref/c/data/recursion_count //apple_ref/c/clconst/recursion_count " machineGenerated="true" --><span class="var">recursion_count</span><!-- /a -->; <span class="comment">// Allow recursive GIL acquisition</span> 
+} <!-- a logicalPath="//apple_ref/c/econst/GIL //apple_ref/c/data/GIL //apple_ref/c/clconst/GIL " machineGenerated="true" --><span class="var">GIL</span><!-- /a -->;  <!-- headerDoc=declaration;uid=//apple_ref/c/tdef/GIL;name=end --></pre>
+</div>
+<h5 class="tight"><font face="Lucida Grande,Helvetica,Arial">Fields</font></h5>
+<div class="param_indent">
+<dl>
+<dt>
+<!-- headerDoc=structfield;  uid=//apple_ref/doc/structfield/GIL/lock;   name=lock -->
+<a name="//apple_ref/doc/structfield/GIL/lock"></a>
+<code>lock</code>
+</dt>
+<dd><p>pthread mutex protecting VM execution</p></dd>
+<dt>
+<!-- headerDoc=structfield;  uid=//apple_ref/doc/structfield/GIL/owner_thread;   name=owner_thread -->
+<a name="//apple_ref/doc/structfield/GIL/owner_thread"></a>
+<code>owner_thread</code>
+</dt>
+<dd><p>Thread currently holding the GIL</p></dd>
+<dt>
+<!-- headerDoc=structfield;  uid=//apple_ref/doc/structfield/GIL/recursion_count;   name=recursion_count -->
+<a name="//apple_ref/doc/structfield/GIL/recursion_count"></a>
+<code>recursion_count</code>
+</dt>
+<dd><p>Allow recursive GIL acquisition</p></dd>
+</dl>
+</div>
+<hr class="betweenAPIEntries">
 <!-- headerDoc=tdef;  uid=//apple_ref/c/tdef/GotoPatch;   name=GotoPatch -->
 <a name="//apple_ref/c/tdef/GotoPatch"></a>
 <h3><a name="GotoPatch">GotoPatch</a></h3>
@@ -2575,6 +2719,11 @@ prevent recursive macro expansion.
     <!-- a logicalPath="//apple_ref/c/econst/MUL //apple_ref/c/data/MUL //apple_ref/c/clconst/MUL " machineGenerated="true" --><span class="var">MUL</span><!-- /a -->,
     <!-- a logicalPath="//apple_ref/c/econst/DIV //apple_ref/c/data/DIV //apple_ref/c/clconst/DIV " machineGenerated="true" --><span class="var">DIV</span><!-- /a -->,
     <!-- a logicalPath="//apple_ref/c/econst/MOD //apple_ref/c/data/MOD //apple_ref/c/clconst/MOD " machineGenerated="true" --><span class="var">MOD</span><!-- /a -->, 
+    <span class="comment">// Checked arithmetic operations (overflow detection)</span> 
+    <!-- a logicalPath="//apple_ref/c/econst/ADDC //apple_ref/c/data/ADDC //apple_ref/c/clconst/ADDC " machineGenerated="true" --><span class="var">ADDC</span><!-- /a -->,
+    <!-- a logicalPath="//apple_ref/c/econst/SUBC //apple_ref/c/data/SUBC //apple_ref/c/clconst/SUBC " machineGenerated="true" --><span class="var">SUBC</span><!-- /a -->,
+    <!-- a logicalPath="//apple_ref/c/econst/MULC //apple_ref/c/data/MULC //apple_ref/c/clconst/MULC " machineGenerated="true" --><span class="var">MULC</span><!-- /a -->,
+    <!-- a logicalPath="//apple_ref/c/econst/DIVC //apple_ref/c/data/DIVC //apple_ref/c/clconst/DIVC " machineGenerated="true" --><span class="var">DIVC</span><!-- /a -->, 
     <span class="comment">// VM memory operations (self-contained, no system calls)</span> 
     <!-- a logicalPath="//apple_ref/c/econst/MALC //apple_ref/c/data/MALC //apple_ref/c/clconst/MALC " machineGenerated="true" --><span class="var">MALC</span><!-- /a -->,
     <!-- a logicalPath="//apple_ref/c/econst/MFRE //apple_ref/c/data/MFRE //apple_ref/c/clconst/MFRE " machineGenerated="true" --><span class="var">MFRE</span><!-- /a -->,
@@ -2623,7 +2772,19 @@ prevent recursive macro expansion.
     <!-- a logicalPath="//apple_ref/c/econst/MARKW //apple_ref/c/data/MARKW //apple_ref/c/clconst/MARKW " machineGenerated="true" --><span class="var">MARKW</span><!-- /a -->, <span class="comment">// Mark variable write access</span> 
     <span class="comment">// Non-local jump instructions (setjmp/longjmp)</span> 
     <!-- a logicalPath="//apple_ref/c/econst/SETJMP //apple_ref/c/data/SETJMP //apple_ref/c/clconst/SETJMP " machineGenerated="true" --><span class="var">SETJMP</span><!-- /a -->, <span class="comment">// Save execution context to jmp_buf, return 0</span> 
-    <!-- a logicalPath="//apple_ref/c/econst/LONGJMP //apple_ref/c/data/LONGJMP //apple_ref/c/clconst/LONGJMP " machineGenerated="true" --><span class="var">LONGJMP</span><!-- /a --> <span class="comment">// Restore execution context from jmp_buf, return val</span> 
+    <!-- a logicalPath="//apple_ref/c/econst/LONGJMP //apple_ref/c/data/LONGJMP //apple_ref/c/clconst/LONGJMP " machineGenerated="true" --><span class="var">LONGJMP</span><!-- /a -->, <span class="comment">// Restore execution context from jmp_buf, return val</span> 
+    <span class="comment">// Atomic operations</span> 
+    <!-- a logicalPath="//apple_ref/c/econst/CAS //apple_ref/c/data/CAS //apple_ref/c/clconst/CAS " machineGenerated="true" --><span class="var">CAS</span><!-- /a -->, <span class="comment">// Compare-and-swap</span> 
+    <!-- a logicalPath="//apple_ref/c/econst/EXCH //apple_ref/c/data/EXCH //apple_ref/c/clconst/EXCH " machineGenerated="true" --><span class="var">EXCH</span><!-- /a -->, <span class="comment">// Atomic exchange</span> 
+    <span class="preprocessor">#ifndef</span> <!-- a logicalPath="//apple_ref/c/cl/JCC_NO_THREADS //apple_ref/c/tdef/JCC_NO_THREADS //apple_ref/c/tag/JCC_NO_THREADS //apple_ref/c/struct/JCC_NO_THREADS //apple_ref/c/intf/JCC_NO_THREADS //apple_ref/c/econst/JCC_NO_THREADS //apple_ref/c/data/JCC_NO_THREADS //apple_ref/c/clconst/JCC_NO_THREADS //apple_ref/c/instm/JCC_NO_THREADS //apple_ref/c/clm/JCC_NO_THREADS //apple_ref/c/intfcm/JCC_NO_THREADS //apple_ref/c/intfm/JCC_NO_THREADS //apple_ref/c/func/JCC_NO_THREADS //apple_ref/c/ftmplt/JCC_NO_THREADS //apple_ref/c/defn/JCC_NO_THREADS //apple_ref/c/macro/JCC_NO_THREADS //apple_ref/doc/com/intfm/JCC_NO_THREADS //apple_ref/doc/anysymbol/JCC_NO_THREADS" machineGenerated="true" --><span class="preprocessor">JCC_NO_THREADS</span><!-- /a --> 
+    <span class="comment">// Threading opcodes</span> 
+    <!-- a logicalPath="//apple_ref/c/econst/THRCREATE //apple_ref/c/data/THRCREATE //apple_ref/c/clconst/THRCREATE " machineGenerated="true" --><span class="var">THRCREATE</span><!-- /a -->, <span class="comment">// Create new VM thread</span> 
+    <!-- a logicalPath="//apple_ref/c/econst/THRJOIN //apple_ref/c/data/THRJOIN //apple_ref/c/clconst/THRJOIN " machineGenerated="true" --><span class="var">THRJOIN</span><!-- /a -->, <span class="comment">// Wait for thread completion</span> 
+    <!-- a logicalPath="//apple_ref/c/econst/THRSELF //apple_ref/c/data/THRSELF //apple_ref/c/clconst/THRSELF " machineGenerated="true" --><span class="var">THRSELF</span><!-- /a -->, <span class="comment">// Get current thread handle</span> 
+    <!-- a logicalPath="//apple_ref/c/econst/THREXIT //apple_ref/c/data/THREXIT //apple_ref/c/clconst/THREXIT " machineGenerated="true" --><span class="var">THREXIT</span><!-- /a -->, <span class="comment">// Exit current thread</span> 
+    <!-- a logicalPath="//apple_ref/c/econst/GILREL //apple_ref/c/data/GILREL //apple_ref/c/clconst/GILREL " machineGenerated="true" --><span class="var">GILREL</span><!-- /a -->, <span class="comment">// Release GIL manually</span> 
+    <!-- a logicalPath="//apple_ref/c/econst/GILACQ //apple_ref/c/data/GILACQ //apple_ref/c/clconst/GILACQ " machineGenerated="true" --><span class="var">GILACQ</span><!-- /a -->, <span class="comment">// Acquire GIL manually</span> 
+    <span class="preprocessor">#endif</span>  
 } <!-- a logicalPath="//apple_ref/c/econst/JCC_OP //apple_ref/c/data/JCC_OP //apple_ref/c/clconst/JCC_OP " machineGenerated="true" --><span class="var">JCC_OP</span><!-- /a -->;  <!-- headerDoc=declaration;uid=//apple_ref/c/tdef/JCC_OP;name=end --></pre>
 </div>
 <h5 class="tight"><font face="Lucida Grande,Helvetica,Arial">Discussion</font></h5>
@@ -3234,6 +3395,159 @@ used by the preprocessor and parser.
     <!-- a logicalPath="//apple_ref/c/econst/TY_UNION //apple_ref/c/data/TY_UNION //apple_ref/c/clconst/TY_UNION " machineGenerated="true" --><span class="var">TY_UNION</span><!-- /a --> = <span class="number">15</span>, 
 } <!-- a logicalPath="//apple_ref/c/econst/TypeKind //apple_ref/c/data/TypeKind //apple_ref/c/clconst/TypeKind " machineGenerated="true" --><span class="var">TypeKind</span><!-- /a -->;  <!-- headerDoc=declaration;uid=//apple_ref/c/tdef/TypeKind;name=end --></pre>
 </div>
+<hr class="betweenAPIEntries">
+<!-- headerDoc=tdef;  uid=//apple_ref/c/tdef/VMThread;   name=VMThread -->
+<a name="//apple_ref/c/tdef/VMThread"></a>
+<h3><a name="VMThread">VMThread</a></h3>
+<hr class="afterName">
+<p><!-- headerDoc=abstract;uid=//apple_ref/c/tdef/VMThread;name=start --><!-- begin abstract --></p>
+<p>Represents a single VM thread with thread-local execution state.
+<!-- end abstract --><!-- headerDoc=abstract;uid=//apple_ref/c/tdef/VMThread;name=end --></p>
+<div class="declaration_indent">
+<pre><!-- headerDoc=declaration;uid=//apple_ref/c/tdef/VMThread;name=start --><span class="keyword">typedef</span> <span class="keyword">struct</span> <a machinegenerated="true" href="index.html#//apple_ref/c/tdef/VMThread" logicalPath="//apple_ref/c/cl/VMThread //apple_ref/c/tdef/VMThread" target="_top"><span class="type">VMThread</span></a> { 
+    <!-- a logicalPath="//apple_ref/c/cl/pthread_t //apple_ref/c/tdef/pthread_t //apple_ref/c/tag/pthread_t //apple_ref/c/struct/pthread_t //apple_ref/c/intf/pthread_t //apple_ref/doc/anysymbol/pthread_t" machineGenerated="true" --><span class="type">pthread_t</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/thread_id //apple_ref/c/data/thread_id //apple_ref/c/clconst/thread_id " machineGenerated="true" --><span class="var">thread_id</span><!-- /a -->; <span class="comment">// OS thread ID</span> 
+    <span class="keyword">struct</span> <a machinegenerated="true" href="index.html#//apple_ref/c/tag/JCC" logicalPath="//apple_ref/c/cl/JCC //apple_ref/c/tdef/JCC //apple_ref/c/tag/JCC" target="_top"><span class="type">JCC</span></a> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/econst/vm //apple_ref/c/data/vm //apple_ref/c/clconst/vm " machineGenerated="true" --><span class="var">vm</span><!-- /a -->; <span class="comment">// VM instance (shared, forward declaration)</span>  
+    <span class="comment">// Per-thread VM state (moved from JCC struct when threading enabled)</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/econst/sp //apple_ref/c/data/sp //apple_ref/c/clconst/sp " machineGenerated="true" --><span class="var">sp</span><!-- /a -->; <span class="comment">// Thread-local stack pointer</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/econst/bp //apple_ref/c/data/bp //apple_ref/c/clconst/bp " machineGenerated="true" --><span class="var">bp</span><!-- /a -->; <span class="comment">// Thread-local base pointer</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/econst/pc //apple_ref/c/data/pc //apple_ref/c/clconst/pc " machineGenerated="true" --><span class="var">pc</span><!-- /a -->; <span class="comment">// Thread-local program counter</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/ax //apple_ref/c/data/ax //apple_ref/c/clconst/ax " machineGenerated="true" --><span class="var">ax</span><!-- /a -->; <span class="comment">// Thread-local integer accumulator</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/double //apple_ref/c/tdef/double //apple_ref/c/tag/double //apple_ref/c/struct/double //apple_ref/c/intf/double //apple_ref/doc/anysymbol/double" machineGenerated="true" --><span class="type">double</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/fax //apple_ref/c/data/fax //apple_ref/c/clconst/fax " machineGenerated="true" --><span class="var">fax</span><!-- /a -->; <span class="comment">// Thread-local floating-point accumulator</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/econst/stack_seg //apple_ref/c/data/stack_seg //apple_ref/c/clconst/stack_seg " machineGenerated="true" --><span class="var">stack_seg</span><!-- /a -->; <span class="comment">// Thread-local stack segment</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/econst/initial_sp //apple_ref/c/data/initial_sp //apple_ref/c/clconst/initial_sp " machineGenerated="true" --><span class="var">initial_sp</span><!-- /a -->; <span class="comment">// Initial stack pointer</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/econst/initial_bp //apple_ref/c/data/initial_bp //apple_ref/c/clconst/initial_bp " machineGenerated="true" --><span class="var">initial_bp</span><!-- /a -->; <span class="comment">// Initial base pointer</span>  
+    <span class="comment">// TLS segment (for _Thread_local variables)</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/char //apple_ref/c/tdef/char //apple_ref/c/tag/char //apple_ref/c/struct/char //apple_ref/c/intf/char //apple_ref/doc/anysymbol/char" machineGenerated="true" --><span class="type">char</span><!-- /a --> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/econst/tls_seg //apple_ref/c/data/tls_seg //apple_ref/c/clconst/tls_seg " machineGenerated="true" --><span class="var">tls_seg</span><!-- /a -->; <span class="comment">// Thread-local storage segment</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/char //apple_ref/c/tdef/char //apple_ref/c/tag/char //apple_ref/c/struct/char //apple_ref/c/intf/char //apple_ref/doc/anysymbol/char" machineGenerated="true" --><span class="type">char</span><!-- /a --> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/econst/tls_ptr //apple_ref/c/data/tls_ptr //apple_ref/c/clconst/tls_ptr " machineGenerated="true" --><span class="var">tls_ptr</span><!-- /a -->; <span class="comment">// Current TLS allocation pointer</span>  
+    <span class="comment">// Thread management</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/entry_point //apple_ref/c/data/entry_point //apple_ref/c/clconst/entry_point " machineGenerated="true" --><span class="var">entry_point</span><!-- /a -->; <span class="comment">// Function offset to execute</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/econst/entry_args //apple_ref/c/data/entry_args //apple_ref/c/clconst/entry_args " machineGenerated="true" --><span class="var">entry_args</span><!-- /a -->; <span class="comment">// Arguments for entry function</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/num_args //apple_ref/c/data/num_args //apple_ref/c/clconst/num_args " machineGenerated="true" --><span class="var">num_args</span><!-- /a -->; <span class="comment">// Number of arguments</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/exit_code //apple_ref/c/data/exit_code //apple_ref/c/clconst/exit_code " machineGenerated="true" --><span class="var">exit_code</span><!-- /a -->; <span class="comment">// Thread return value</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/terminated //apple_ref/c/data/terminated //apple_ref/c/clconst/terminated " machineGenerated="true" --><span class="var">terminated</span><!-- /a -->; <span class="comment">// Thread has finished execution</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/detached //apple_ref/c/data/detached //apple_ref/c/clconst/detached " machineGenerated="true" --><span class="var">detached</span><!-- /a -->; <span class="comment">// Thread is detached (no join needed)</span>  
+    <span class="keyword">struct</span> <a machinegenerated="true" href="index.html#//apple_ref/c/tdef/VMThread" logicalPath="//apple_ref/c/cl/VMThread //apple_ref/c/tdef/VMThread" target="_top"><span class="type">VMThread</span></a> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/econst/next //apple_ref/c/data/next //apple_ref/c/clconst/next " machineGenerated="true" --><span class="var">next</span><!-- /a -->; <span class="comment">// Linked list of threads</span> 
+} <!-- a logicalPath="//apple_ref/c/econst/VMThread //apple_ref/c/data/VMThread //apple_ref/c/clconst/VMThread " machineGenerated="true" --><span class="var">VMThread</span><!-- /a -->;  <!-- headerDoc=declaration;uid=//apple_ref/c/tdef/VMThread;name=end --></pre>
+</div>
+<h5 class="tight"><font face="Lucida Grande,Helvetica,Arial">Fields</font></h5>
+<div class="param_indent">
+<dl>
+<dt>
+<!-- headerDoc=structfield;  uid=//apple_ref/doc/structfield/VMThread/thread_id;   name=thread_id -->
+<a name="//apple_ref/doc/structfield/VMThread/thread_id"></a>
+<code>thread_id</code>
+</dt>
+<dd><p>OS thread identifier</p></dd>
+<dt>
+<!-- headerDoc=structfield;  uid=//apple_ref/doc/structfield/VMThread/vm;   name=vm -->
+<a name="//apple_ref/doc/structfield/VMThread/vm"></a>
+<code>vm</code>
+</dt>
+<dd><p>Pointer to shared VM instance</p></dd>
+<dt>
+<!-- headerDoc=structfield;  uid=//apple_ref/doc/structfield/VMThread/sp;   name=sp -->
+<a name="//apple_ref/doc/structfield/VMThread/sp"></a>
+<code>sp</code>
+</dt>
+<dd><p>Thread-local stack pointer</p></dd>
+<dt>
+<!-- headerDoc=structfield;  uid=//apple_ref/doc/structfield/VMThread/bp;   name=bp -->
+<a name="//apple_ref/doc/structfield/VMThread/bp"></a>
+<code>bp</code>
+</dt>
+<dd><p>Thread-local base pointer</p></dd>
+<dt>
+<!-- headerDoc=structfield;  uid=//apple_ref/doc/structfield/VMThread/pc;   name=pc -->
+<a name="//apple_ref/doc/structfield/VMThread/pc"></a>
+<code>pc</code>
+</dt>
+<dd><p>Thread-local program counter</p></dd>
+<dt>
+<!-- headerDoc=structfield;  uid=//apple_ref/doc/structfield/VMThread/ax;   name=ax -->
+<a name="//apple_ref/doc/structfield/VMThread/ax"></a>
+<code>ax</code>
+</dt>
+<dd><p>Thread-local integer accumulator</p></dd>
+<dt>
+<!-- headerDoc=structfield;  uid=//apple_ref/doc/structfield/VMThread/fax;   name=fax -->
+<a name="//apple_ref/doc/structfield/VMThread/fax"></a>
+<code>fax</code>
+</dt>
+<dd><p>Thread-local floating-point accumulator</p></dd>
+<dt>
+<!-- headerDoc=structfield;  uid=//apple_ref/doc/structfield/VMThread/stack_seg;   name=stack_seg -->
+<a name="//apple_ref/doc/structfield/VMThread/stack_seg"></a>
+<code>stack_seg</code>
+</dt>
+<dd><p>Thread-local stack segment</p></dd>
+<dt>
+<!-- headerDoc=structfield;  uid=//apple_ref/doc/structfield/VMThread/initial_sp;   name=initial_sp -->
+<a name="//apple_ref/doc/structfield/VMThread/initial_sp"></a>
+<code>initial_sp</code>
+</dt>
+<dd><p>Initial stack pointer for exit detection</p></dd>
+<dt>
+<!-- headerDoc=structfield;  uid=//apple_ref/doc/structfield/VMThread/initial_bp;   name=initial_bp -->
+<a name="//apple_ref/doc/structfield/VMThread/initial_bp"></a>
+<code>initial_bp</code>
+</dt>
+<dd><p>Initial base pointer for exit detection</p></dd>
+<dt>
+<!-- headerDoc=structfield;  uid=//apple_ref/doc/structfield/VMThread/tls_seg;   name=tls_seg -->
+<a name="//apple_ref/doc/structfield/VMThread/tls_seg"></a>
+<code>tls_seg</code>
+</dt>
+<dd><p>Thread-local storage segment (for _Thread_local variables)</p></dd>
+<dt>
+<!-- headerDoc=structfield;  uid=//apple_ref/doc/structfield/VMThread/tls_ptr;   name=tls_ptr -->
+<a name="//apple_ref/doc/structfield/VMThread/tls_ptr"></a>
+<code>tls_ptr</code>
+</dt>
+<dd><p>Current TLS allocation pointer</p></dd>
+<dt>
+<!-- headerDoc=structfield;  uid=//apple_ref/doc/structfield/VMThread/entry_point;   name=entry_point -->
+<a name="//apple_ref/doc/structfield/VMThread/entry_point"></a>
+<code>entry_point</code>
+</dt>
+<dd><p>Bytecode offset of function to execute</p></dd>
+<dt>
+<!-- headerDoc=structfield;  uid=//apple_ref/doc/structfield/VMThread/entry_args;   name=entry_args -->
+<a name="//apple_ref/doc/structfield/VMThread/entry_args"></a>
+<code>entry_args</code>
+</dt>
+<dd><p>Arguments to pass to entry function</p></dd>
+<dt>
+<!-- headerDoc=structfield;  uid=//apple_ref/doc/structfield/VMThread/num_args;   name=num_args -->
+<a name="//apple_ref/doc/structfield/VMThread/num_args"></a>
+<code>num_args</code>
+</dt>
+<dd><p>Number of arguments</p></dd>
+<dt>
+<!-- headerDoc=structfield;  uid=//apple_ref/doc/structfield/VMThread/exit_code;   name=exit_code -->
+<a name="//apple_ref/doc/structfield/VMThread/exit_code"></a>
+<code>exit_code</code>
+</dt>
+<dd><p>Thread return value</p></dd>
+<dt>
+<!-- headerDoc=structfield;  uid=//apple_ref/doc/structfield/VMThread/terminated;   name=terminated -->
+<a name="//apple_ref/doc/structfield/VMThread/terminated"></a>
+<code>terminated</code>
+</dt>
+<dd><p>Flag indicating thread has finished</p></dd>
+<dt>
+<!-- headerDoc=structfield;  uid=//apple_ref/doc/structfield/VMThread/detached;   name=detached -->
+<a name="//apple_ref/doc/structfield/VMThread/detached"></a>
+<code>detached</code>
+</dt>
+<dd><p>Flag indicating thread is detached</p></dd>
+<dt>
+<!-- headerDoc=structfield;  uid=//apple_ref/doc/structfield/VMThread/next;   name=next -->
+<a name="//apple_ref/doc/structfield/VMThread/next"></a>
+<code>next</code>
+</dt>
+<dd><p>Linked list pointer to next thread</p></dd>
+</dl>
+</div>
 <hr class="betweenSections">
 <a name="HeaderDoc_structs"></a>
 <h2 class="h2tight">Structs and Unions</h2>
@@ -3286,13 +3600,18 @@ machine. Instances are independent and support embedding.
     <!-- a logicalPath="//apple_ref/c/cl/char //apple_ref/c/tdef/char //apple_ref/c/tag/char //apple_ref/c/struct/char //apple_ref/c/intf/char //apple_ref/doc/anysymbol/char" machineGenerated="true" --><span class="type">char</span><!-- /a --> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/econst/heap_ptr //apple_ref/c/data/heap_ptr //apple_ref/c/clconst/heap_ptr " machineGenerated="true" --><span class="var">heap_ptr</span><!-- /a -->; <span class="comment">// Current allocation pointer (bump allocator)</span> 
     <!-- a logicalPath="//apple_ref/c/cl/char //apple_ref/c/tdef/char //apple_ref/c/tag/char //apple_ref/c/struct/char //apple_ref/c/intf/char //apple_ref/doc/anysymbol/char" machineGenerated="true" --><span class="type">char</span><!-- /a --> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/econst/heap_end //apple_ref/c/data/heap_end //apple_ref/c/clconst/heap_end " machineGenerated="true" --><span class="var">heap_end</span><!-- /a -->; <span class="comment">// End of heap segment</span> 
     <a machinegenerated="true" href="index.html#//apple_ref/c/tdef/FreeBlock" logicalPath="//apple_ref/c/cl/FreeBlock //apple_ref/c/tdef/FreeBlock" target="_top"><span class="type">FreeBlock</span></a> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/econst/free_list //apple_ref/c/data/free_list //apple_ref/c/clconst/free_list " machineGenerated="true" --><span class="var">free_list</span><!-- /a -->; <span class="comment">// Head of free blocks list (for memory reuse)</span>  
+    <span class="comment">// Segregated free lists for optimized allocation</span> 
+    <span class="comment">// Size classes: 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, LARGE (&gt;8192)</span> 
+    <a machinegenerated="true" href="index.html#//apple_ref/c/tdef/FreeBlock" logicalPath="//apple_ref/c/cl/FreeBlock //apple_ref/c/tdef/FreeBlock" target="_top"><span class="type">FreeBlock</span></a> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/cl/size_class_lists //apple_ref/c/tdef/size_class_lists //apple_ref/c/tag/size_class_lists //apple_ref/c/struct/size_class_lists //apple_ref/c/intf/size_class_lists //apple_ref/doc/anysymbol/size_class_lists" machineGenerated="true" --><span class="type">size_class_lists</span><!-- /a -->[<span class="number">12</span>]; <span class="comment">// One free list per size class (NUM_SIZE_CLASSES)</span> 
+    <a machinegenerated="true" href="index.html#//apple_ref/c/tdef/FreeBlock" logicalPath="//apple_ref/c/cl/FreeBlock //apple_ref/c/tdef/FreeBlock" target="_top"><span class="type">FreeBlock</span></a> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/econst/large_list //apple_ref/c/data/large_list //apple_ref/c/clconst/large_list " machineGenerated="true" --><span class="var">large_list</span><!-- /a -->; <span class="comment">// For allocations &gt; MAX_SMALL_ALLOC (8192)</span>  
     <span class="comment">// Memory safety tracking</span> 
     <a machinegenerated="true" href="index.html#//apple_ref/c/tdef/AllocRecord" logicalPath="//apple_ref/c/cl/AllocRecord //apple_ref/c/tdef/AllocRecord" target="_top"><span class="type">AllocRecord</span></a> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/econst/alloc_list //apple_ref/c/data/alloc_list //apple_ref/c/clconst/alloc_list " machineGenerated="true" --><span class="var">alloc_list</span><!-- /a -->; <span class="comment">// List of active allocations (for leak detection)</span> 
     <a machinegenerated="true" href="index.html#//apple_ref/c/tdef/HashMap" logicalPath="//apple_ref/c/cl/HashMap //apple_ref/c/tdef/HashMap" target="_top"><span class="type">HashMap</span></a> <!-- a logicalPath="//apple_ref/c/econst/init_state //apple_ref/c/data/init_state //apple_ref/c/clconst/init_state " machineGenerated="true" --><span class="var">init_state</span><!-- /a -->; <span class="comment">// Track initialization state of stack variables (for uninitialized detection)</span> 
     <a machinegenerated="true" href="index.html#//apple_ref/c/tdef/HashMap" logicalPath="//apple_ref/c/cl/HashMap //apple_ref/c/tdef/HashMap" target="_top"><span class="type">HashMap</span></a> <!-- a logicalPath="//apple_ref/c/econst/stack_ptrs //apple_ref/c/data/stack_ptrs //apple_ref/c/clconst/stack_ptrs " machineGenerated="true" --><span class="var">stack_ptrs</span><!-- /a -->; <span class="comment">// Track stack pointers for dangling detection (ptr -&gt; {bp, offset, size})</span> 
     <a machinegenerated="true" href="index.html#//apple_ref/c/tdef/HashMap" logicalPath="//apple_ref/c/cl/HashMap //apple_ref/c/tdef/HashMap" target="_top"><span class="type">HashMap</span></a> <!-- a logicalPath="//apple_ref/c/econst/provenance //apple_ref/c/data/provenance //apple_ref/c/clconst/provenance " machineGenerated="true" --><span class="var">provenance</span><!-- /a -->; <span class="comment">// Track pointer provenance (ptr -&gt; {origin_type, base, size})</span> 
     <a machinegenerated="true" href="index.html#//apple_ref/c/tdef/HashMap" logicalPath="//apple_ref/c/cl/HashMap //apple_ref/c/tdef/HashMap" target="_top"><span class="type">HashMap</span></a> <!-- a logicalPath="//apple_ref/c/econst/stack_var_meta //apple_ref/c/data/stack_var_meta //apple_ref/c/clconst/stack_var_meta " machineGenerated="true" --><span class="var">stack_var_meta</span><!-- /a -->; <span class="comment">// Unified stack variable metadata (bp+offset -&gt; StackVarMeta)</span> 
-    <a machinegenerated="true" href="index.html#//apple_ref/c/tdef/HashMap" logicalPath="//apple_ref/c/cl/HashMap //apple_ref/c/tdef/HashMap" target="_top"><span class="type">HashMap</span></a> <!-- a logicalPath="//apple_ref/c/econst/alloc_map //apple_ref/c/data/alloc_map //apple_ref/c/clconst/alloc_map " machineGenerated="true" --><span class="var">alloc_map</span><!-- /a -->; <span class="comment">// Maps base addresses to AllocHeaders (for fast pointer validation)</span>  
+    <a machinegenerated="true" href="index.html#//apple_ref/c/tdef/HashMap" logicalPath="//apple_ref/c/cl/HashMap //apple_ref/c/tdef/HashMap" target="_top"><span class="type">HashMap</span></a> <!-- a logicalPath="//apple_ref/c/econst/alloc_map //apple_ref/c/data/alloc_map //apple_ref/c/clconst/alloc_map " machineGenerated="true" --><span class="var">alloc_map</span><!-- /a -->; <span class="comment">// Maps base addresses to AllocHeaders (for fast pointer validation)</span> 
+    <a machinegenerated="true" href="index.html#//apple_ref/c/tdef/HashMap" logicalPath="//apple_ref/c/cl/HashMap //apple_ref/c/tdef/HashMap" target="_top"><span class="type">HashMap</span></a> <!-- a logicalPath="//apple_ref/c/econst/ptr_tags //apple_ref/c/data/ptr_tags //apple_ref/c/clconst/ptr_tags " machineGenerated="true" --><span class="var">ptr_tags</span><!-- /a -->; <span class="comment">// Maps pointers to their creation generation tags (for temporal safety)</span>  
     <span class="comment">// Configuration</span> 
     <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/poolsize //apple_ref/c/data/poolsize //apple_ref/c/clconst/poolsize " machineGenerated="true" --><span class="var">poolsize</span><!-- /a -->; <span class="comment">// Size of memory segments (bytes)</span> 
     <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/debug_vm //apple_ref/c/data/debug_vm //apple_ref/c/clconst/debug_vm " machineGenerated="true" --><span class="var">debug_vm</span><!-- /a -->; <span class="comment">// Enable debug output during execution</span>  
@@ -3301,17 +3620,28 @@ machine. Instances are independent and support embedding.
     <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/enable_uaf_detection //apple_ref/c/data/enable_uaf_detection //apple_ref/c/clconst/enable_uaf_detection " machineGenerated="true" --><span class="var">enable_uaf_detection</span><!-- /a -->; <span class="comment">// Use-after-free detection</span> 
     <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/enable_type_checks //apple_ref/c/data/enable_type_checks //apple_ref/c/clconst/enable_type_checks " machineGenerated="true" --><span class="var">enable_type_checks</span><!-- /a -->; <span class="comment">// Runtime type checking on pointer dereferences</span> 
     <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/enable_uninitialized_detection //apple_ref/c/data/enable_uninitialized_detection //apple_ref/c/clconst/enable_uninitialized_detection " machineGenerated="true" --><span class="var">enable_uninitialized_detection</span><!-- /a -->; <span class="comment">// Uninitialized variable detection</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/enable_overflow_checks //apple_ref/c/data/enable_overflow_checks //apple_ref/c/clconst/enable_overflow_checks " machineGenerated="true" --><span class="var">enable_overflow_checks</span><!-- /a -->; <span class="comment">// Signed integer overflow detection</span> 
     <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/enable_stack_canaries //apple_ref/c/data/enable_stack_canaries //apple_ref/c/clconst/enable_stack_canaries " machineGenerated="true" --><span class="var">enable_stack_canaries</span><!-- /a -->; <span class="comment">// Stack overflow protection</span> 
     <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/enable_heap_canaries //apple_ref/c/data/enable_heap_canaries //apple_ref/c/clconst/enable_heap_canaries " machineGenerated="true" --><span class="var">enable_heap_canaries</span><!-- /a -->; <span class="comment">// Heap overflow protection</span> 
     <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/enable_pointer_sanitizer //apple_ref/c/data/enable_pointer_sanitizer //apple_ref/c/clconst/enable_pointer_sanitizer " machineGenerated="true" --><span class="var">enable_pointer_sanitizer</span><!-- /a -->; <span class="comment">// Convenience flag: enables bounds, UAF, and type checks together</span> 
     <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/enable_memory_leak_detection //apple_ref/c/data/enable_memory_leak_detection //apple_ref/c/clconst/enable_memory_leak_detection " machineGenerated="true" --><span class="var">enable_memory_leak_detection</span><!-- /a -->; <span class="comment">// Track allocations and report leaks at exit</span> 
     <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/enable_stack_instrumentation //apple_ref/c/data/enable_stack_instrumentation //apple_ref/c/clconst/enable_stack_instrumentation " machineGenerated="true" --><span class="var">enable_stack_instrumentation</span><!-- /a -->; <span class="comment">// Track stack variable lifetimes and accesses</span> 
-    <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/stack_instr_errors //apple_ref/c/data/stack_instr_errors //apple_ref/c/clconst/stack_instr_errors " machineGenerated="true" --><span class="var">stack_instr_errors</span><!-- /a -->; <span class="comment">// Enable runtime errors for stack instrumentation (vs logging only)</span>  
+    <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/stack_instr_errors //apple_ref/c/data/stack_instr_errors //apple_ref/c/clconst/stack_instr_errors " machineGenerated="true" --><span class="var">stack_instr_errors</span><!-- /a -->; <span class="comment">// Enable runtime errors for stack instrumentation (vs logging only)</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/enable_random_canaries //apple_ref/c/data/enable_random_canaries //apple_ref/c/clconst/enable_random_canaries " machineGenerated="true" --><span class="var">enable_random_canaries</span><!-- /a -->; <span class="comment">// Use random stack canaries (prevents predictable bypass)</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/enable_memory_poisoning //apple_ref/c/data/enable_memory_poisoning //apple_ref/c/clconst/enable_memory_poisoning " machineGenerated="true" --><span class="var">enable_memory_poisoning</span><!-- /a -->; <span class="comment">// Poison allocated/freed memory (0xCD/0xDD patterns)</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/stack_canary //apple_ref/c/data/stack_canary //apple_ref/c/clconst/stack_canary " machineGenerated="true" --><span class="var">stack_canary</span><!-- /a -->; <span class="comment">// Stack canary value (random if enable_random_canaries, else fixed)</span>  
     <span class="comment">// Advanced pointer tracking features</span> 
     <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/enable_dangling_detection //apple_ref/c/data/enable_dangling_detection //apple_ref/c/clconst/enable_dangling_detection " machineGenerated="true" --><span class="var">enable_dangling_detection</span><!-- /a -->; <span class="comment">// Detect use of stack pointers after function return</span> 
     <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/enable_alignment_checks //apple_ref/c/data/enable_alignment_checks //apple_ref/c/clconst/enable_alignment_checks " machineGenerated="true" --><span class="var">enable_alignment_checks</span><!-- /a -->; <span class="comment">// Validate pointer alignment for type</span> 
     <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/enable_provenance_tracking //apple_ref/c/data/enable_provenance_tracking //apple_ref/c/clconst/enable_provenance_tracking " machineGenerated="true" --><span class="var">enable_provenance_tracking</span><!-- /a -->; <span class="comment">// Track pointer origin and validate operations</span> 
-    <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/enable_invalid_arithmetic //apple_ref/c/data/enable_invalid_arithmetic //apple_ref/c/clconst/enable_invalid_arithmetic " machineGenerated="true" --><span class="var">enable_invalid_arithmetic</span><!-- /a -->; <span class="comment">// Detect pointer arithmetic outside object bounds</span>  
+    <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/enable_invalid_arithmetic //apple_ref/c/data/enable_invalid_arithmetic //apple_ref/c/clconst/enable_invalid_arithmetic " machineGenerated="true" --><span class="var">enable_invalid_arithmetic</span><!-- /a -->; <span class="comment">// Detect pointer arithmetic outside object bounds</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/enable_format_string_checks //apple_ref/c/data/enable_format_string_checks //apple_ref/c/clconst/enable_format_string_checks " machineGenerated="true" --><span class="var">enable_format_string_checks</span><!-- /a -->; <span class="comment">// Validate format strings in printf-family functions</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/enable_memory_tagging //apple_ref/c/data/enable_memory_tagging //apple_ref/c/clconst/enable_memory_tagging " machineGenerated="true" --><span class="var">enable_memory_tagging</span><!-- /a -->; <span class="comment">// Temporal memory tagging (track pointer generation tags)</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/enable_vm_heap //apple_ref/c/data/enable_vm_heap //apple_ref/c/clconst/enable_vm_heap " machineGenerated="true" --><span class="var">enable_vm_heap</span><!-- /a -->; <span class="comment">// Force all malloc/free through VM heap (MALC/MFRE)</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/enable_cfi //apple_ref/c/data/enable_cfi //apple_ref/c/clconst/enable_cfi " machineGenerated="true" --><span class="var">enable_cfi</span><!-- /a -->; <span class="comment">// Control flow integrity (shadow stack for return address validation)</span>  
+    <span class="comment">// Control Flow Integrity (shadow stack)</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/econst/shadow_stack //apple_ref/c/data/shadow_stack //apple_ref/c/clconst/shadow_stack " machineGenerated="true" --><span class="var">shadow_stack</span><!-- /a -->; <span class="comment">// Shadow stack for return addresses (CFI)</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/cl/long //apple_ref/c/tdef/long //apple_ref/c/tag/long //apple_ref/c/struct/long //apple_ref/c/intf/long //apple_ref/doc/anysymbol/long" machineGenerated="true" --><span class="type">long</span><!-- /a --> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/econst/shadow_sp //apple_ref/c/data/shadow_sp //apple_ref/c/clconst/shadow_sp " machineGenerated="true" --><span class="var">shadow_sp</span><!-- /a -->; <span class="comment">// Shadow stack pointer</span>  
     <span class="comment">// Stack instrumentation state</span> 
     <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/current_scope_id //apple_ref/c/data/current_scope_id //apple_ref/c/clconst/current_scope_id " machineGenerated="true" --><span class="var">current_scope_id</span><!-- /a -->; <span class="comment">// Incremented for each scope entry</span> 
     <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/current_function_scope_id //apple_ref/c/data/current_function_scope_id //apple_ref/c/clconst/current_function_scope_id " machineGenerated="true" --><span class="var">current_function_scope_id</span><!-- /a -->; <span class="comment">// Scope ID of current function being generated</span> 
@@ -3420,7 +3750,17 @@ machine. Instances are independent and support embedding.
     <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/link_prog_count //apple_ref/c/data/link_prog_count //apple_ref/c/clconst/link_prog_count " machineGenerated="true" --><span class="var">link_prog_count</span><!-- /a -->; <span class="comment">// Number of programs</span>  
     <span class="comment">// Error handling (setjmp/longjmp for exception-like behavior)</span> 
     <!-- a logicalPath="//apple_ref/c/cl/jmp_buf //apple_ref/c/tdef/jmp_buf //apple_ref/c/tag/jmp_buf //apple_ref/c/struct/jmp_buf //apple_ref/c/intf/jmp_buf //apple_ref/doc/anysymbol/jmp_buf" machineGenerated="true" --><span class="type">jmp_buf</span><!-- /a --> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/econst/error_jmp_buf //apple_ref/c/data/error_jmp_buf //apple_ref/c/clconst/error_jmp_buf " machineGenerated="true" --><span class="var">error_jmp_buf</span><!-- /a -->; <span class="comment">// Jump buffer for error handling (NULL = use exit())</span> 
-    <!-- a logicalPath="//apple_ref/c/cl/char //apple_ref/c/tdef/char //apple_ref/c/tag/char //apple_ref/c/struct/char //apple_ref/c/intf/char //apple_ref/doc/anysymbol/char" machineGenerated="true" --><span class="type">char</span><!-- /a --> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/econst/error_message //apple_ref/c/data/error_message //apple_ref/c/clconst/error_message " machineGenerated="true" --><span class="var">error_message</span><!-- /a -->; <span class="comment">// Last error message (when using longjmp)</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/char //apple_ref/c/tdef/char //apple_ref/c/tag/char //apple_ref/c/struct/char //apple_ref/c/intf/char //apple_ref/doc/anysymbol/char" machineGenerated="true" --><span class="type">char</span><!-- /a --> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/econst/error_message //apple_ref/c/data/error_message //apple_ref/c/clconst/error_message " machineGenerated="true" --><span class="var">error_message</span><!-- /a -->; <span class="comment">// Last error message (when using longjmp)</span>  
+    <span class="comment">// Threading support</span> 
+    <span class="preprocessor">#ifndef</span> <!-- a logicalPath="//apple_ref/c/cl/JCC_NO_THREADS //apple_ref/c/tdef/JCC_NO_THREADS //apple_ref/c/tag/JCC_NO_THREADS //apple_ref/c/struct/JCC_NO_THREADS //apple_ref/c/intf/JCC_NO_THREADS //apple_ref/c/econst/JCC_NO_THREADS //apple_ref/c/data/JCC_NO_THREADS //apple_ref/c/clconst/JCC_NO_THREADS //apple_ref/c/instm/JCC_NO_THREADS //apple_ref/c/clm/JCC_NO_THREADS //apple_ref/c/intfcm/JCC_NO_THREADS //apple_ref/c/intfm/JCC_NO_THREADS //apple_ref/c/func/JCC_NO_THREADS //apple_ref/c/ftmplt/JCC_NO_THREADS //apple_ref/c/defn/JCC_NO_THREADS //apple_ref/c/macro/JCC_NO_THREADS //apple_ref/doc/com/intfm/JCC_NO_THREADS //apple_ref/doc/anysymbol/JCC_NO_THREADS" machineGenerated="true" --><span class="preprocessor">JCC_NO_THREADS</span><!-- /a --> 
+    <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/enable_threading //apple_ref/c/data/enable_threading //apple_ref/c/clconst/enable_threading " machineGenerated="true" --><span class="var">enable_threading</span><!-- /a -->; <span class="comment">// Threading feature flag (default: 1, disable with JCC_NO_THREADS=1)</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/enable_gil //apple_ref/c/data/enable_gil //apple_ref/c/clconst/enable_gil " machineGenerated="true" --><span class="var">enable_gil</span><!-- /a -->; <span class="comment">// GIL feature flag (default: 0, enable for thread safety)</span> 
+    <a machinegenerated="true" href="index.html#//apple_ref/c/tdef/GIL" logicalPath="//apple_ref/c/cl/GIL //apple_ref/c/tdef/GIL" target="_top"><span class="type">GIL</span></a> <!-- a logicalPath="//apple_ref/c/econst/gil //apple_ref/c/data/gil //apple_ref/c/clconst/gil " machineGenerated="true" --><span class="var">gil</span><!-- /a -->; <span class="comment">// Global interpreter lock</span> 
+    <a machinegenerated="true" href="index.html#//apple_ref/c/tdef/VMThread" logicalPath="//apple_ref/c/cl/VMThread //apple_ref/c/tdef/VMThread" target="_top"><span class="type">VMThread</span></a> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/econst/threads //apple_ref/c/data/threads //apple_ref/c/clconst/threads " machineGenerated="true" --><span class="var">threads</span><!-- /a -->; <span class="comment">// Linked list of all VM threads</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/pthread_key_t //apple_ref/c/tdef/pthread_key_t //apple_ref/c/tag/pthread_key_t //apple_ref/c/struct/pthread_key_t //apple_ref/c/intf/pthread_key_t //apple_ref/doc/anysymbol/pthread_key_t" machineGenerated="true" --><span class="type">pthread_key_t</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/thread_key //apple_ref/c/data/thread_key //apple_ref/c/clconst/thread_key " machineGenerated="true" --><span class="var">thread_key</span><!-- /a -->; <span class="comment">// Thread-local storage key for VMThread*</span> 
+    <!-- a logicalPath="//apple_ref/c/cl/int //apple_ref/c/tdef/int //apple_ref/c/tag/int //apple_ref/c/struct/int //apple_ref/c/intf/int //apple_ref/doc/anysymbol/int" machineGenerated="true" --><span class="type">int</span><!-- /a --> <!-- a logicalPath="//apple_ref/c/econst/gil_check_interval //apple_ref/c/data/gil_check_interval //apple_ref/c/clconst/gil_check_interval " machineGenerated="true" --><span class="var">gil_check_interval</span><!-- /a -->; <span class="comment">// Yield GIL every N instructions (default: 100)</span> 
+    <a machinegenerated="true" href="index.html#//apple_ref/c/tdef/VMThread" logicalPath="//apple_ref/c/cl/VMThread //apple_ref/c/tdef/VMThread" target="_top"><span class="type">VMThread</span></a> <span class="type">*</span><!-- a logicalPath="//apple_ref/c/econst/main_thread //apple_ref/c/data/main_thread //apple_ref/c/clconst/main_thread " machineGenerated="true" --><span class="var">main_thread</span><!-- /a -->; <span class="comment">// Main thread (NULL if threading disabled)</span> 
+    <span class="preprocessor">#endif</span>  
 };  <!-- headerDoc=declaration;uid=//apple_ref/c/tag/JCC;name=end --></pre>
 </div>
 <h5 class="tight"><font face="Lucida Grande,Helvetica,Arial">Discussion</font></h5>
@@ -3909,7 +4249,7 @@ in the text segment.</p></dd>
 <p class="gapBeforeFooter"> </p>
 <hr class="afterFooter">
 <div class="hd_copyright_and_timestamp">
-<p class="hd_timestamp">Last Updated: Sunday, November 09, 2025
+<p class="hd_timestamp">Last Updated: Sunday, November 16, 2025
 </p>
 </div>
 </td>
