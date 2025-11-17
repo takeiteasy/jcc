@@ -237,9 +237,16 @@ void gen_expr(JCC *vm, Node *node) {
             } else {
                 // Global variable - resolve to canonical version from merged program
                 Obj *resolved = resolve_global_var(vm, node->var);
-                emit_with_arg(vm, IMM, (long long)(vm->data_seg + resolved->offset));
 
-                // For arrays, structs, unions, and string literals, IMM gives us the address
+                if (resolved->is_tls) {
+                    // Thread-local variable - use TLS address
+                    emit_with_arg(vm, TLSADDR, resolved->offset);
+                } else {
+                    // Regular global - use data segment address
+                    emit_with_arg(vm, IMM, (long long)(vm->data_seg + resolved->offset));
+                }
+
+                // For arrays, structs, unions, and string literals, address is in ax
                 // For scalar types, we need to load the value
                 if (node->ty->kind != TY_ARRAY &&
                     node->ty->kind != TY_STRUCT &&
@@ -261,7 +268,14 @@ void gen_expr(JCC *vm, Node *node) {
                 } else {
                     // Global variable - resolve to canonical version
                     Obj *resolved = resolve_global_var(vm, node->lhs->var);
-                    emit_with_arg(vm, IMM, (long long)(vm->data_seg + resolved->offset));
+
+                    if (resolved->is_tls) {
+                        // Thread-local variable
+                        emit_with_arg(vm, TLSADDR, resolved->offset);
+                    } else {
+                        // Regular global
+                        emit_with_arg(vm, IMM, (long long)(vm->data_seg + resolved->offset));
+                    }
                 }
                 emit(vm, PUSH);  // Push address onto stack
             } else if (node->lhs->kind == ND_VLA_PTR) {
@@ -287,7 +301,12 @@ void gen_expr(JCC *vm, Node *node) {
                         emit_with_arg(vm, LEA, node->lhs->lhs->var->offset);
                     } else {
                         // Global struct
-                        emit_with_arg(vm, IMM, (long long)(vm->data_seg + node->lhs->lhs->var->offset));
+                        Obj *resolved = resolve_global_var(vm, node->lhs->lhs->var);
+                        if (resolved->is_tls) {
+                            emit_with_arg(vm, TLSADDR, resolved->offset);
+                        } else {
+                            emit_with_arg(vm, IMM, (long long)(vm->data_seg + resolved->offset));
+                        }
                     }
                 } else {
                     // Expression evaluating to struct
@@ -544,7 +563,14 @@ void gen_expr(JCC *vm, Node *node) {
                 } else {
                     // Global variable - resolve to canonical version
                     Obj *resolved = resolve_global_var(vm, node->lhs->var);
-                    emit_with_arg(vm, IMM, (long long)(vm->data_seg + resolved->offset));
+
+                    if (resolved->is_tls) {
+                        // Thread-local variable
+                        emit_with_arg(vm, TLSADDR, resolved->offset);
+                    } else {
+                        // Regular global
+                        emit_with_arg(vm, IMM, (long long)(vm->data_seg + resolved->offset));
+                    }
 
                     // Mark provenance for global pointer
                     if (vm->enable_provenance_tracking) {
@@ -583,7 +609,12 @@ void gen_expr(JCC *vm, Node *node) {
                         emit_with_arg(vm, LEA, node->lhs->lhs->var->offset);
                     } else {
                         // Global struct
-                        emit_with_arg(vm, IMM, (long long)(vm->data_seg + node->lhs->lhs->var->offset));
+                        Obj *resolved = resolve_global_var(vm, node->lhs->lhs->var);
+                        if (resolved->is_tls) {
+                            emit_with_arg(vm, TLSADDR, resolved->offset);
+                        } else {
+                            emit_with_arg(vm, IMM, (long long)(vm->data_seg + resolved->offset));
+                        }
                     }
                 } else {
                     // Expression evaluating to struct
@@ -632,10 +663,17 @@ void gen_expr(JCC *vm, Node *node) {
         case ND_CAST: {
             // Type cast - handle all conversions with proper sign/zero extension
             gen_expr(vm, node->lhs);
-            
+
             Type *from = node->lhs->ty;
             Type *to = node->ty;
-            
+
+            // Skip conversion for pointer types (including function pointers)
+            // Pointers should always remain as full 64-bit values
+            if (from->kind == TY_PTR || to->kind == TY_PTR ||
+                from->kind == TY_FUNC || to->kind == TY_FUNC) {
+                return;
+            }
+
             // Special case: Array-to-pointer decay (common for string literals)
             // Arrays decay to pointers at the value level (no runtime conversion needed)
             // The address is already in ax from the array generation
@@ -1695,37 +1733,62 @@ void codegen(JCC *vm, Obj *prog) {
         }
     }
 
+    // Initialize TLS offset counter
+    vm->tls_offset = 0;
+
     // Initialize all global variables in data segment
     // Process all global variables (both initialized and uninitialized)
     for (Obj *var = prog; var; var = var->next) {
         if (!var->is_function) {
-            // Align data pointer (optional but good practice)
-            // Round up to 8-byte boundary for efficiency
-            long long offset = vm->data_ptr - vm->data_seg;
-            offset = (offset + 7) & ~7;
-            vm->data_ptr = vm->data_seg + offset;
-            
-            // Store the offset in the variable
-            var->offset = vm->data_ptr - vm->data_seg;
+            if (var->is_tls) {
+                // Thread-local variable - allocate in TLS segment
+                // Align TLS offset
+                vm->tls_offset = (vm->tls_offset + var->ty->align - 1) & ~(var->ty->align - 1);
+                var->offset = vm->tls_offset;
+                vm->tls_offset += var->ty->size;
 
-            // Add to debug symbol table (globals are function-independent, so add before functions)
-            add_debug_symbol(vm, var->name, var->offset, var->ty, 0);
+                // TLS variables keep their init_data for copying to each thread's TLS
+                // (actual initialization happens in init_thread_tls())
 
-            // Initialize the data
-            // NOTE: Type sizes are already adjusted in new_gvar() for VM compatibility
-            // (integers are 8 bytes in VM), so init_data is already in the correct format
-            if (var->init_data) {
-                // Copy initialized data (init_data is already in VM format with correct sizes)
-                memcpy(vm->data_ptr, var->init_data, var->ty->size);
-                vm->data_ptr += var->ty->size;
+                // Add to debug symbol table
+                add_debug_symbol(vm, var->name, var->offset, var->ty, 1);  // TLS flag
             } else {
+                // Regular global variable - allocate in data segment
+                // Align data pointer (optional but good practice)
+                // Round up to 8-byte boundary for efficiency
+                long long offset = vm->data_ptr - vm->data_seg;
+                offset = (offset + 7) & ~7;
+                vm->data_ptr = vm->data_seg + offset;
+
+                // Store the offset in the variable
+                var->offset = vm->data_ptr - vm->data_seg;
+
+                // Add to debug symbol table (globals are function-independent, so add before functions)
+                add_debug_symbol(vm, var->name, var->offset, var->ty, 0);
+
+                // Initialize the data
+                // NOTE: Type sizes are already adjusted in new_gvar() for VM compatibility
+                // (integers are 8 bytes in VM), so init_data is already in the correct format
+                if (var->init_data) {
+                    // Copy initialized data (init_data is already in VM format with correct sizes)
+                    memcpy(vm->data_ptr, var->init_data, var->ty->size);
+                    vm->data_ptr += var->ty->size;
+                } else {
                 // Zero-initialize uninitialized globals (C standard requires this)
                 memset(vm->data_ptr, 0, var->ty->size);
                 vm->data_ptr += var->ty->size;
+                }
             }
         }
     }
-    
+
+    // Check TLS segment size
+    int tls_max_size = vm->poolsize / 16;
+    if (vm->tls_offset > tls_max_size) {
+        error("TLS variables exceed segment size (%d > %d bytes)",
+              vm->tls_offset, tls_max_size);
+    }
+
 
     
     // Allocate return buffer for struct/union returns at end of data segment
@@ -1772,7 +1835,12 @@ void codegen(JCC *vm, Obj *prog) {
     for (int i = 0; i < vm->num_func_addr_patches; i++) {
         Obj *fn = vm->func_addr_patches[i].function;
         long long *loc = vm->func_addr_patches[i].location;
-        *loc = (long long)(vm->text_seg + fn->code_addr);
+        long long patched_addr = (long long)(vm->text_seg + fn->code_addr);
+        fprintf(stderr, "DEBUG PATCH: Function '%s' code_addr=%lld, text_seg=%p, patched_addr=0x%llx, loc=%p\n",
+                fn->name, fn->code_addr, vm->text_seg, patched_addr, loc);
+        *loc = patched_addr;
+        fprintf(stderr, "DEBUG PATCH: Wrote 0x%llx to location %p, verify: *loc=0x%llx\n",
+                patched_addr, loc, *loc);
     }
 
     // Find main function and store its address

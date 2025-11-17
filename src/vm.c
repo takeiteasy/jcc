@@ -24,10 +24,9 @@
 #include "./internal.h"
 
 #ifndef JCC_NO_THREADS
-// Forward declarations for threading support
-static void gil_acquire(GIL *gil);
-static void gil_release(GIL *gil);
-static VMThread *vm_thread_get_current(JCC *vm);
+// Forward declarations for threading support (now in jcc.h)
+// Global VM pointer for pthread FFI wrappers (they can't receive vm as parameter)
+JCC *__global_vm = NULL;
 #endif
 
 // Stack canary constant for detecting stack overflows (used when random canaries disabled)
@@ -94,7 +93,7 @@ static void gil_init(GIL *gil) {
  * @discussion If the current thread already owns the GIL, increment recursion count.
  *             Otherwise, block until GIL is available.
  */
-static void gil_acquire(GIL *gil) {
+void gil_acquire(GIL *gil) {
     pthread_t self = pthread_self();
 
     // Check for recursive acquisition
@@ -114,7 +113,7 @@ static void gil_acquire(GIL *gil) {
  * @abstract Release the GIL, decrementing recursion count
  * @discussion Only actually releases the mutex when recursion count reaches 0
  */
-static void gil_release(GIL *gil) {
+void gil_release(GIL *gil) {
     pthread_t self = pthread_self();
     assert(pthread_equal(gil->owner_thread, self) && "GIL released by non-owner");
 
@@ -154,7 +153,7 @@ static void gil_destroy(GIL *gil) {
  * @discussion Uses pthread_getspecific with thread_key. Returns main_thread
  *             if threading is disabled.
  */
-static VMThread *vm_thread_get_current(JCC *vm) {
+VMThread *vm_thread_get_current(JCC *vm) {
     if (!vm->enable_threading) {
         return vm->main_thread;  // Single-threaded mode
     }
@@ -167,7 +166,7 @@ static VMThread *vm_thread_get_current(JCC *vm) {
  * @function vm_thread_set_current
  * @abstract Set the current thread's VMThread structure in TLS
  */
-static void vm_thread_set_current(JCC *vm, VMThread *thread) {
+void vm_thread_set_current(JCC *vm, VMThread *thread) {
     pthread_setspecific(vm->thread_key, thread);
 }
 
@@ -180,7 +179,7 @@ static void vm_thread_set_current(JCC *vm, VMThread *thread) {
  * @param num_args Number of arguments
  * @return Pointer to newly allocated VMThread
  */
-static VMThread *vm_thread_allocate(JCC *vm, long long entry_point, long long *args, int num_args) {
+VMThread *vm_thread_allocate(JCC *vm, long long entry_point, long long *args, int num_args) {
     VMThread *thread = (VMThread *)calloc(1, sizeof(VMThread));
     if (!thread) {
         fprintf(stderr, "Failed to allocate VMThread\n");
@@ -228,16 +227,45 @@ static VMThread *vm_thread_allocate(JCC *vm, long long entry_point, long long *a
     }
 
     // Set PC to entry point
-    thread->pc = vm->text_seg + entry_point;
+    // CRITICAL: entry_point is a byte offset, but text_seg is long long*
+    // Must cast to char* to avoid pointer arithmetic multiplying by 8
+    thread->pc = (long long *)((char *)vm->text_seg + entry_point);
 
     return thread;
+}
+
+/*!
+ * @function init_thread_tls
+ * @brief Initialize TLS variables for a thread
+ * @param vm VM instance
+ * @param thread Thread to initialize TLS for
+ *
+ * Copies initializers from global _Thread_local variables to the thread's TLS segment.
+ */
+static void init_thread_tls(JCC *vm, VMThread *thread) {
+    if (!thread || !thread->tls_seg) {
+        return;
+    }
+
+    // Initialize TLS variables for this thread
+    for (Obj *var = vm->globals; var; var = var->next) {
+        if (var->is_tls) {
+            if (var->init_data) {
+                // Copy initializer to thread's TLS
+                memcpy(thread->tls_seg + var->offset, var->init_data, var->ty->size);
+            } else {
+                // Zero-initialize (already done by calloc, but be explicit)
+                memset(thread->tls_seg + var->offset, 0, var->ty->size);
+            }
+        }
+    }
 }
 
 /*!
  * @function vm_thread_destroy
  * @abstract Free all resources associated with a VMThread
  */
-static void vm_thread_destroy(VMThread *thread) {
+void vm_thread_destroy(VMThread *thread) {
     if (!thread) return;
 
     if (thread->stack_seg) {
@@ -257,32 +285,55 @@ static void vm_thread_destroy(VMThread *thread) {
  * @abstract Entry point for new OS threads - executes VM bytecode
  * @param arg Pointer to VMThread structure
  */
-static void *vm_thread_entry(void *arg) {
+void *vm_thread_entry(void *arg) {
     VMThread *thread = (VMThread *)arg;
     JCC *vm = thread->vm;
 
     // Set thread-local VMThread pointer
     vm_thread_set_current(vm, thread);
 
+    // Set up stack frame for thread entry point
+    // The thread starts execution at the function entry point, as if CALL had just been executed.
+    // CALL pushes the return address, then the function's ENT instruction pushes saved bp.
+    // Stack layout before ENT: [...args...] [return_address] <- sp
+    // After ENT: [...args...] [return_address] [saved_bp] [locals...] <- sp
+    //
+    // We need to push arguments first, then return address (like CALL would have done).
+    // When the function returns (LEV), it will pop bp and return address.
+    // Return address = NULL signals clean exit.
+
     // Push arguments onto thread's stack (right-to-left)
     for (int i = thread->num_args - 1; i >= 0; i--) {
         *--thread->sp = thread->entry_args[i];
     }
 
+    // Push return address (NULL signals thread exit)
+    *--thread->sp = 0;
+
     // Acquire GIL before executing (if enabled)
+    // NOTE: No need to copy state to vm->registers anymore - vm_eval uses thread->registers directly via VM_ macros
     if (vm->enable_gil) {
         gil_acquire(&vm->gil);
     }
 
-    // Execute VM bytecode (vm_eval will use thread-local state)
-    thread->exit_code = vm_eval(vm);
+    // Execute VM bytecode (vm_eval will use thread->pc/sp/bp/ax/fax via VM_ macros)
+    int eval_result = vm_eval(vm);
+
+    // Thread function's return value is in thread->ax (accessed via VM_AX inside vm_eval)
+    // vm_eval's return value is the exit code (0 = success, non-zero = error)
+    thread->exit_code = (eval_result == 0) ? thread->ax : eval_result;
     thread->terminated = 1;
+
+    fprintf(stderr, "DEBUG vm_thread_entry: About to release GIL and return, thread=%p, exit_code=%d\n",
+            thread, thread->exit_code);
 
     // Release GIL (if enabled)
     if (vm->enable_gil) {
         gil_release(&vm->gil);
+        fprintf(stderr, "DEBUG vm_thread_entry: GIL released, thread=%p\n", thread);
     }
 
+    fprintf(stderr, "DEBUG vm_thread_entry: Returning NULL, thread=%p\n", thread);
     return NULL;
 }
 #endif // JCC_NO_THREADS
@@ -612,34 +663,104 @@ static void coalesce_free_blocks(JCC *vm) {
 int vm_eval(JCC *vm) {
     int op;
 
+    // Get current thread context (NULL for compile-time/single-threaded execution)
+    VMThread *thread = NULL;
+    VMThread temp_thread_storage;
+    int using_temp_thread = 0;
+
+    #ifndef JCC_NO_THREADS
+    if (vm->enable_threading) {
+        thread = vm_thread_get_current(vm);
+
+        // Sanity check: thread should never be NULL when threading is enabled
+        if (!thread) {
+            fprintf(stderr, "FATAL: vm_thread_get_current returned NULL with threading enabled!\n");
+            return -1;
+        }
+
+        fprintf(stderr, "DEBUG vm_eval START: thread=%p, thread->pc=%p\n", thread, thread->pc);
+    }
+    #endif
+
+    // If no thread context (compile-time/single-threaded), create temporary context
+    if (!thread) {
+        temp_thread_storage.pc = vm->pc;
+        temp_thread_storage.sp = vm->sp;
+        temp_thread_storage.bp = vm->bp;
+        temp_thread_storage.ax = vm->ax;
+        temp_thread_storage.fax = vm->fax;
+        thread = &temp_thread_storage;
+        using_temp_thread = 1;
+    }
+
+    // Register accessor macros - automatically use thread or vm registers based on build config
+    #ifndef JCC_NO_THREADS
+        #define VM_PC   thread->pc
+        #define VM_SP   thread->sp
+        #define VM_BP   thread->bp
+        #define VM_AX   thread->ax
+        #define VM_FAX  thread->fax
+    #else
+        #define VM_PC   vm->pc
+        #define VM_SP   vm->sp
+        #define VM_BP   vm->bp
+        #define VM_AX   vm->ax
+        #define VM_FAX  vm->fax
+    #endif
+
+    // Helper macro to copy temp thread state back before returning
+    #define VM_RETURN(val) do { \
+        if (using_temp_thread) { \
+            vm->pc = thread->pc; \
+            vm->sp = thread->sp; \
+            vm->bp = thread->bp; \
+            vm->ax = thread->ax; \
+            vm->fax = thread->fax; \
+        } \
+        return (val); \
+    } while(0)
+
     vm->cycle = 0;
     while (1) {
         vm->cycle++;
+
+        // DEBUG: Print VM_PC before dereferencing (only when NULL)
+        if (VM_PC == NULL) {
+            fprintf(stderr, "FATAL cycle %lld: VM_PC is NULL! thread=%p\n", vm->cycle, thread);
+            VM_RETURN(-1);
+        }
 
         // Debugger hooks - check before executing instruction
         if (vm->enable_debugger) {
             // Check for breakpoints
             if (debugger_check_breakpoint(vm)) {
                 printf("\nBreakpoint hit at PC %p (offset: %lld)\n",
-                       (void*)vm->pc, (long long)(vm->pc - vm->text_seg));
+                       (void*)VM_PC, (long long)(VM_PC - vm->text_seg));
                 cc_debug_repl(vm);
             }
 
             if (vm->single_step)
                 cc_debug_repl(vm);
 
-            if (vm->step_over && vm->pc == vm->step_over_return_addr) {
+            if (vm->step_over && VM_PC == vm->step_over_return_addr) {
                 vm->step_over = 0;
                 cc_debug_repl(vm);
             }
 
-            if (vm->step_out && vm->bp != vm->step_out_bp) {
+            if (vm->step_out && VM_BP != vm->step_out_bp) {
                 vm->step_out = 0;
                 cc_debug_repl(vm);
             }
         }
 
-        op = *vm->pc++; // get next operation code
+        op = *VM_PC++; // get next operation code
+
+        // DEBUG: Log operations in cycles 7-10
+        if (vm->cycle >= 7 && vm->cycle <= 10) {
+            fprintf(stderr, "DEBUG cycle %lld: opcode=%d, AX before=0x%llx\n",
+                    vm->cycle, op, VM_AX);
+        }
+
         if (vm->debug_vm) {
             printf("%lld> %.5s", vm->cycle,
                     &
@@ -650,109 +771,131 @@ int vm_eval(JCC *vm) {
                     "FLD  ,FST  ,FADD ,FSUB ,FMUL ,FDIV ,FNEG ,FEQ  ,FNE  ,FLT  ,FLE  ,FGT  ,FGE  ,I2F  ,F2I  ,FPSH ,"
                     "CALLF,CHKB ,CHKP ,CHKT ,CHKI ,MARKI,MARKA,CHKA ,CHKPA,MARKP,"
                     "SCPIN,SCPOT,CHKL ,MARKR,MARKW,"
-                    "SETJP,LONJP,CAS  ,EXCH "[op * 6]);
-            if (op <= ADJ || op == CHKB || op == CHKT || op == CHKI || op == MARKI || op == MARKA || op == CHKA || op == MARKP || op == SCOPEIN || op == SCOPEOUT || op == CHKL || op == MARKR || op == MARKW || op == CAS || op == EXCH)
-                printf(" %lld\n", *vm->pc);
+                    "SETJP,LONJP,CAS  ,EXCH ,TLSAD"[op * 6]);
+            if (op <= ADJ || op == CHKB || op == CHKT || op == CHKI || op == MARKI || op == MARKA || op == CHKA || op == MARKP || op == SCOPEIN || op == SCOPEOUT || op == CHKL || op == MARKR || op == MARKW || op == CAS || op == EXCH || op == TLSADDR)
+                printf(" %lld\n", *VM_PC);
             else
                 printf("\n");
         }
         
-        if (op == IMM)        { vm->ax = *vm->pc++; }                                        // load immediate value to ax
+        if (op == IMM)        {
+            long long imm_val = *VM_PC++;
+            VM_AX = imm_val;
+            // DEBUG: Log IMM loads that look like pointers
+            if (vm->cycle <= 50 && (imm_val > 0x100000000LL || imm_val == 0x18)) {
+                fprintf(stderr, "DEBUG IMM cycle %lld: Loaded 0x%llx from PC-1=%p into AX\n",
+                        vm->cycle, imm_val, VM_PC - 1);
+            }
+        }                                        // load immediate value to ax
         else if (op == LC)    {
             // Check read watchpoints before loading
             if (vm->enable_debugger && vm->num_watchpoints > 0) {
-                debugger_check_watchpoint(vm, (void*)vm->ax, 1, WATCH_READ);
+                debugger_check_watchpoint(vm, (void*)VM_AX, 1, WATCH_READ);
             }
-            vm->ax = (long long)(*(signed char *)(long long)vm->ax);   // load signed char, sign-extend to long long
+            VM_AX = (long long)(*(signed char *)(long long)VM_AX);   // load signed char, sign-extend to long long
         }
         else if (op == LS)    {
             // Check read watchpoints before loading
             if (vm->enable_debugger && vm->num_watchpoints > 0) {
-                debugger_check_watchpoint(vm, (void*)vm->ax, 2, WATCH_READ);
+                debugger_check_watchpoint(vm, (void*)VM_AX, 2, WATCH_READ);
             }
-            vm->ax = (long long)(*(short *)(long long)vm->ax);         // load short, sign-extend to long long
+            VM_AX = (long long)(*(short *)(long long)VM_AX);         // load short, sign-extend to long long
         }
         else if (op == LW)    {
             // Check read watchpoints before loading
             if (vm->enable_debugger && vm->num_watchpoints > 0) {
-                debugger_check_watchpoint(vm, (void*)vm->ax, 4, WATCH_READ);
+                debugger_check_watchpoint(vm, (void*)VM_AX, 4, WATCH_READ);
             }
-            vm->ax = (long long)(*(int *)(long long)vm->ax);           // load int, sign-extend to long long
+            VM_AX = (long long)(*(int *)(long long)VM_AX);           // load int, sign-extend to long long
         }
         else if (op == LI)    {
             // Check read watchpoints before loading
             if (vm->enable_debugger && vm->num_watchpoints > 0) {
-                debugger_check_watchpoint(vm, (void*)vm->ax, 8, WATCH_READ);
+                debugger_check_watchpoint(vm, (void*)VM_AX, 8, WATCH_READ);
             }
-            vm->ax = *(long long *)(long long)vm->ax;                  // load long long to ax, address in ax
+            VM_AX = *(long long *)(long long)VM_AX;                  // load long long to ax, address in ax
         }
         else if (op == SC)    {
             // Check write watchpoints before storing
             if (vm->enable_debugger && vm->num_watchpoints > 0) {
-                debugger_check_watchpoint(vm, (void*)*vm->sp, 1, WATCH_WRITE);
+                debugger_check_watchpoint(vm, (void*)*VM_SP, 1, WATCH_WRITE);
             }
-            vm->ax = *(char *)*vm->sp++ = vm->ax;                      // save character to address, value in ax, address on stack
+            VM_AX = *(char *)*VM_SP++ = VM_AX;                      // save character to address, value in ax, address on stack
         }
         else if (op == SS)    {
             // Check write watchpoints before storing
             if (vm->enable_debugger && vm->num_watchpoints > 0) {
-                debugger_check_watchpoint(vm, (void*)*vm->sp, 2, WATCH_WRITE);
+                debugger_check_watchpoint(vm, (void*)*VM_SP, 2, WATCH_WRITE);
             }
-            vm->ax = *(short *)*vm->sp++ = vm->ax;                     // save short to address, value in ax, address on stack
+            VM_AX = *(short *)*VM_SP++ = VM_AX;                     // save short to address, value in ax, address on stack
         }
         else if (op == SW)    {
             // Check write watchpoints before storing
             if (vm->enable_debugger && vm->num_watchpoints > 0) {
-                debugger_check_watchpoint(vm, (void*)*vm->sp, 4, WATCH_WRITE);
+                debugger_check_watchpoint(vm, (void*)*VM_SP, 4, WATCH_WRITE);
             }
-            vm->ax = *(int *)*vm->sp++ = vm->ax;                       // save int (word) to address, value in ax, address on stack
+            VM_AX = *(int *)*VM_SP++ = VM_AX;                       // save int (word) to address, value in ax, address on stack
         }
         else if (op == SI)    {
             // Check write watchpoints before storing
             if (vm->enable_debugger && vm->num_watchpoints > 0) {
-                debugger_check_watchpoint(vm, (void*)*vm->sp, 8, WATCH_WRITE);
+                debugger_check_watchpoint(vm, (void*)*VM_SP, 8, WATCH_WRITE);
             }
-            *(long long *)*vm->sp++ = vm->ax;                          // save long long to address, value in ax, address on stack
+            *(long long *)*VM_SP++ = VM_AX;                          // save long long to address, value in ax, address on stack
         }
-        else if (op == PUSH)  { *--vm->sp = vm->ax; }                                        // push the value of ax onto the stack
-        else if (op == JMP)   { vm->pc = (long long *)*vm->pc; }                             // jump to the address
-        else if (op == JZ)    { vm->pc = vm->ax ? vm->pc + 1 : (long long *)*vm->pc; }       // jump if ax is zero
-        else if (op == JNZ)   { vm->pc = vm->ax ? (long long *)*vm->pc : vm->pc + 1; }       // jump if ax is not zero
+        else if (op == PUSH)  {
+            // DEBUG: Log pushes of pointer-like values
+            if (vm->cycle <= 50 && (VM_AX > 0x100000000LL || VM_AX == 0x18)) {
+                fprintf(stderr, "DEBUG PUSH cycle %lld: Pushing AX=0x%llx to SP-1=%p\n",
+                        vm->cycle, VM_AX, VM_SP - 1);
+            }
+            *--VM_SP = VM_AX;
+            // DEBUG: Verify the push
+            if (vm->cycle <= 50 && (VM_AX > 0x100000000LL || VM_AX == 0x18)) {
+                fprintf(stderr, "DEBUG PUSH cycle %lld: Verified *SP=0x%llx\n",
+                        vm->cycle, *VM_SP);
+            }
+        }                                        // push the value of ax onto the stack
+        else if (op == JMP)   { VM_PC = (long long *)*VM_PC; }                             // jump to the address
+        else if (op == JZ)    { VM_PC = VM_AX ? VM_PC + 1 : (long long *)*VM_PC; }       // jump if ax is zero
+        else if (op == JNZ)   { VM_PC = VM_AX ? (long long *)*VM_PC : VM_PC + 1; }       // jump if ax is not zero
         else if (op == CALL)  {
             // Call subroutine: push return address to main stack and shadow stack
-            long long ret_addr = (long long)(vm->pc+1);
-            *--vm->sp = ret_addr;
+            long long ret_addr = (long long)(VM_PC+1);
+            long long call_target = *VM_PC;
+
+            *--VM_SP = ret_addr;
             if (vm->enable_cfi) {
                 *--vm->shadow_sp = ret_addr;  // Also push to shadow stack for CFI
             }
-            vm->pc = (long long *)*vm->pc;
+            VM_PC = (long long *)call_target;
         }
         else if (op == CALLI) {
             // Call subroutine indirect: push return address to main stack and shadow stack
-            long long ret_addr = (long long)vm->pc;
-            *--vm->sp = ret_addr;
+            long long ret_addr = (long long)VM_PC;
+            *--VM_SP = ret_addr;
             if (vm->enable_cfi) {
                 *--vm->shadow_sp = ret_addr;  // Also push to shadow stack for CFI
             }
-            vm->pc = (long long *)vm->ax;
+            VM_PC = (long long *)VM_AX;
         }
         else if (op == ENT)   {
             // Enter function: create new stack frame
-            *--vm->sp = (long long)vm->bp;  // Save old base pointer
-            vm->bp = vm->sp;                 // Set new base pointer
+            *--VM_SP = (long long)VM_BP;  // Save old base pointer
+            VM_BP = VM_SP;                 // Set new base pointer
 
             // If stack canaries are enabled, write canary after old bp
             if (vm->enable_stack_canaries) {
-                *--vm->sp = vm->stack_canary;
+                *--VM_SP = vm->stack_canary;
             }
 
             // Allocate space for local variables
-            long long stack_size = *vm->pc++;
-            vm->sp = vm->sp - stack_size;
+            long long stack_size = *VM_PC++;
+            VM_SP = VM_SP - stack_size;
 
             // Stack overflow checking (for stack instrumentation)
             if (vm->enable_stack_instrumentation) {
-                long long stack_used = (long long)(vm->initial_sp - vm->sp);
+                long long stack_used = (long long)(vm->initial_sp - VM_SP);
                 if (stack_used > vm->stack_high_water) {
                     vm->stack_high_water = stack_used;
                 }
@@ -764,7 +907,7 @@ int vm_eval(JCC *vm) {
                         printf("\n========== STACK OVERFLOW WARNING ==========\n");
                         printf("Stack usage: %lld bytes (limit: %lld bytes)\n", stack_used, stack_limit);
                         printf("Current PC: 0x%llx (offset: %lld)\n",
-                               (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                               (long long)VM_PC, (long long)(VM_PC - vm->text_seg));
                         printf("===========================================\n");
                         return -1;
                     } else if (vm->debug_vm) {
@@ -778,22 +921,22 @@ int vm_eval(JCC *vm) {
             // Different function frames have different bp values, so init_state keys naturally
             // separate between frames.
         }
-        else if (op == ADJ)  { vm->sp = vm->sp + *vm->pc++; }                               // add esp, <size>
+        else if (op == ADJ)  { VM_SP = VM_SP + *VM_PC++; }                               // add esp, <size>
         else if (op == LEV)  {
             // Leave function: restore stack frame and return
-            vm->sp = vm->bp;  // Reset stack pointer to base pointer
+            VM_SP = VM_BP;  // Reset stack pointer to base pointer
 
             // If stack canaries are enabled, check canary (it's at bp-1)
             if (vm->enable_stack_canaries) {
                 // Canary is one slot below the saved bp
-                long long canary = vm->sp[-1];
+                long long canary = VM_SP[-1];
                 if (canary != vm->stack_canary) {
                     printf("\n========== STACK OVERFLOW DETECTED ==========\n");
                     printf("Stack canary corrupted!\n");
                     printf("Expected: 0x%llx\n", vm->stack_canary);
                     printf("Found:    0x%llx\n", canary);
                     printf("PC:       0x%llx (offset: %lld)\n",
-                           (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                           (long long)VM_PC, (long long)(VM_PC - vm->text_seg));
                     printf("A stack buffer overflow has corrupted the stack frame.\n");
                     printf("============================================\n");
                     return -1;  // Abort execution
@@ -803,7 +946,7 @@ int vm_eval(JCC *vm) {
             // Invalidate stack pointers for this frame (dangling pointer detection)
             if (vm->enable_dangling_detection && vm->stack_ptrs.buckets) {
                 // Iterate through all stack pointers and invalidate those with matching BP
-                long long current_bp = (long long)vm->bp;
+                long long current_bp = (long long)VM_BP;
                 for (int i = 0; i < vm->stack_ptrs.capacity; i++) {
                     HashEntry *entry = &vm->stack_ptrs.buckets[i];
                     if (entry->key && entry->key != (void *)-1) {  // Not NULL and not TOMBSTONE
@@ -816,28 +959,31 @@ int vm_eval(JCC *vm) {
                 }
             }
 
-            vm->bp = (long long *)*vm->sp++;  // Restore old base pointer
+            VM_BP = (long long *)*VM_SP++;  // Restore old base pointer
 
             // Get return address from main stack
-            vm->pc = (long long *)*vm->sp++;  // Restore program counter (return address)
+            VM_PC = (long long *)*VM_SP++;  // Restore program counter (return address)
 
             // Check if we've returned from main (pc is NULL sentinel)
             // Skip CFI check for main's return since it was never called
-            if (vm->pc == 0 || vm->pc == NULL) {
+            if (VM_PC == 0 || VM_PC == NULL) {
                 // Main has returned, exit with return value in ax
-                int ret_val = (int)vm->ax;
+                int ret_val = (int)VM_AX;
+
+                fprintf(stderr, "DEBUG LEV: NULL return PC, exiting vm_eval with ret_val=%d, AX=%lld, thread=%p\n",
+                        ret_val, VM_AX, thread);
 
                 // Report memory leaks if leak detection enabled
                 report_memory_leaks(vm);
 
-                return ret_val;
+                VM_RETURN(ret_val);
             }
 
             // CFI check: validate return address against shadow stack
             // Only for normal function returns (not main's exit)
             if (vm->enable_cfi) {
                 long long shadow_ret_addr = *vm->shadow_sp++;  // Pop return address from shadow stack
-                long long main_ret_addr = (long long)vm->pc;   // Return address we just loaded
+                long long main_ret_addr = (long long)VM_PC;   // Return address we just loaded
 
                 if (main_ret_addr != shadow_ret_addr) {
                     printf("\n========== CFI VIOLATION ==========\n");
@@ -845,7 +991,7 @@ int vm_eval(JCC *vm) {
                     printf("Expected return address: 0x%llx\n", shadow_ret_addr);
                     printf("Actual return address:   0x%llx\n", main_ret_addr);
                     printf("Current PC offset:       %lld\n",
-                           (long long)(vm->pc - vm->text_seg));
+                           (long long)(VM_PC - vm->text_seg));
                     printf("This indicates a ROP attack or stack corruption.\n");
                     printf("====================================\n");
                     return -1;  // Abort execution
@@ -854,7 +1000,7 @@ int vm_eval(JCC *vm) {
         }
         else if (op == LEA)  {
             // Load effective address (bp + offset)
-            long long offset = *vm->pc++;
+            long long offset = *VM_PC++;
 
             // If stack canaries are enabled and this is a local variable (negative offset),
             // we need to adjust by -STACK_CANARY_SLOTS because the canary occupies bp-1
@@ -862,30 +1008,30 @@ int vm_eval(JCC *vm) {
                 offset -= STACK_CANARY_SLOTS;  // Shift locals down by canary slots
             }
 
-            vm->ax = (long long)(vm->bp + offset);
+            VM_AX = (long long)(VM_BP + offset);
         }
 
-        else if (op == OR)  vm->ax = *vm->sp++ | vm->ax;
-        else if (op == XOR) vm->ax = *vm->sp++ ^ vm->ax;
-        else if (op == AND) vm->ax = *vm->sp++ & vm->ax;
-        else if (op == EQ)  vm->ax = *vm->sp++ == vm->ax;
-        else if (op == NE)  vm->ax = *vm->sp++ != vm->ax;
-        else if (op == LT)  vm->ax = *vm->sp++ < vm->ax;
-        else if (op == LE)  vm->ax = *vm->sp++ <= vm->ax;
-        else if (op == GT)  vm->ax = *vm->sp++ >  vm->ax;
-        else if (op == GE)  vm->ax = *vm->sp++ >= vm->ax;
-        else if (op == SHL) vm->ax = *vm->sp++ << vm->ax;
-        else if (op == SHR) vm->ax = *vm->sp++ >> vm->ax;
-        else if (op == ADD) vm->ax = *vm->sp++ + vm->ax;
-        else if (op == SUB) vm->ax = *vm->sp++ - vm->ax;
-        else if (op == MUL) vm->ax = *vm->sp++ * vm->ax;
-        else if (op == DIV) vm->ax = *vm->sp++ / vm->ax;
-        else if (op == MOD) vm->ax = *vm->sp++ % vm->ax;
+        else if (op == OR)  VM_AX = *VM_SP++ | VM_AX;
+        else if (op == XOR) VM_AX = *VM_SP++ ^ VM_AX;
+        else if (op == AND) VM_AX = *VM_SP++ & VM_AX;
+        else if (op == EQ)  VM_AX = *VM_SP++ == VM_AX;
+        else if (op == NE)  VM_AX = *VM_SP++ != VM_AX;
+        else if (op == LT)  VM_AX = *VM_SP++ < VM_AX;
+        else if (op == LE)  VM_AX = *VM_SP++ <= VM_AX;
+        else if (op == GT)  VM_AX = *VM_SP++ >  VM_AX;
+        else if (op == GE)  VM_AX = *VM_SP++ >= VM_AX;
+        else if (op == SHL) VM_AX = *VM_SP++ << VM_AX;
+        else if (op == SHR) VM_AX = *VM_SP++ >> VM_AX;
+        else if (op == ADD) VM_AX = *VM_SP++ + VM_AX;
+        else if (op == SUB) VM_AX = *VM_SP++ - VM_AX;
+        else if (op == MUL) VM_AX = *VM_SP++ * VM_AX;
+        else if (op == DIV) VM_AX = *VM_SP++ / VM_AX;
+        else if (op == MOD) VM_AX = *VM_SP++ % VM_AX;
 
         // Checked arithmetic operations (overflow detection)
         else if (op == ADDC) {
-            long long b = vm->ax;
-            long long a = *vm->sp++;
+            long long b = VM_AX;
+            long long a = *VM_SP++;
 
             // Check for signed addition overflow
             if ((b > 0 && a > LLONG_MAX - b) ||
@@ -894,17 +1040,17 @@ int vm_eval(JCC *vm) {
                 printf("Addition overflow detected\n");
                 printf("Operands: %lld + %lld\n", a, b);
                 printf("PC:       0x%llx (offset: %lld)\n",
-                       (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                       (long long)VM_PC, (long long)(VM_PC - vm->text_seg));
                 printf("======================================\n");
                 return -1;
             }
 
-            vm->ax = a + b;
+            VM_AX = a + b;
         }
 
         else if (op == SUBC) {
-            long long b = vm->ax;
-            long long a = *vm->sp++;
+            long long b = VM_AX;
+            long long a = *VM_SP++;
 
             // Check for signed subtraction overflow
             if ((b < 0 && a > LLONG_MAX + b) ||
@@ -913,22 +1059,22 @@ int vm_eval(JCC *vm) {
                 printf("Subtraction overflow detected\n");
                 printf("Operands: %lld - %lld\n", a, b);
                 printf("PC:       0x%llx (offset: %lld)\n",
-                       (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                       (long long)VM_PC, (long long)(VM_PC - vm->text_seg));
                 printf("======================================\n");
                 return -1;
             }
 
-            vm->ax = a - b;
+            VM_AX = a - b;
         }
 
         else if (op == MULC) {
-            long long b = vm->ax;
-            long long a = *vm->sp++;
+            long long b = VM_AX;
+            long long a = *VM_SP++;
 
             // Check for signed multiplication overflow
             // Special cases first
             if (a == 0 || b == 0) {
-                vm->ax = 0;
+                VM_AX = 0;
             } else {
                 // Check if result would overflow
                 // For signed multiplication: if a * b / a != b, overflow occurred
@@ -940,7 +1086,7 @@ int vm_eval(JCC *vm) {
                         printf("Multiplication overflow detected\n");
                         printf("Operands: %lld * %lld\n", a, b);
                         printf("PC:       0x%llx (offset: %lld)\n",
-                               (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                               (long long)VM_PC, (long long)(VM_PC - vm->text_seg));
                         printf("======================================\n");
                         return -1;
                     }
@@ -952,22 +1098,22 @@ int vm_eval(JCC *vm) {
                         printf("Multiplication overflow detected\n");
                         printf("Operands: %lld * %lld\n", a, b);
                         printf("PC:       0x%llx (offset: %lld)\n",
-                               (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                               (long long)VM_PC, (long long)(VM_PC - vm->text_seg));
                         printf("======================================\n");
                         return -1;
                     }
-                    vm->ax = result;
+                    VM_AX = result;
                     goto mulc_done;
                 }
 
-                vm->ax = a * b;
+                VM_AX = a * b;
             }
             mulc_done:;
         }
 
         else if (op == DIVC) {
-            long long b = vm->ax;
-            long long a = *vm->sp++;
+            long long b = VM_AX;
+            long long a = *VM_SP++;
 
             // Check for division by zero
             if (b == 0) {
@@ -975,7 +1121,7 @@ int vm_eval(JCC *vm) {
                 printf("Attempted division by zero\n");
                 printf("Operands: %lld / 0\n", a);
                 printf("PC:       0x%llx (offset: %lld)\n",
-                       (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                       (long long)VM_PC, (long long)(VM_PC - vm->text_seg));
                 printf("======================================\n");
                 return -1;
             }
@@ -987,20 +1133,20 @@ int vm_eval(JCC *vm) {
                 printf("Operands: %lld / %lld\n", a, b);
                 printf("Result would overflow (LLONG_MIN / -1 = LLONG_MAX + 1)\n");
                 printf("PC:       0x%llx (offset: %lld)\n",
-                       (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                       (long long)VM_PC, (long long)(VM_PC - vm->text_seg));
                 printf("======================================\n");
                 return -1;
             }
 
-            vm->ax = a / b;
+            VM_AX = a / b;
         }
 
         // VM memory operations (self-contained, no system calls)
         else if (op == MALC) {
             // malloc: pop size from stack, allocate from heap, return pointer in ax
-            long long requested_size = *vm->sp++;
+            long long requested_size = *VM_SP++;
             if (requested_size <= 0) {
-                vm->ax = 0;  // Return NULL for invalid size
+                VM_AX = 0;  // Return NULL for invalid size
             } else {
                 // Align to 8-byte boundary
                 size_t size = (requested_size + 7) & ~7;
@@ -1084,7 +1230,7 @@ int vm_eval(JCC *vm) {
                     header->magic = 0xDEADBEEF;
                     header->freed = 0;
                     header->generation = old_generation;  // Keep generation (will be incremented on next free)
-                    header->alloc_pc = vm->text_seg ? (long long)(vm->pc - vm->text_seg) : 0;
+                    header->alloc_pc = vm->text_seg ? (long long)(VM_PC - vm->text_seg) : 0;
                     header->type_kind = TY_VOID;  // Default to void* (generic pointer)
 
                     // If heap canaries enabled, write canaries
@@ -1095,30 +1241,30 @@ int vm_eval(JCC *vm) {
                         *rear_canary = HEAP_CANARY;
                     }
 
-                    vm->ax = (long long)(header + 1);  // Return pointer after header
+                    VM_AX = (long long)(header + 1);  // Return pointer after header
 
                     // Add to alloc_map for fast pointer validation
-                    hashmap_put_int(&vm->alloc_map, vm->ax, header);
+                    hashmap_put_int(&vm->alloc_map, VM_AX, header);
 
                     // If memory poisoning enabled, fill with 0xCD pattern
                     if (vm->enable_memory_poisoning) {
-                        memset((void *)vm->ax, 0xCD, header->size);
+                        memset((void *)VM_AX, 0xCD, header->size);
                     }
 
                     // If memory tagging enabled, record pointer creation generation
                     if (vm->enable_memory_tagging) {
                         // Store pointer -> generation mapping
-                        hashmap_put_int(&vm->ptr_tags, vm->ax, (void *)(long long)header->generation);
+                        hashmap_put_int(&vm->ptr_tags, VM_AX, (void *)(long long)header->generation);
 
                         if (vm->debug_vm) {
                             printf("MALC: tagged reused pointer 0x%llx with generation %d\n",
-                                   vm->ax, header->generation);
+                                   VM_AX, header->generation);
                         }
                     }
 
                     if (vm->debug_vm) {
                         printf("MALC: reused %zu bytes at 0x%llx (segregated list, block size: %zu, class: %d)\n",
-                               size, vm->ax, block->size, size_class);
+                               size, VM_AX, block->size, size_class);
                     }
                     goto malc_done;
                 }
@@ -1128,7 +1274,7 @@ int vm_eval(JCC *vm) {
                 // Check for overflow/OOM (safer than pointer arithmetic which can have UB)
                 size_t available = (size_t)(vm->heap_end - vm->heap_ptr);
                 if (total_size > available) {
-                    vm->ax = 0;  // Out of memory or would overflow
+                    VM_AX = 0;  // Out of memory or would overflow
                     if (vm->debug_vm) {
                         printf("MALC: out of memory (requested %zu bytes, need %zu total, available %zu)\n",
                                size, total_size, available);
@@ -1151,7 +1297,7 @@ int vm_eval(JCC *vm) {
                     header->magic = 0xDEADBEEF;
                     header->freed = 0;
                     header->generation = 0;
-                    header->alloc_pc = vm->text_seg ? (long long)(vm->pc - vm->text_seg) : 0;
+                    header->alloc_pc = vm->text_seg ? (long long)(VM_PC - vm->text_seg) : 0;
                     header->type_kind = TY_VOID;  // Default to void* (generic pointer)
 
                     // If heap canaries enabled, write canaries
@@ -1163,77 +1309,77 @@ int vm_eval(JCC *vm) {
                     }
 
                     vm->heap_ptr += total_size;
-                    vm->ax = (long long)(header + 1);  // Return pointer after header
+                    VM_AX = (long long)(header + 1);  // Return pointer after header
 
                     // Add to alloc_map for fast pointer validation
-                    hashmap_put_int(&vm->alloc_map, vm->ax, header);
+                    hashmap_put_int(&vm->alloc_map, VM_AX, header);
 
                     // If memory poisoning enabled, fill with 0xCD pattern
                     if (vm->enable_memory_poisoning) {
-                        memset((void *)vm->ax, 0xCD, size);
+                        memset((void *)VM_AX, 0xCD, size);
                     }
 
                     if (vm->debug_vm) {
                         printf("MALC: allocated %zu bytes at 0x%llx (bump allocator, total: %zu)\n",
-                               size, vm->ax, total_size);
+                               size, VM_AX, total_size);
                     }
                 }
 
                 malc_done:
                 // If leak detection enabled, track this allocation
-                if (vm->enable_memory_leak_detection && vm->ax != 0) {
+                if (vm->enable_memory_leak_detection && VM_AX != 0) {
                     // Allocate a record (using real malloc, not VM heap!)
                     AllocRecord *record = (AllocRecord *)malloc(sizeof(AllocRecord));
                     if (record) {
-                        record->address = (void *)vm->ax;
-                        record->size = ((AllocHeader *)((char *)vm->ax - sizeof(AllocHeader)))->size;
-                        record->alloc_pc = (long long)(vm->pc - vm->text_seg);
+                        record->address = (void *)VM_AX;
+                        record->size = ((AllocHeader *)((char *)VM_AX - sizeof(AllocHeader)))->size;
+                        record->alloc_pc = (long long)(VM_PC - vm->text_seg);
                         record->next = vm->alloc_list;
                         vm->alloc_list = record;
                     }
                 }
 
                 // If provenance tracking enabled, mark heap allocation
-                if (vm->enable_provenance_tracking && vm->ax != 0) {
-                    AllocHeader *header = (AllocHeader *)((char *)vm->ax - sizeof(AllocHeader));
+                if (vm->enable_provenance_tracking && VM_AX != 0) {
+                    AllocHeader *header = (AllocHeader *)((char *)VM_AX - sizeof(AllocHeader));
 
                     // Create ProvenanceInfo for heap allocation
                     ProvenanceInfo *info = malloc(sizeof(ProvenanceInfo));
                     if (info) {
                         info->origin_type = 0;  // 0 = HEAP
-                        info->base = vm->ax;
+                        info->base = VM_AX;
                         info->size = header->requested_size;  // Use requested size, not rounded
 
                         // Store in HashMap
                         // Use integer key API to avoid snprintf/strdup overhead
-                        hashmap_put_int(&vm->provenance, vm->ax, info);
+                        hashmap_put_int(&vm->provenance, VM_AX, info);
                     }
                 }
 
                 // If memory tagging enabled, record pointer creation generation
-                if (vm->enable_memory_tagging && vm->ax != 0) {
-                    AllocHeader *header = (AllocHeader *)((char *)vm->ax - sizeof(AllocHeader));
+                if (vm->enable_memory_tagging && VM_AX != 0) {
+                    AllocHeader *header = (AllocHeader *)((char *)VM_AX - sizeof(AllocHeader));
 
                     // Store pointer -> generation mapping
                     // NOTE: We store generation+1 because generation 0 would be (void*)0 (NULL),
                     // which the HashMap can't distinguish from "key not found"
                     // Cast generation to void* (HashMap stores void* values)
-                    hashmap_put_int(&vm->ptr_tags, vm->ax, (void *)(long long)(header->generation + 1));
+                    hashmap_put_int(&vm->ptr_tags, VM_AX, (void *)(long long)(header->generation + 1));
 
                     if (vm->debug_vm) {
                         printf("MALC: tagged pointer 0x%llx with generation %d\n",
-                               vm->ax, header->generation);
+                               VM_AX, header->generation);
                     }
                 }
             }
         }
         else if (op == MFRE) {
             // free: pop pointer from stack, validate, and add to free list
-            long long ptr = *vm->sp++;
+            long long ptr = *VM_SP++;
 
             if (ptr == 0) {
                 // Freeing NULL is a no-op (standard behavior)
-                vm->ax = 0;
+                VM_AX = 0;
                 if (vm->debug_vm) {
                     printf("MFRE: freed NULL pointer (no-op)\n");
                 }
@@ -1250,7 +1396,7 @@ int vm_eval(JCC *vm) {
                     printf("Address:  0x%llx\n", ptr);
                     printf("This may indicate a double-free or heap corruption.\n");
                     printf("============================================\n");
-                    vm->ax = 0;
+                    VM_AX = 0;
                     return -1;  // Abort execution
                 }
 
@@ -1381,21 +1527,21 @@ int vm_eval(JCC *vm) {
                     coalesce_free_blocks(vm);
                 }
 
-                vm->ax = 0;
+                VM_AX = 0;
             }
         }
         else if (op == MCPY) {
             // memcpy: pop size, src, dest from stack, copy bytes, return dest in ax
-            long long size = *vm->sp++;
-            char *src = (char *)*vm->sp++;
-            char *dest = (char *)*vm->sp++;
+            long long size = *VM_SP++;
+            char *src = (char *)*VM_SP++;
+            char *dest = (char *)*VM_SP++;
             
             // Simple byte-by-byte copy (no overlapping check)
             for (long long i = 0; i < size; i++) {
                 dest[i] = src[i];
             }
             
-            vm->ax = (long long)dest;  // Return destination pointer
+            VM_AX = (long long)dest;  // Return destination pointer
             if (vm->debug_vm) {
                 printf("MCPY: copied %lld bytes from 0x%llx to 0x%llx\n", 
                        size, (long long)src, (long long)dest);
@@ -1403,36 +1549,36 @@ int vm_eval(JCC *vm) {
         }
 
         // Type conversion: sign extension (mask to size, then sign extend)
-        else if (op == SX1) { vm->ax = (long long)(signed char)(vm->ax & 0xFF); }      // sign extend byte to long long
-        else if (op == SX2) { vm->ax = (long long)(short)(vm->ax & 0xFFFF); }          // sign extend short to long long
-        else if (op == SX4) { vm->ax = (long long)(int)(vm->ax & 0xFFFFFFFF); }        // sign extend int to long long
+        else if (op == SX1) { VM_AX = (long long)(signed char)(VM_AX & 0xFF); }      // sign extend byte to long long
+        else if (op == SX2) { VM_AX = (long long)(short)(VM_AX & 0xFFFF); }          // sign extend short to long long
+        else if (op == SX4) { VM_AX = (long long)(int)(VM_AX & 0xFFFFFFFF); }        // sign extend int to long long
 
         // Type conversion: zero extension (mask to size)
-        else if (op == ZX1) { vm->ax = vm->ax & 0xFF; }                                // zero extend byte to long long
-        else if (op == ZX2) { vm->ax = vm->ax & 0xFFFF; }                              // zero extend short to long long
-        else if (op == ZX4) { vm->ax = vm->ax & 0xFFFFFFFF; }                          // zero extend int to long long
+        else if (op == ZX1) { VM_AX = VM_AX & 0xFF; }                                // zero extend byte to long long
+        else if (op == ZX2) { VM_AX = VM_AX & 0xFFFF; }                              // zero extend short to long long
+        else if (op == ZX4) { VM_AX = VM_AX & 0xFFFFFFFF; }                          // zero extend int to long long
 
-        else if (op == FLD)   { vm->fax = *(double *)vm->ax; }                          // load double from address in ax to fax
-        else if (op == FST)   { *(double *)*vm->sp++ = vm->fax; }                       // store fax to address on stack
-        else if (op == FPUSH) { *--vm->sp = *(long long *)&vm->fax; }                   // push fax onto stack (as bit pattern)
-        else if (op == FADD)  { vm->fax = *(double *)vm->sp++ + vm->fax; }              // fax = stack + fax
-        else if (op == FSUB)  { vm->fax = *(double *)vm->sp++ - vm->fax; }              // fax = stack - fax
-        else if (op == FMUL)  { vm->fax = *(double *)vm->sp++ * vm->fax; }              // fax = stack * fax
-        else if (op == FDIV)  { vm->fax = *(double *)vm->sp++ / vm->fax; }              // fax = stack / fax
-        else if (op == FNEG)  { vm->fax = -vm->fax; }                                   // fax = -fax
-        else if (op == FEQ)   { vm->ax = *(double *)vm->sp++ == vm->fax; }              // ax = (stack == fax)
-        else if (op == FNE)   { vm->ax = *(double *)vm->sp++ != vm->fax; }              // ax = (stack != fax)
-        else if (op == FLT)   { vm->ax = *(double *)vm->sp++ < vm->fax; }               // ax = (stack < fax)
-        else if (op == FLE)   { vm->ax = *(double *)vm->sp++ <= vm->fax; }              // ax = (stack <= fax)
-        else if (op == FGT)   { vm->ax = *(double *)vm->sp++ > vm->fax; }               // ax = (stack > fax)
-        else if (op == FGE)   { vm->ax = *(double *)vm->sp++ >= vm->fax; }              // ax = (stack >= fax)
-        else if (op == I2F)   { vm->fax = (double)vm->ax; }                             // convert ax to fax
-        else if (op == F2I)   { vm->ax = (long long)vm->fax; }                          // convert fax to ax
+        else if (op == FLD)   { VM_FAX = *(double *)VM_AX; }                          // load double from address in ax to fax
+        else if (op == FST)   { *(double *)*VM_SP++ = VM_FAX; }                       // store fax to address on stack
+        else if (op == FPUSH) { *--VM_SP = *(long long *)&VM_FAX; }                   // push fax onto stack (as bit pattern)
+        else if (op == FADD)  { VM_FAX = *(double *)VM_SP++ + VM_FAX; }              // fax = stack + fax
+        else if (op == FSUB)  { VM_FAX = *(double *)VM_SP++ - VM_FAX; }              // fax = stack - fax
+        else if (op == FMUL)  { VM_FAX = *(double *)VM_SP++ * VM_FAX; }              // fax = stack * fax
+        else if (op == FDIV)  { VM_FAX = *(double *)VM_SP++ / VM_FAX; }              // fax = stack / fax
+        else if (op == FNEG)  { VM_FAX = -VM_FAX; }                                   // fax = -fax
+        else if (op == FEQ)   { VM_AX = *(double *)VM_SP++ == VM_FAX; }              // ax = (stack == fax)
+        else if (op == FNE)   { VM_AX = *(double *)VM_SP++ != VM_FAX; }              // ax = (stack != fax)
+        else if (op == FLT)   { VM_AX = *(double *)VM_SP++ < VM_FAX; }               // ax = (stack < fax)
+        else if (op == FLE)   { VM_AX = *(double *)VM_SP++ <= VM_FAX; }              // ax = (stack <= fax)
+        else if (op == FGT)   { VM_AX = *(double *)VM_SP++ > VM_FAX; }               // ax = (stack > fax)
+        else if (op == FGE)   { VM_AX = *(double *)VM_SP++ >= VM_FAX; }              // ax = (stack >= fax)
+        else if (op == I2F)   { VM_FAX = (double)VM_AX; }                             // convert ax to fax
+        else if (op == F2I)   { VM_AX = (long long)VM_FAX; }                          // convert fax to ax
 
         else if (op == CHKP) {
             // Check pointer validity (for UAF detection, bounds checking, memory tagging)
             // ax contains the pointer to check
-            long long ptr = vm->ax;
+            long long ptr = VM_AX;
 
             if (!vm->enable_uaf_detection && !vm->enable_bounds_checks && !vm->enable_dangling_detection && !vm->enable_memory_tagging) {
                 // No pointer checking enabled, skip
@@ -1444,7 +1590,7 @@ int vm_eval(JCC *vm) {
                 printf("\n========== NULL POINTER DEREFERENCE ==========\n");
                 printf("Attempted to dereference NULL pointer\n");
                 printf("PC: 0x%llx (offset: %lld)\n",
-                       (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                       (long long)VM_PC, (long long)(VM_PC - vm->text_seg));
                 printf("============================================\n");
                 return -1;
             }
@@ -1475,7 +1621,7 @@ int vm_eval(JCC *vm) {
                             printf("Stack offset:  %lld\n", info->offset);
                             printf("Size:          %zu bytes\n", info->size);
                             printf("Current PC:    0x%llx (offset: %lld)\n",
-                                   (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                                   (long long)VM_PC, (long long)(VM_PC - vm->text_seg));
                             printf("==========================================\n");
                             return -1;
                         }
@@ -1510,7 +1656,7 @@ int vm_eval(JCC *vm) {
                                 printf("Size:               %zu bytes\n", header->size);
                                 printf("Allocated at PC offset: %lld\n", header->alloc_pc);
                                 printf("Current PC:         0x%llx (offset: %lld)\n",
-                                       (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                                       (long long)VM_PC, (long long)(VM_PC - vm->text_seg));
                                 printf("This indicates use-after-free where memory was freed and reallocated\n");
                                 printf("================================================\n");
                                 return -1;
@@ -1577,7 +1723,7 @@ int vm_eval(JCC *vm) {
                         printf("Allocated at PC offset: %lld\n", found_header->alloc_pc);
                         printf("Generation:  %d (freed)\n", found_header->generation);
                         printf("Current PC:  0x%llx (offset: %lld)\n",
-                               (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                               (long long)VM_PC, (long long)(VM_PC - vm->text_seg));
                         printf("============================================\n");
                         return -1;
                     }
@@ -1596,7 +1742,7 @@ int vm_eval(JCC *vm) {
                             printf("Allocated size: %zu bytes (rounded)\n", found_header->size);
                             printf("Allocated at PC offset: %lld\n", found_header->alloc_pc);
                             printf("Current PC:    0x%llx (offset: %lld)\n",
-                                   (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                                   (long long)VM_PC, (long long)(VM_PC - vm->text_seg));
                             printf("=========================================\n");
                             return -1;
                         }
@@ -1615,13 +1761,13 @@ int vm_eval(JCC *vm) {
             // Operands: element_size (in *pc)
             if (!vm->enable_bounds_checks) {
                 // Bounds checking not enabled, skip
-                (void)*vm->pc++;  // Consume operand but don't use it
+                (void)*VM_PC++;  // Consume operand but don't use it
                 goto chkb_done;
             }
 
-            long long element_size = *vm->pc++;
-            long long index = *vm->sp++;       // Pop index
-            long long base_ptr = *vm->sp++;    // Pop base pointer
+            long long element_size = *VM_PC++;
+            long long index = *VM_SP++;       // Pop index
+            long long base_ptr = *VM_SP++;    // Pop base pointer
 
             // Check for negative index
             if (index < 0) {
@@ -1630,7 +1776,7 @@ int vm_eval(JCC *vm) {
                 printf("Base address: 0x%llx\n", base_ptr);
                 printf("Element size: %lld bytes\n", element_size);
                 printf("PC: 0x%llx (offset: %lld)\n",
-                       (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                       (long long)VM_PC, (long long)(VM_PC - vm->text_seg));
                 printf("=========================================\n");
                 return -1;
             }
@@ -1653,7 +1799,7 @@ int vm_eval(JCC *vm) {
                         printf("Base address: 0x%llx\n", base_ptr);
                         printf("Allocated at PC offset: %lld\n", header->alloc_pc);
                         printf("PC: 0x%llx (offset: %lld)\n",
-                               (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                               (long long)VM_PC, (long long)(VM_PC - vm->text_seg));
                         printf("=========================================\n");
                         return -1;
                     }
@@ -1661,8 +1807,8 @@ int vm_eval(JCC *vm) {
             }
 
             // Push values back for the actual array access
-            *--vm->sp = base_ptr;
-            *--vm->sp = index;
+            *--VM_SP = base_ptr;
+            *--VM_SP = index;
 
             chkb_done:;
         }
@@ -1670,7 +1816,7 @@ int vm_eval(JCC *vm) {
         else if (op == CALLF) {
             // Foreign function call: ax contains FFI function index
             // For variadic functions, actual arg count is on stack (pushed by codegen)
-            int func_idx = vm->ax;
+            int func_idx = VM_AX;
             if (func_idx < 0 || func_idx >= vm->ffi_count) {
                 printf("error: invalid FFI function index: %d\n", func_idx);
                 return -1;
@@ -1679,7 +1825,14 @@ int vm_eval(JCC *vm) {
             ForeignFunc *ff = &vm->ffi_table[func_idx];
 
             // Pop actual argument count from stack (pushed by codegen for all FFI calls)
-            int actual_nargs = (int)*vm->sp++;
+            int actual_nargs = (int)*VM_SP++;
+
+            // DEBUG: Log pthread_create arguments
+            if (strcmp(ff->name, "pthread_create") == 0) {
+                fprintf(stderr, "DEBUG CALLF pthread_create: nargs=%d, SP args: [0]=0x%llx [1]=0x%llx [2]=0x%llx [3]=0x%llx\n",
+                        actual_nargs, actual_nargs > 0 ? VM_SP[0] : 0, actual_nargs > 1 ? VM_SP[1] : 0,
+                        actual_nargs > 2 ? VM_SP[2] : 0, actual_nargs > 3 ? VM_SP[3] : 0);
+            }
 
             if (vm->debug_vm)
                 printf("CALLF: calling %s with %d args (fixed: %d, variadic: %d)\n",
@@ -1727,7 +1880,7 @@ int vm_eval(JCC *vm) {
                 if (is_printf_family && format_arg_index >= 0 && format_arg_index < actual_nargs) {
                     // After popping actual_nargs, sp points to the first argument
                     // Arguments are at sp[0], sp[1], sp[2], ... (in the order they were declared)
-                    long long format_str_addr = vm->sp[format_arg_index];
+                    long long format_str_addr = VM_SP[format_arg_index];
                     const char *format_str = (const char *)format_str_addr;
 
                     // Validate format string pointer is readable
@@ -1811,7 +1964,7 @@ int vm_eval(JCC *vm) {
             long long arg_values[actual_nargs];
 
             for (int i = 0; i < actual_nargs; i++) {
-                arg_values[i] = *vm->sp++;
+                arg_values[i] = *VM_SP++;
                 args[i] = &arg_values[i];
                 if (vm->debug_vm)
                     printf("  arg[%d] = 0x%llx (%lld)\n", i, arg_values[i], arg_values[i]);
@@ -1821,11 +1974,11 @@ int vm_eval(JCC *vm) {
             if (ff->returns_double) {
                 double result;
                 ffi_call(&cif, FFI_FN(ff->func_ptr), &result, args);
-                vm->fax = result;
+                VM_FAX = result;
             } else {
                 long long result;
                 ffi_call(&cif, FFI_FN(ff->func_ptr), &result, args);
-                vm->ax = result;
+                VM_AX = result;
             }
 
             // Free temporary arg_types for variadic functions
@@ -1851,35 +2004,38 @@ int vm_eval(JCC *vm) {
 
             // Pop arguments from stack (they were pushed right-to-left)
             for (int i = 0; i < actual_nargs; i++) {
-                args[i] = *vm->sp++;
+                args[i] = *VM_SP++;
                 if (vm->debug_vm)
                     printf("  arg[%d] = 0x%llx (%lld)\n", i, args[i], args[i]);
             }
 
+            // NOTE: No longer need to save/restore state - VM_ macros access thread->registers directly
+            // FFI calls can release GIL, but other threads will use their own thread->pc/sp/bp via VM_ macros
+
             // Call the native function based on argument count
             if (ff->returns_double) {
                 switch (actual_nargs) {
-                    case 0: vm->fax = ((double(*)())ff->func_ptr)(); break;
-                    case 1: vm->fax = ((double(*)(long long))ff->func_ptr)(args[0]); break;
-                    case 2: vm->fax = ((double(*)(long long,long long))ff->func_ptr)(args[0],args[1]); break;
-                    case 3: vm->fax = ((double(*)(long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2]); break;
-                    case 4: vm->fax = ((double(*)(long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3]); break;
-                    case 5: vm->fax = ((double(*)(long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4]); break;
-                    case 6: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5]); break;
-                    case 7: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6]); break;
-                    case 8: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7]); break;
-                    case 9: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8]); break;
-                    case 10: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9]); break;
-                    case 11: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10]); break;
-                    case 12: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11]); break;
-                    case 13: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12]); break;
-                    case 14: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13]); break;
-                    case 15: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14]); break;
-                    case 16: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15]); break;
-                    case 17: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16]); break;
-                    case 18: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16],args[17]); break;
-                    case 19: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16],args[17],args[18]); break;
-                    case 20: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16],args[17],args[18],args[19]); break;
+                    case 0: VM_FAX = ((double(*)())ff->func_ptr)(); break;
+                    case 1: VM_FAX = ((double(*)(long long))ff->func_ptr)(args[0]); break;
+                    case 2: VM_FAX = ((double(*)(long long,long long))ff->func_ptr)(args[0],args[1]); break;
+                    case 3: VM_FAX = ((double(*)(long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2]); break;
+                    case 4: VM_FAX = ((double(*)(long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3]); break;
+                    case 5: VM_FAX = ((double(*)(long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4]); break;
+                    case 6: VM_FAX = ((double(*)(long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5]); break;
+                    case 7: VM_FAX = ((double(*)(long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6]); break;
+                    case 8: VM_FAX = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7]); break;
+                    case 9: VM_FAX = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8]); break;
+                    case 10: VM_FAX = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9]); break;
+                    case 11: VM_FAX = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10]); break;
+                    case 12: VM_FAX = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11]); break;
+                    case 13: VM_FAX = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12]); break;
+                    case 14: VM_FAX = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13]); break;
+                    case 15: VM_FAX = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14]); break;
+                    case 16: VM_FAX = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15]); break;
+                    case 17: VM_FAX = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16]); break;
+                    case 18: VM_FAX = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16],args[17]); break;
+                    case 19: VM_FAX = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16],args[17],args[18]); break;
+                    case 20: VM_FAX = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16],args[17],args[18],args[19]); break;
                     default:
                         printf("error: unsupported arg count for double return: %d\n", actual_nargs);
                         return -1;
@@ -1887,33 +2043,35 @@ int vm_eval(JCC *vm) {
             } else {
                 // Integer/pointer return
                 switch (actual_nargs) {
-                    case 0: vm->ax = ((long long(*)())ff->func_ptr)(); break;
-                    case 1: vm->ax = ((long long(*)(long long))ff->func_ptr)(args[0]); break;
-                    case 2: vm->ax = ((long long(*)(long long,long long))ff->func_ptr)(args[0],args[1]); break;
-                    case 3: vm->ax = ((long long(*)(long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2]); break;
-                    case 4: vm->ax = ((long long(*)(long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3]); break;
-                    case 5: vm->ax = ((long long(*)(long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4]); break;
-                    case 6: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5]); break;
-                    case 7: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6]); break;
-                    case 8: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7]); break;
-                    case 9: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8]); break;
-                    case 10: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9]); break;
-                    case 11: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10]); break;
-                    case 12: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11]); break;
-                    case 13: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12]); break;
-                    case 14: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13]); break;
-                    case 15: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14]); break;
-                    case 16: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15]); break;
-                    case 17: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16]); break;
-                    case 18: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16],args[17]); break;
-                    case 19: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16],args[17],args[18]); break;
-                    case 20: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16],args[17],args[18],args[19]); break;
+                    case 0: VM_AX = ((long long(*)())ff->func_ptr)(); break;
+                    case 1: VM_AX = ((long long(*)(long long))ff->func_ptr)(args[0]); break;
+                    case 2: VM_AX = ((long long(*)(long long,long long))ff->func_ptr)(args[0],args[1]); break;
+                    case 3: VM_AX = ((long long(*)(long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2]); break;
+                    case 4: VM_AX = ((long long(*)(long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3]); break;
+                    case 5: VM_AX = ((long long(*)(long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4]); break;
+                    case 6: VM_AX = ((long long(*)(long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5]); break;
+                    case 7: VM_AX = ((long long(*)(long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6]); break;
+                    case 8: VM_AX = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7]); break;
+                    case 9: VM_AX = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8]); break;
+                    case 10: VM_AX = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9]); break;
+                    case 11: VM_AX = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10]); break;
+                    case 12: VM_AX = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11]); break;
+                    case 13: VM_AX = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12]); break;
+                    case 14: VM_AX = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13]); break;
+                    case 15: VM_AX = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14]); break;
+                    case 16: VM_AX = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15]); break;
+                    case 17: VM_AX = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16]); break;
+                    case 18: VM_AX = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16],args[17]); break;
+                    case 19: VM_AX = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16],args[17],args[18]); break;
+                    case 20: VM_AX = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16],args[17],args[18],args[19]); break;
                     default:
                         printf("error: unsupported arg count for int return: %d\n", actual_nargs);
                         return -1;
                 }
             }
 #endif  // JCC_HAS_FFI
+
+            // NOTE: No restore needed - VM_ macros already use thread->registers directly
         }
 
         else if (op == CHKI) {
@@ -1921,11 +2079,11 @@ int vm_eval(JCC *vm) {
             // Operand: stack offset (bp-relative)
             if (!vm->enable_uninitialized_detection) {
                 // Uninitialized detection not enabled, skip
-                (void)*vm->pc++;  // Consume operand but don't use it
+                (void)*VM_PC++;  // Consume operand but don't use it
                 goto chki_done;
             }
 
-            long long offset = *vm->pc++;
+            long long offset = *VM_PC++;
 
             // Adjust offset for stack canaries if enabled
             if (vm->enable_stack_canaries && offset < 0) {
@@ -1933,7 +2091,7 @@ int vm_eval(JCC *vm) {
             }
 
             // Create key for HashMap lookup (bp address + offset)
-            long long addr = (long long)(vm->bp + offset);
+            long long addr = (long long)(VM_BP + offset);
 
             // Check if variable is initialized
             // Use integer key API to avoid snprintf overhead
@@ -1943,9 +2101,9 @@ int vm_eval(JCC *vm) {
                 printf("Attempted to read uninitialized variable\n");
                 printf("Stack offset: %lld\n", offset);
                 printf("Address:      0x%llx\n", addr);
-                printf("BP:           0x%llx\n", (long long)vm->bp);
+                printf("BP:           0x%llx\n", (long long)VM_BP);
                 printf("PC:           0x%llx (offset: %lld)\n",
-                       (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                       (long long)VM_PC, (long long)(VM_PC - vm->text_seg));
                 printf("================================================\n");
                 return -1;
             }
@@ -1958,11 +2116,11 @@ int vm_eval(JCC *vm) {
             // Operand: stack offset (bp-relative)
             if (!vm->enable_uninitialized_detection) {
                 // Uninitialized detection not enabled, skip
-                (void)*vm->pc++;  // Consume operand but don't use it
+                (void)*VM_PC++;  // Consume operand but don't use it
                 goto marki_done;
             }
 
-            long long offset = *vm->pc++;
+            long long offset = *VM_PC++;
 
             // Adjust offset for stack canaries if enabled
             if (vm->enable_stack_canaries && offset < 0) {
@@ -1970,7 +2128,7 @@ int vm_eval(JCC *vm) {
             }
 
             // Create key for HashMap (bp address + offset)
-            long long addr = (long long)(vm->bp + offset);
+            long long addr = (long long)(VM_BP + offset);
 
             // Mark as initialized (use non-NULL value)
             // Use integer key API to avoid snprintf/strdup overhead
@@ -1985,12 +2143,12 @@ int vm_eval(JCC *vm) {
             // ax contains the pointer to check
             if (!vm->enable_type_checks) {
                 // Type checking not enabled, skip
-                (void)*vm->pc++;  // Consume operand but don't use it
+                (void)*VM_PC++;  // Consume operand but don't use it
                 goto chkt_done;
             }
 
-            int expected_type = (int)*vm->pc++;
-            long long ptr = vm->ax;
+            int expected_type = (int)*VM_PC++;
+            long long ptr = VM_AX;
 
             // Skip check for NULL (will be caught by CHKP if enabled)
             if (ptr == 0) {
@@ -2062,7 +2220,7 @@ int vm_eval(JCC *vm) {
                             printf("Actual type:   %s\n", actual_name);
                             printf("Allocated at PC offset: %lld\n", found_header->alloc_pc);
                             printf("Current PC:    0x%llx (offset: %lld)\n",
-                                   (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                                   (long long)VM_PC, (long long)(VM_PC - vm->text_seg));
                             printf("============================================\n");
                             return -1;
                         }
@@ -2078,22 +2236,22 @@ int vm_eval(JCC *vm) {
             // Operands: stack offset (bp-relative), size, and scope_id (three immediate values)
             if (!vm->enable_dangling_detection && !vm->enable_stack_instrumentation) {
                 // Neither dangling nor stack instrumentation enabled, skip
-                (void)*vm->pc++;  // Consume offset operand
-                (void)*vm->pc++;  // Consume size operand
-                (void)*vm->pc++;  // Consume scope_id operand
+                (void)*VM_PC++;  // Consume offset operand
+                (void)*VM_PC++;  // Consume size operand
+                (void)*VM_PC++;  // Consume scope_id operand
                 goto marka_done;
             }
 
-            long long offset = *vm->pc++;
-            size_t size = (size_t)*vm->pc++;
-            int scope_id = (int)*vm->pc++;
+            long long offset = *VM_PC++;
+            size_t size = (size_t)*VM_PC++;
+            int scope_id = (int)*VM_PC++;
 
             // ax contains the pointer value (address of stack variable)
-            long long ptr = vm->ax;
+            long long ptr = VM_AX;
 
             if (vm->debug_vm) {
                 printf("MARKA: tracking pointer 0x%llx (bp=0x%llx, offset=%lld, size=%zu, scope=%d)\n",
-                       ptr, (long long)vm->bp, offset, size, scope_id);
+                       ptr, (long long)VM_BP, offset, size, scope_id);
             }
 
             // Create StackPtrInfo
@@ -2102,7 +2260,7 @@ int vm_eval(JCC *vm) {
                 fprintf(stderr, "MARKA: failed to allocate StackPtrInfo\n");
                 goto marka_done;
             }
-            info->bp = (long long)vm->bp;
+            info->bp = (long long)VM_BP;
             info->offset = offset;
             info->size = size;
             info->scope_id = scope_id;
@@ -2124,12 +2282,12 @@ int vm_eval(JCC *vm) {
             // Operand: type size (for alignment check)
             if (!vm->enable_alignment_checks) {
                 // Alignment checking not enabled, skip
-                (void)*vm->pc++;  // Consume operand
+                (void)*VM_PC++;  // Consume operand
                 goto chka_done;
             }
 
-            size_t type_size = (size_t)*vm->pc++;
-            long long ptr = vm->ax;
+            size_t type_size = (size_t)*VM_PC++;
+            long long ptr = VM_AX;
 
             // Skip check for NULL
             if (ptr == 0) {
@@ -2144,7 +2302,7 @@ int vm_eval(JCC *vm) {
                 printf("Type size:     %zu bytes\n", type_size);
                 printf("Required alignment: %zu bytes\n", type_size);
                 printf("Current PC:    0x%llx (offset: %lld)\n",
-                       (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                       (long long)VM_PC, (long long)(VM_PC - vm->text_seg));
                 printf("=====================================\n");
                 return -1;
             }
@@ -2160,7 +2318,7 @@ int vm_eval(JCC *vm) {
                 goto chkpa_done;
             }
 
-            long long ptr = vm->ax;  // Result of pointer arithmetic
+            long long ptr = VM_AX;  // Result of pointer arithmetic
 
             // Skip check for NULL
             if (ptr == 0) {
@@ -2186,7 +2344,7 @@ int vm_eval(JCC *vm) {
                     printf("Result ptr:    0x%llx\n", ptr);
                     printf("Offset:        %lld bytes from base\n", ptr - info->base);
                     printf("Current PC:    0x%llx (offset: %lld)\n",
-                           (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                           (long long)VM_PC, (long long)(VM_PC - vm->text_seg));
                     printf("===============================================\n");
                     return -1;
                 }
@@ -2201,18 +2359,18 @@ int vm_eval(JCC *vm) {
             // Operands: origin_type, base, size (encoded as three immediate values)
             if (!vm->enable_provenance_tracking) {
                 // Provenance tracking not enabled, skip
-                (void)*vm->pc++;  // Consume origin_type operand
-                (void)*vm->pc++;  // Consume base operand
-                (void)*vm->pc++;  // Consume size operand
+                (void)*VM_PC++;  // Consume origin_type operand
+                (void)*VM_PC++;  // Consume base operand
+                (void)*VM_PC++;  // Consume size operand
                 goto markp_done;
             }
 
-            int origin_type = (int)*vm->pc++;  // 0=HEAP, 1=STACK, 2=GLOBAL
-            long long base = *vm->pc++;
-            size_t size = (size_t)*vm->pc++;
+            int origin_type = (int)*VM_PC++;  // 0=HEAP, 1=STACK, 2=GLOBAL
+            long long base = *VM_PC++;
+            size_t size = (size_t)*VM_PC++;
 
             // ax contains the pointer value
-            long long ptr = vm->ax;
+            long long ptr = VM_AX;
 
             // Create ProvenanceInfo
             ProvenanceInfo *info = malloc(sizeof(ProvenanceInfo));
@@ -2233,14 +2391,14 @@ int vm_eval(JCC *vm) {
             // Mark scope entry - activate all variables in this scope
             // Operand: scope_id
             if (!vm->enable_stack_instrumentation) {
-                (void)*vm->pc++;  // Consume scope_id operand
+                (void)*VM_PC++;  // Consume scope_id operand
                 goto scopein_done;
             }
 
-            int scope_id = (int)*vm->pc++;
+            int scope_id = (int)*VM_PC++;
 
             if (vm->debug_vm) {
-                printf("SCOPEIN: entering scope %d (bp=0x%llx)\n", scope_id, (long long)vm->bp);
+                printf("SCOPEIN: entering scope %d (bp=0x%llx)\n", scope_id, (long long)VM_BP);
             }
 
             // Iterate through all metadata entries and activate those matching this scope
@@ -2249,7 +2407,7 @@ int vm_eval(JCC *vm) {
                     StackVarMeta *meta = (StackVarMeta *)vm->stack_var_meta.buckets[i].val;
                     if (meta && meta->scope_id == scope_id) {
                         meta->is_alive = 1;
-                        meta->bp = (long long)vm->bp;
+                        meta->bp = (long long)VM_BP;
                         if (vm->debug_vm) {
                             printf("  Activated variable '%s' at bp%+lld\n", meta->name, meta->offset);
                         }
@@ -2264,21 +2422,21 @@ int vm_eval(JCC *vm) {
             // Mark scope exit - deactivate variables and detect dangling pointers
             // Operand: scope_id
             if (!vm->enable_stack_instrumentation) {
-                (void)*vm->pc++;  // Consume scope_id operand
+                (void)*VM_PC++;  // Consume scope_id operand
                 goto scopeout_done;
             }
 
-            int scope_id = (int)*vm->pc++;
+            int scope_id = (int)*VM_PC++;
 
             if (vm->debug_vm) {
-                printf("SCOPEOUT: exiting scope %d (bp=0x%llx)\n", scope_id, (long long)vm->bp);
+                printf("SCOPEOUT: exiting scope %d (bp=0x%llx)\n", scope_id, (long long)VM_BP);
             }
 
             // Iterate through all metadata entries and deactivate those matching this scope
             for (int i = 0; i < vm->stack_var_meta.capacity; i++) {
                 if (vm->stack_var_meta.buckets[i].key != NULL) {
                     StackVarMeta *meta = (StackVarMeta *)vm->stack_var_meta.buckets[i].val;
-                    if (meta && meta->scope_id == scope_id && meta->bp == (long long)vm->bp) {
+                    if (meta && meta->scope_id == scope_id && meta->bp == (long long)VM_BP) {
                         meta->is_alive = 0;
                         if (vm->debug_vm) {
                             printf("  Deactivated variable '%s' at bp%+lld (reads=%lld, writes=%lld)\n",
@@ -2293,14 +2451,14 @@ int vm_eval(JCC *vm) {
                 for (int i = 0; i < vm->stack_ptrs.capacity; i++) {
                     if (vm->stack_ptrs.buckets[i].key != NULL) {
                         StackPtrInfo *ptr_info = (StackPtrInfo *)vm->stack_ptrs.buckets[i].val;
-                        if (ptr_info && ptr_info->scope_id == scope_id && ptr_info->bp == (long long)vm->bp) {
+                        if (ptr_info && ptr_info->scope_id == scope_id && ptr_info->bp == (long long)VM_BP) {
                             if (vm->stack_instr_errors) {
                                 printf("\n========== DANGLING POINTER DETECTED ==========\n");
                                 printf("Pointer to stack variable in scope %d still exists\n", scope_id);
                                 printf("Pointer: 0x%s (bp=%+lld)\n", vm->stack_ptrs.buckets[i].key, ptr_info->offset);
                                 printf("Scope is now exiting - this pointer will dangle\n");
                                 printf("Current PC: 0x%llx (offset: %lld)\n",
-                                       (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                                       (long long)VM_PC, (long long)(VM_PC - vm->text_seg));
                                 printf("==============================================\n");
                                 return -1;
                             } else if (vm->debug_vm) {
@@ -2318,11 +2476,11 @@ int vm_eval(JCC *vm) {
             // Check variable liveness before access
             // Operand: offset (bp-relative)
             if (!vm->enable_stack_instrumentation) {
-                (void)*vm->pc++;  // Consume offset operand
+                (void)*VM_PC++;  // Consume offset operand
                 goto chkl_done;
             }
 
-            long long offset = *vm->pc++;
+            long long offset = *VM_PC++;
 
             // Look up variable metadata
             // Use integer key API to avoid snprintf overhead
@@ -2330,16 +2488,16 @@ int vm_eval(JCC *vm) {
 
             if (meta) {
                 // Check if variable matches current BP (different frames shouldn't interfere)
-                if (meta->bp != (long long)vm->bp && meta->bp != 0) {
+                if (meta->bp != (long long)VM_BP && meta->bp != 0) {
                     // Different frame - this is use after function return
                     if (vm->stack_instr_errors) {
                         printf("\n========== USE AFTER RETURN DETECTED ==========\n");
                         printf("Variable '%s' at bp%+lld accessed after function return\n",
                                meta->name, meta->offset);
                         printf("Variable BP:  0x%llx\n", meta->bp);
-                        printf("Current BP:   0x%llx\n", (long long)vm->bp);
+                        printf("Current BP:   0x%llx\n", (long long)VM_BP);
                         printf("Current PC:   0x%llx (offset: %lld)\n",
-                               (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                               (long long)VM_PC, (long long)(VM_PC - vm->text_seg));
                         printf("==============================================\n");
                         return -1;
                     }
@@ -2353,7 +2511,7 @@ int vm_eval(JCC *vm) {
                                meta->name, meta->offset);
                         printf("Scope ID: %d\n", meta->scope_id);
                         printf("Current PC: 0x%llx (offset: %lld)\n",
-                               (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                               (long long)VM_PC, (long long)(VM_PC - vm->text_seg));
                         printf("=============================================\n");
                         return -1;
                     } else if (vm->debug_vm) {
@@ -2369,17 +2527,17 @@ int vm_eval(JCC *vm) {
             // Mark variable read access
             // Operand: offset (bp-relative)
             if (!vm->enable_stack_instrumentation) {
-                (void)*vm->pc++;  // Consume offset operand
+                (void)*VM_PC++;  // Consume offset operand
                 goto markr_done;
             }
 
-            long long offset = *vm->pc++;
+            long long offset = *VM_PC++;
 
             // Look up variable metadata
             // Use integer key API to avoid snprintf overhead
             StackVarMeta *meta = (StackVarMeta *)hashmap_get_int(&vm->stack_var_meta, offset);
 
-            if (meta && meta->bp == (long long)vm->bp) {
+            if (meta && meta->bp == (long long)VM_BP) {
                 meta->read_count++;
                 if (vm->debug_vm) {
                     printf("MARKR: '%s' read (count=%lld)\n", meta->name, meta->read_count);
@@ -2393,17 +2551,17 @@ int vm_eval(JCC *vm) {
             // Mark variable write access
             // Operand: offset (bp-relative)
             if (!vm->enable_stack_instrumentation) {
-                (void)*vm->pc++;  // Consume offset operand
+                (void)*VM_PC++;  // Consume offset operand
                 goto markw_done;
             }
 
-            long long offset = *vm->pc++;
+            long long offset = *VM_PC++;
 
             // Look up variable metadata
             // Use integer key API to avoid snprintf overhead
             StackVarMeta *meta = (StackVarMeta *)hashmap_get_int(&vm->stack_var_meta, offset);
 
-            if (meta && meta->bp == (long long)vm->bp) {
+            if (meta && meta->bp == (long long)VM_BP) {
                 meta->write_count++;
                 // Mark as initialized on first write
                 if (!meta->initialized) {
@@ -2422,7 +2580,7 @@ int vm_eval(JCC *vm) {
         else if (op == SETJMP) {
             // setjmp: Save execution context to jmp_buf and return 0
             // The jmp_buf address is in ax (not on stack)
-            long long *jmp_buf_ptr = (long long *)vm->ax;
+            long long *jmp_buf_ptr = (long long *)VM_AX;
 
             // Save VM state to jmp_buf
             // [0] = pc (return address - where longjmp will jump back to)
@@ -2430,21 +2588,21 @@ int vm_eval(JCC *vm) {
             // [2] = bp (base pointer)
             // [3] = stack value at sp (for restoration)
             // [4] = reserved
-            jmp_buf_ptr[0] = (long long)vm->pc;      // Save return address
-            jmp_buf_ptr[1] = (long long)vm->sp;      // Save stack pointer
-            jmp_buf_ptr[2] = (long long)vm->bp;      // Save base pointer
-            jmp_buf_ptr[3] = *vm->sp;                 // Save value at top of stack!
+            jmp_buf_ptr[0] = (long long)VM_PC;      // Save return address
+            jmp_buf_ptr[1] = (long long)VM_SP;      // Save stack pointer
+            jmp_buf_ptr[2] = (long long)VM_BP;      // Save base pointer
+            jmp_buf_ptr[3] = *VM_SP;                 // Save value at top of stack!
             jmp_buf_ptr[4] = 0;                       // Reserved
 
             // setjmp returns 0 when called directly
-            vm->ax = 0;
+            VM_AX = 0;
         }
 
         else if (op == LONGJMP) {
             // longjmp: Restore execution context from jmp_buf and return val
             // Stack top-to-bottom: [env, val] (env pushed last, so on top)
-            long long *jmp_buf_ptr = (long long *)*vm->sp++;  // Pop jmp_buf pointer (env)
-            int val = (int)*vm->sp++;                          // Pop return value
+            long long *jmp_buf_ptr = (long long *)*VM_SP++;  // Pop jmp_buf pointer (env)
+            int val = (int)*VM_SP++;                          // Pop return value
 
             // Check if jmp_buf_ptr is valid
             if (jmp_buf_ptr == NULL || jmp_buf_ptr == (void*)0) {
@@ -2452,15 +2610,15 @@ int vm_eval(JCC *vm) {
             }
 
             // Restore VM state from jmp_buf
-            vm->pc = (long long *)jmp_buf_ptr[0];     // Restore program counter
-            vm->sp = (long long *)jmp_buf_ptr[1];     // Restore stack pointer
-            vm->bp = (long long *)jmp_buf_ptr[2];     // Restore base pointer
+            VM_PC = (long long *)jmp_buf_ptr[0];     // Restore program counter
+            VM_SP = (long long *)jmp_buf_ptr[1];     // Restore stack pointer
+            VM_BP = (long long *)jmp_buf_ptr[2];     // Restore base pointer
 
             // Restore the stack value that was saved!
-            *vm->sp = jmp_buf_ptr[3];
+            *VM_SP = jmp_buf_ptr[3];
 
             // Set return value (convert 0 to 1 per C standard)
-            vm->ax = (val == 0) ? 1 : val;
+            VM_AX = (val == 0) ? 1 : val;
         }
 
         // ========== THREADING OPCODES ==========
@@ -2469,15 +2627,15 @@ int vm_eval(JCC *vm) {
         else if (op == THRCREATE) {
             // Create new VM thread
             // Stack: [arg1, arg2, ..., argN, func_addr, num_args]
-            int num_args = (int)*vm->sp++;
-            long long func_addr = *vm->sp++;
+            int num_args = (int)*VM_SP++;
+            long long func_addr = *VM_SP++;
 
             // Collect arguments from stack
             long long *args = NULL;
             if (num_args > 0) {
                 args = (long long *)malloc(num_args * sizeof(long long));
                 for (int i = num_args - 1; i >= 0; i--) {
-                    args[i] = *vm->sp++;
+                    args[i] = *VM_SP++;
                 }
             }
 
@@ -2485,7 +2643,7 @@ int vm_eval(JCC *vm) {
             VMThread *new_thread = vm_thread_allocate(vm, func_addr, args, num_args);
             if (!new_thread) {
                 fprintf(stderr, "Failed to create thread\n");
-                vm->ax = 0;
+                VM_AX = 0;
                 if (args) free(args);
                 goto thrcreate_done;
             }
@@ -2495,7 +2653,7 @@ int vm_eval(JCC *vm) {
             if (result != 0) {
                 fprintf(stderr, "pthread_create failed: %d\n", result);
                 vm_thread_destroy(new_thread);
-                vm->ax = 0;
+                VM_AX = 0;
                 if (args) free(args);
                 goto thrcreate_done;
             }
@@ -2505,7 +2663,7 @@ int vm_eval(JCC *vm) {
             vm->threads = new_thread;
 
             // Return thread handle in ax
-            vm->ax = (long long)new_thread;
+            VM_AX = (long long)new_thread;
             if (args) free(args);
             thrcreate_done:;
         }
@@ -2513,11 +2671,11 @@ int vm_eval(JCC *vm) {
         else if (op == THRJOIN) {
             // Wait for thread completion
             // Stack: [thread_handle]
-            VMThread *join_thread = (VMThread *)*vm->sp++;
+            VMThread *join_thread = (VMThread *)*VM_SP++;
 
             if (!join_thread) {
                 fprintf(stderr, "THRJOIN: NULL thread handle\n");
-                vm->ax = -1;
+                VM_AX = -1;
                 goto thrjoin_done;
             }
 
@@ -2534,7 +2692,7 @@ int vm_eval(JCC *vm) {
             }
 
             // Return thread's exit code in ax
-            vm->ax = join_thread->exit_code;
+            VM_AX = join_thread->exit_code;
 
             // Remove from thread list and clean up
             VMThread **ptr = &vm->threads;
@@ -2552,13 +2710,13 @@ int vm_eval(JCC *vm) {
         else if (op == THRSELF) {
             // Return current thread handle
             VMThread *current = vm_thread_get_current(vm);
-            vm->ax = (long long)current;
+            VM_AX = (long long)current;
         }
 
         else if (op == THREXIT) {
             // Exit current thread
             // Stack: [exit_code]
-            int exit_code = (int)*vm->sp++;
+            int exit_code = (int)*VM_SP++;
 
             VMThread *current = vm_thread_get_current(vm);
             if (current && current != vm->main_thread) {
@@ -2574,7 +2732,7 @@ int vm_eval(JCC *vm) {
                 pthread_exit(NULL);
             } else {
                 // Main thread: just return normally
-                vm->ax = exit_code;
+                VM_AX = exit_code;
             }
         }
 
@@ -2596,27 +2754,258 @@ int vm_eval(JCC *vm) {
         else if (op == CAS) {
             // Compare-and-swap
             // Stack (top to bottom): [expected, addr]  ax = new_value
-            long long expected = *vm->sp++;                // Pop expected (top of stack)
-            long long *addr = (long long *)*vm->sp++;      // Pop addr (next on stack)
-            long long new_val = vm->ax;
+            long long expected = *VM_SP++;                // Pop expected (top of stack)
+            long long *addr = (long long *)*VM_SP++;      // Pop addr (next on stack)
+            long long new_val = VM_AX;
             long long current = *addr;
 
             if (current == expected) {
                 *addr = new_val;
-                vm->ax = 1;  // Success
+                VM_AX = 1;  // Success
             } else {
-                vm->ax = 0;  // Failure
+                VM_AX = 0;  // Failure
             }
         }
         else if (op == EXCH) {
             // Atomic exchange
             // Stack: [addr]  ax = new_value
-            long long *addr = (long long *)*vm->sp++;
-            long long new_val = vm->ax;
+            long long *addr = (long long *)*VM_SP++;
+            long long new_val = VM_AX;
             long long old_val = *addr;
             *addr = new_val;
-            vm->ax = old_val;  // Return old value
+            VM_AX = old_val;  // Return old value
         }
+        else if (op == TLSADDR) {
+            // Load thread-local variable address
+            long long tls_offset = *VM_PC++;
+
+#ifndef JCC_NO_THREADS
+            VMThread *thread = vm_thread_get_current(vm);
+            if (thread && thread->tls_seg) {
+                VM_AX = (long long)(thread->tls_seg + tls_offset);
+            } else {
+                printf("TLS access but thread has no TLS segment\n");
+                return -1;
+            }
+#else
+            // Single-threaded mode: use main thread TLS
+            if (vm->main_thread && vm->main_thread->tls_seg) {
+                VM_AX = (long long)(vm->main_thread->tls_seg + tls_offset);
+            } else {
+                printf("TLS access but main thread has no TLS segment\n");
+                return -1;
+            }
+#endif
+        }
+
+#ifndef JCC_NO_THREADS
+        // Mutex operations
+        else if (op == MTXINIT) {
+            // Initialize mutex: Stack = [mutex_addr]
+            long long *mutex_addr = (long long *)*VM_SP++;
+
+            // Check if already initialized
+            VMMutex *m = (VMMutex *)hashmap_get(&vm->mutexes, (char *)mutex_addr);
+            if (m && m->initialized) {
+                VM_AX = 0;  // Already initialized (POSIX allows this)
+            } else {
+                // Create new VMMutex
+                if (!m) {
+                    m = (VMMutex *)calloc(1, sizeof(VMMutex));
+                    hashmap_put(&vm->mutexes, (char *)mutex_addr, m);
+                }
+                pthread_mutex_init(&m->mutex, NULL);
+                m->initialized = 1;
+                m->owner_thread = 0;
+                VM_AX = 0;  // Success
+            }
+        }
+        else if (op == MTXLOCK) {
+            // Lock mutex: Stack = [mutex_addr]
+            long long *mutex_addr = (long long *)*VM_SP++;
+
+            // Get or create mutex (lazy initialization for static initializers)
+            VMMutex *m = (VMMutex *)hashmap_get(&vm->mutexes, (char *)mutex_addr);
+            if (!m || !m->initialized) {
+                // Lazy initialization
+                if (!m) {
+                    m = (VMMutex *)calloc(1, sizeof(VMMutex));
+                    hashmap_put(&vm->mutexes, (char *)mutex_addr, m);
+                }
+                pthread_mutex_init(&m->mutex, NULL);
+                m->initialized = 1;
+                m->owner_thread = 0;
+            }
+
+            // Release GIL before blocking (if enabled)
+            if (vm->enable_gil) gil_release(&vm->gil);
+
+            pthread_mutex_lock(&m->mutex);
+
+            // Reacquire GIL after unblocking
+            if (vm->enable_gil) gil_acquire(&vm->gil);
+
+            m->owner_thread = (long long)pthread_self();
+            VM_AX = 0;  // Success
+        }
+        else if (op == MTXUNLOCK) {
+            // Unlock mutex: Stack = [mutex_addr]
+            long long *mutex_addr = (long long *)*VM_SP++;
+
+            VMMutex *m = (VMMutex *)hashmap_get(&vm->mutexes, (char *)mutex_addr);
+            if (!m || !m->initialized) {
+                printf("pthread_mutex_unlock: mutex not initialized\n");
+                VM_AX = 22;  // EINVAL
+            } else {
+                m->owner_thread = 0;
+                pthread_mutex_unlock(&m->mutex);
+                VM_AX = 0;  // Success
+            }
+        }
+        else if (op == MTXDESTROY) {
+            // Destroy mutex: Stack = [mutex_addr]
+            long long *mutex_addr = (long long *)*VM_SP++;
+
+            VMMutex *m = (VMMutex *)hashmap_get(&vm->mutexes, (char *)mutex_addr);
+            if (m && m->initialized) {
+                pthread_mutex_destroy(&m->mutex);
+                m->initialized = 0;
+                // Note: we keep the VMMutex struct in hashmap (could be reinitialized)
+                VM_AX = 0;  // Success
+            } else {
+                VM_AX = 22;  // EINVAL
+            }
+        }
+        else if (op == MTXTRY) {
+            // Try lock mutex (non-blocking): Stack = [mutex_addr]
+            long long *mutex_addr = (long long *)*VM_SP++;
+
+            // Get or create mutex (lazy initialization)
+            VMMutex *m = (VMMutex *)hashmap_get(&vm->mutexes, (char *)mutex_addr);
+            if (!m || !m->initialized) {
+                // Lazy initialization
+                if (!m) {
+                    m = (VMMutex *)calloc(1, sizeof(VMMutex));
+                    hashmap_put(&vm->mutexes, (char *)mutex_addr, m);
+                }
+                pthread_mutex_init(&m->mutex, NULL);
+                m->initialized = 1;
+                m->owner_thread = 0;
+            }
+
+            int result = pthread_mutex_trylock(&m->mutex);
+            if (result == 0) {
+                // Acquired lock
+                m->owner_thread = (long long)pthread_self();
+                VM_AX = 0;  // Success
+            } else {
+                VM_AX = result;  // EBUSY (16) if already locked
+            }
+        }
+
+        // Condition variable operations
+        else if (op == CVINIT) {
+            // Initialize condvar: Stack = [cond_addr]
+            long long *cond_addr = (long long *)*VM_SP++;
+
+            VMCondVar *cv = (VMCondVar *)hashmap_get(&vm->condvars, (char *)cond_addr);
+            if (cv && cv->initialized) {
+                VM_AX = 0;  // Already initialized
+            } else {
+                if (!cv) {
+                    cv = (VMCondVar *)calloc(1, sizeof(VMCondVar));
+                    hashmap_put(&vm->condvars, (char *)cond_addr, cv);
+                }
+                pthread_cond_init(&cv->cond, NULL);
+                cv->initialized = 1;
+                VM_AX = 0;  // Success
+            }
+        }
+        else if (op == CVWAIT) {
+            // Condition variable wait: Stack = [mutex_addr, cond_addr]
+            long long *cond_addr = (long long *)*VM_SP++;
+            long long *mutex_addr = (long long *)*VM_SP++;
+
+            // Get or create condvar (lazy initialization)
+            VMCondVar *cv = (VMCondVar *)hashmap_get(&vm->condvars, (char *)cond_addr);
+            if (!cv || !cv->initialized) {
+                if (!cv) {
+                    cv = (VMCondVar *)calloc(1, sizeof(VMCondVar));
+                    hashmap_put(&vm->condvars, (char *)cond_addr, cv);
+                }
+                pthread_cond_init(&cv->cond, NULL);
+                cv->initialized = 1;
+            }
+
+            // Get mutex
+            VMMutex *m = (VMMutex *)hashmap_get(&vm->mutexes, (char *)mutex_addr);
+            if (!m || !m->initialized) {
+                printf("pthread_cond_wait: mutex not initialized\n");
+                VM_AX = 22;  // EINVAL
+            } else {
+                // Release GIL before blocking (pthread_cond_wait handles mutex atomically)
+                if (vm->enable_gil) gil_release(&vm->gil);
+
+                m->owner_thread = 0;  // Will be released by pthread_cond_wait
+                pthread_cond_wait(&cv->cond, &m->mutex);
+                m->owner_thread = (long long)pthread_self();  // Reacquired by pthread_cond_wait
+
+                // Reacquire GIL after unblocking
+                if (vm->enable_gil) gil_acquire(&vm->gil);
+
+                VM_AX = 0;  // Success
+            }
+        }
+        else if (op == CVSIGNAL) {
+            // Signal one waiter: Stack = [cond_addr]
+            long long *cond_addr = (long long *)*VM_SP++;
+
+            VMCondVar *cv = (VMCondVar *)hashmap_get(&vm->condvars, (char *)cond_addr);
+            if (!cv || !cv->initialized) {
+                // Lazy initialization (signal on uninitialized condvar is no-op in POSIX)
+                if (!cv) {
+                    cv = (VMCondVar *)calloc(1, sizeof(VMCondVar));
+                    hashmap_put(&vm->condvars, (char *)cond_addr, cv);
+                }
+                pthread_cond_init(&cv->cond, NULL);
+                cv->initialized = 1;
+            }
+
+            pthread_cond_signal(&cv->cond);
+            VM_AX = 0;  // Success
+        }
+        else if (op == CVBCAST) {
+            // Broadcast to all waiters: Stack = [cond_addr]
+            long long *cond_addr = (long long *)*VM_SP++;
+
+            VMCondVar *cv = (VMCondVar *)hashmap_get(&vm->condvars, (char *)cond_addr);
+            if (!cv || !cv->initialized) {
+                // Lazy initialization
+                if (!cv) {
+                    cv = (VMCondVar *)calloc(1, sizeof(VMCondVar));
+                    hashmap_put(&vm->condvars, (char *)cond_addr, cv);
+                }
+                pthread_cond_init(&cv->cond, NULL);
+                cv->initialized = 1;
+            }
+
+            pthread_cond_broadcast(&cv->cond);
+            VM_AX = 0;  // Success
+        }
+        else if (op == CVDESTROY) {
+            // Destroy condvar: Stack = [cond_addr]
+            long long *cond_addr = (long long *)*VM_SP++;
+
+            VMCondVar *cv = (VMCondVar *)hashmap_get(&vm->condvars, (char *)cond_addr);
+            if (cv && cv->initialized) {
+                pthread_cond_destroy(&cv->cond);
+                cv->initialized = 0;
+                VM_AX = 0;  // Success
+            } else {
+                VM_AX = 22;  // EINVAL
+            }
+        }
+#endif
 
         else {
             printf("unknown instruction:%d\n", op);
@@ -2667,7 +3056,9 @@ void cc_init(JCC *vm, bool enable_debugger) {
         // Enable threading by default
         vm->enable_threading = 1;
     }
-    vm->enable_gil = saved_enable_gil;  // Keep disabled unless explicitly enabled
+    // Enable GIL by default when threading is enabled (required for pthread API)
+    // GIL protects concurrent access to VM registers during state swapping
+    vm->enable_gil = saved_enable_gil ? saved_enable_gil : (vm->enable_threading ? 1 : 0);
     vm->gil_check_interval = saved_gil_check_interval ? saved_gil_check_interval : 100;
 #endif
 
@@ -2748,25 +3139,50 @@ void cc_init(JCC *vm, bool enable_debugger) {
         // Create thread-local storage key
         pthread_key_create(&vm->thread_key, NULL);
 
-        // Allocate main thread structure
-        vm->main_thread = vm_thread_allocate(vm, 0, NULL, 0);
-        if (!vm->main_thread) {
-            fprintf(stderr, "Failed to create main thread\n");
-            exit(1);
-        }
-
-        // Note: stack_seg will be allocated later during compilation
-        // We'll update main_thread's stack pointers after stack allocation
-
-        // Set main thread as current
-        vm_thread_set_current(vm, vm->main_thread);
-
         vm->threads = NULL;  // Empty thread list initially
+
+        // Initialize mutex/condvar tracking hashmaps
+        vm->mutexes.capacity = 0;
+        vm->mutexes.buckets = NULL;
+        vm->mutexes.used = 0;
+
+        vm->condvars.capacity = 0;
+        vm->condvars.buckets = NULL;
+        vm->condvars.used = 0;
     } else {
-        // Single-threaded mode: use VM's direct fields
-        vm->main_thread = NULL;
         vm->threads = NULL;
+
+        // Initialize mutex/condvar hashmaps even when threading disabled
+        vm->mutexes.capacity = 0;
+        vm->mutexes.buckets = NULL;
+        vm->mutexes.used = 0;
+
+        vm->condvars.capacity = 0;
+        vm->condvars.buckets = NULL;
+        vm->condvars.used = 0;
     }
+
+    // Always allocate main thread structure for TLS support
+    // (needed even in single-threaded mode for _Thread_local variables)
+    vm->main_thread = vm_thread_allocate(vm, 0, NULL, 0);
+    if (!vm->main_thread) {
+        fprintf(stderr, "Failed to create main thread\n");
+        exit(1);
+    }
+
+    // Note: stack_seg will be allocated later during compilation
+    // We'll update main_thread's stack pointers after stack allocation
+
+    // Set main thread as current (if threading enabled)
+    if (vm->enable_threading) {
+        vm_thread_set_current(vm, vm->main_thread);
+    }
+
+    // Set global VM pointer for pthread FFI wrappers
+    __global_vm = vm;
+
+    // Register pthread API functions
+    register_pthread_api(vm);
 #endif
 
     if (enable_debugger) {
@@ -2909,6 +3325,36 @@ void cc_destroy(JCC *vm) {
 
         // Delete thread-local storage key
         pthread_key_delete(vm->thread_key);
+
+        // Clean up mutex tracking hashmap
+        if (vm->mutexes.buckets) {
+            for (int i = 0; i < vm->mutexes.capacity; i++) {
+                HashEntry *entry = &vm->mutexes.buckets[i];
+                if (entry->val) {
+                    VMMutex *m = (VMMutex *)entry->val;
+                    if (m->initialized) {
+                        pthread_mutex_destroy(&m->mutex);
+                    }
+                    free(m);
+                }
+            }
+            free(vm->mutexes.buckets);
+        }
+
+        // Clean up condvar tracking hashmap
+        if (vm->condvars.buckets) {
+            for (int i = 0; i < vm->condvars.capacity; i++) {
+                HashEntry *entry = &vm->condvars.buckets[i];
+                if (entry->val) {
+                    VMCondVar *cv = (VMCondVar *)entry->val;
+                    if (cv->initialized) {
+                        pthread_cond_destroy(&cv->cond);
+                    }
+                    free(cv);
+                }
+            }
+            free(vm->condvars.buckets);
+        }
     }
 #endif
 }
@@ -3184,7 +3630,15 @@ int cc_run(JCC *vm, int argc, char **argv) {
     if (!vm || !vm->text_seg) {
         error("VM not initialized - call cc_compile first");
     }
- 
+
+#ifndef JCC_NO_THREADS
+    // Initialize TLS variables for main thread
+    // (done here after codegen, when all globals are known)
+    if (vm->main_thread) {
+        init_thread_tls(vm, vm->main_thread);
+    }
+#endif
+
     // Get entry point (main function) from text_seg[0]
     long long main_addr = vm->text_seg[0];
     
@@ -3212,5 +3666,37 @@ int cc_run(JCC *vm, int argc, char **argv) {
     *--vm->sp = argc;             // argc parameter (will be at bp+2 after ENT)
     *--vm->sp = 0;                // Return address = NULL (signals exit, will be at bp+1 after ENT)
 
-    return vm->enable_debugger ? debugger_run(vm, argc, argv) : vm_eval(vm);
+#ifndef JCC_NO_THREADS
+    // Sync main thread state with VM registers
+    // CRITICAL: main_thread was allocated in cc_init with stale pc/sp/bp values
+    // Now that we've set up the actual runtime state, copy it to main_thread
+    if (vm->main_thread) {
+        vm->main_thread->pc = vm->pc;
+        vm->main_thread->sp = vm->sp;
+        vm->main_thread->bp = vm->bp;
+        vm->main_thread->ax = 0;
+        vm->main_thread->fax = 0;
+        // Main thread uses shared VM stack, not its own allocated stack
+        vm->main_thread->stack_seg = vm->stack_seg;
+    }
+#endif
+
+    // Acquire GIL for main thread (if enabled)
+    if (vm->enable_gil) {
+        gil_acquire(&vm->gil);
+    }
+
+    int result = vm->enable_debugger ? debugger_run(vm, argc, argv) : vm_eval(vm);
+
+    fprintf(stderr, "DEBUG cc_run: vm_eval returned with result=%d\n", result);
+
+    // Release GIL for main thread (if enabled)
+    if (vm->enable_gil) {
+        fprintf(stderr, "DEBUG cc_run: About to release GIL\n");
+        gil_release(&vm->gil);
+        fprintf(stderr, "DEBUG cc_run: GIL released\n");
+    }
+
+    fprintf(stderr, "DEBUG cc_run: Returning result=%d\n", result);
+    return result;
 }

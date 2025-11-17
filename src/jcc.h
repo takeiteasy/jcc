@@ -99,6 +99,8 @@ typedef enum {
     // Atomic operations
     CAS,      // Compare-and-swap
     EXCH,     // Atomic exchange
+    // Thread-Local Storage
+    TLSADDR,  // Load TLS variable address: ax = tls_seg + operand
 #ifndef JCC_NO_THREADS
     // Threading opcodes
     THRCREATE, // Create new VM thread
@@ -107,6 +109,17 @@ typedef enum {
     THREXIT,   // Exit current thread
     GILREL,    // Release GIL manually
     GILACQ,    // Acquire GIL manually
+    // Synchronization primitives
+    MTXINIT,    // Initialize mutex
+    MTXLOCK,    // Lock mutex
+    MTXUNLOCK,  // Unlock mutex
+    MTXDESTROY, // Destroy mutex
+    MTXTRY,     // Try lock (non-blocking)
+    CVINIT,     // Initialize condition variable
+    CVWAIT,     // Condition variable wait
+    CVSIGNAL,   // Signal one waiter
+    CVBCAST,    // Broadcast to all waiters
+    CVDESTROY,  // Destroy condition variable
 #endif
 } JCC_OP;
 
@@ -600,6 +613,30 @@ typedef struct {
 } GIL;
 
 /*!
+ @struct VMMutex
+ @abstract VM-managed pthread mutex with tracking for safety features.
+ @field mutex The underlying pthread mutex
+ @field initialized Flag indicating if mutex has been initialized
+ @field owner_thread Thread currently holding the mutex (0 if unlocked)
+ */
+typedef struct {
+    pthread_mutex_t mutex;       // The mutex
+    int initialized;             // Initialization flag
+    long long owner_thread;      // Current owner (pthread_t as long long, 0 if unlocked)
+} VMMutex;
+
+/*!
+ @struct VMCondVar
+ @abstract VM-managed pthread condition variable.
+ @field cond The underlying pthread condition variable
+ @field initialized Flag indicating if condvar has been initialized
+ */
+typedef struct {
+    pthread_cond_t cond;         // The condition variable
+    int initialized;             // Initialization flag
+} VMCondVar;
+
+/*!
  @struct VMThread
  @abstract Represents a single VM thread with thread-local execution state.
  @field thread_id OS thread identifier
@@ -1049,6 +1086,7 @@ struct JCC {
     // Code generation state
     int label_counter;          // For generating unique labels
     int local_offset;           // Current local variable offset
+    int tls_offset;             // Current TLS variable offset
 
 #ifndef MAX_CALLS
 #define MAX_CALLS 1024
@@ -1107,6 +1145,8 @@ struct JCC {
     pthread_key_t thread_key;          // Thread-local storage key for VMThread*
     int gil_check_interval;            // Yield GIL every N instructions (default: 100)
     VMThread *main_thread;             // Main thread (NULL if threading disabled)
+    HashMap mutexes;                   // Tracks pthread_mutex_t* → VMMutex* mappings
+    HashMap condvars;                  // Tracks pthread_cond_t* → VMCondVar* mappings
 #endif
 };
 
@@ -1130,6 +1170,25 @@ void cc_enable_threading(JCC *vm);
  @param vm Pointer to an uninitialized JCC struct.
 */
 void cc_disable_threading(JCC *vm);
+
+/*!
+ @function register_pthread_api
+ @abstract Register pthread.h API functions with the VM
+ @discussion Registers all pthread_* functions as foreign C functions,
+             making them callable from compiled C code. Called automatically
+             during cc_init() when threading is enabled.
+ @param vm Pointer to initialized JCC struct.
+ */
+void register_pthread_api(JCC *vm);
+
+// Internal threading functions (used by threading.c)
+void gil_acquire(GIL *gil);
+void gil_release(GIL *gil);
+VMThread *vm_thread_get_current(JCC *vm);
+void vm_thread_set_current(JCC *vm, VMThread *thread);
+VMThread *vm_thread_allocate(JCC *vm, long long entry_point, long long *args, int num_args);
+void vm_thread_destroy(VMThread *thread);
+void *vm_thread_entry(void *arg);
 
 /*!
  @function cc_enable_gil
