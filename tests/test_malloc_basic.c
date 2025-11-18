@@ -1,5 +1,5 @@
 // Simple malloc/free test without coalescing
-int malloc(int size);
+void *malloc(int size);
 void free(void *ptr);
 
 int main() {
@@ -12,5 +12,5 @@ int main() {
     if (p2 == 0) return 2;
 
     free(p2);
-    return 0;
+    return 42;
 }

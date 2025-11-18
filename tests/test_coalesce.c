@@ -2,7 +2,7 @@
 // Allocates several blocks, frees them in a pattern that creates
 // fragmentation, then verifies coalescing merges adjacent blocks
 
-int malloc(int size);
+void *malloc(int size);
 void free(void *ptr);
 
 int main() {
@@ -34,5 +34,5 @@ int main() {
     }
 
     free(large);
-    return 0;  // Success
+    return 42;  // Success
 }

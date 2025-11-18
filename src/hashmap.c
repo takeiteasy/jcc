@@ -77,8 +77,8 @@ static void rehash(HashMap *map) {
     HashMap map2 = {};
     map2.buckets = calloc(cap, sizeof(HashEntry));
     if (!map2.buckets) {
-        fprintf(stderr, "FATAL: calloc failed in rehash\n");
-        return;
+        fprintf(stderr, "FATAL: out of memory in HashMap rehash\n");
+        exit(1);  // Cannot continue without memory
     }
     map2.capacity = cap;
 
@@ -120,6 +120,10 @@ static HashEntry *get_entry(HashMap *map, char *key, int keylen) {
 static HashEntry *get_or_insert_entry(HashMap *map, char *key, int keylen) {
     if (!map->buckets) {
         map->buckets = calloc(INIT_SIZE, sizeof(HashEntry));
+        if (!map->buckets) {
+            fprintf(stderr, "FATAL: out of memory in HashMap initialization\n");
+            exit(1);
+        }
         map->capacity = INIT_SIZE;
     } else if ((map->used * 100) / map->capacity >= HIGH_WATERMARK) {
         rehash(map);
@@ -208,6 +212,10 @@ static HashEntry *get_entry_int(HashMap *map, long long key) {
 static HashEntry *get_or_insert_entry_int(HashMap *map, long long key) {
     if (!map->buckets) {
         map->buckets = calloc(INIT_SIZE, sizeof(HashEntry));
+        if (!map->buckets) {
+            fprintf(stderr, "FATAL: out of memory in HashMap initialization\n");
+            exit(1);
+        }
         map->capacity = INIT_SIZE;
     } else if ((map->used * 100) / map->capacity >= HIGH_WATERMARK) {
         rehash(map);
@@ -298,6 +306,10 @@ int hashmap_count_if(HashMap *map, HashMapIterator predicate, void *user_data) {
 
 void hashmap_test(void) {
     HashMap *map = calloc(1, sizeof(HashMap));
+    if (!map) {
+        fprintf(stderr, "FATAL: out of memory in hashmap_test\n");
+        exit(1);
+    }
 
     for (int i = 0; i < 5000; i++)
         hashmap_put(map, format("key %d", i), (void *)(size_t)i);
