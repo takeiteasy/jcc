@@ -4,3 +4,6 @@
 jcc.exe
 jcc
 docs/*.md
+*.dSYM
+*~
+*.bak
