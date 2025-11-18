@@ -551,9 +551,13 @@ Token *tokenize(JCC *vm, File *file) {
     vm->at_bol = true;
     vm->has_space = false;
 
+    // State tracking for #include directive to preserve // in URLs
+    bool after_include_directive = false;  // True after we see #include
+    bool in_include_path = false;          // True when inside <...> or "..." of #include
+
     while (*p) {
-        // Skip line comments.
-        if (startswith(vm, p, "//")) {
+        // Skip line comments (but NOT inside #include paths where URLs may contain //)
+        if (startswith(vm, p, "//") && !in_include_path) {
             p += 2;
             while (*p != '\n')
                 p++;
@@ -561,8 +565,8 @@ Token *tokenize(JCC *vm, File *file) {
             continue;
         }
 
-        // Skip block comments.
-        if (startswith(vm, p, "/*")) {
+        // Skip block comments (also not inside #include paths)
+        if (startswith(vm, p, "/*") && !in_include_path) {
             char *q = strstr(p + 2, "*/");
             if (!q)
                 error_at(vm, p, "unclosed block comment");
@@ -576,6 +580,9 @@ Token *tokenize(JCC *vm, File *file) {
             p++;
             vm->at_bol = true;
             vm->has_space = false;
+            // Reset include directive state on newline
+            after_include_directive = false;
+            in_include_path = false;
             continue;
         }
 
@@ -666,11 +673,40 @@ Token *tokenize(JCC *vm, File *file) {
             continue;
         }
 
+        // Detect # at beginning of line (potential directive)
+        if (vm->at_bol && *p == '#') {
+            // Check if this is #include by peeking ahead
+            char *peek = p + 1;
+            while (isspace(*peek) && *peek != '\n') peek++;
+            if (strncmp(peek, "include", 7) == 0 &&
+                (peek[7] == '\0' || !isalnum(peek[7]) && peek[7] != '_')) {
+                after_include_directive = true;
+            }
+        }
+
+        // Track entering/exiting path in #include directive
+        // Handle both #include <...> and #include "..."
+        if (after_include_directive) {
+            if (*p == '<' || *p == '"') {
+                in_include_path = true;
+                after_include_directive = false;  // Clear the flag
+            }
+        }
+        if (in_include_path) {
+            if (*p == '>' || *p == '"') {
+                in_include_path = false;  // This char closes the path
+            }
+        }
+
         // Identifier or keyword
         int ident_len = read_ident(vm, p);
         if (ident_len) {
             cur = cur->next = new_token(vm, TK_IDENT, p, p + ident_len);
             p += cur->len;
+            // Check if we just tokenized "include" after #
+            if (after_include_directive && ident_len == 7 && strncmp(p - ident_len, "include", 7) == 0) {
+                // Keep the flag set, we'll look for < or " next
+            }
             continue;
         }
 

@@ -30,6 +30,34 @@ ifdef JCC_HAS_FFI
   endif
 endif
 
+# Optional libcurl support for URL-based #include directives
+# Enable with: make JCC_HAS_CURL=1 or export JCC_HAS_CURL=1
+# Disable with: make JCC_HAS_CURL=0
+ifdef JCC_HAS_CURL
+  ifneq ($(JCC_HAS_CURL),0)
+    CFLAGS += -DJCC_HAS_CURL=1
+    # Try pkg-config first, fallback to platform-specific paths
+    LIBCURL_CFLAGS := $(shell pkg-config --cflags libcurl 2>/dev/null)
+    LIBCURL_LDFLAGS := $(shell pkg-config --libs libcurl 2>/dev/null)
+
+    ifeq ($(LIBCURL_CFLAGS),)
+      # Fallback paths for common installations
+      ifeq ($(shell uname -s),Darwin)
+        # macOS with Homebrew (try both Intel and Apple Silicon paths)
+        LIBCURL_CFLAGS := -I/opt/homebrew/opt/curl/include -I/usr/local/opt/curl/include -I/opt/homebrew/include
+        LIBCURL_LDFLAGS := -L/opt/homebrew/opt/curl/lib -L/usr/local/opt/curl/lib -L/opt/homebrew/lib -lcurl
+      else
+        # Linux fallback paths
+        LIBCURL_CFLAGS := -I/usr/include -I/usr/local/include
+        LIBCURL_LDFLAGS := -L/usr/lib -L/usr/local/lib -lcurl
+      endif
+    endif
+
+    CFLAGS += $(LIBCURL_CFLAGS)
+    LDFLAGS += $(LIBCURL_LDFLAGS)
+  endif
+endif
+
 ifeq ($(OS),Windows_NT)
 	EXE := .EXE
 	DYLIB := .dll
