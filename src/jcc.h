@@ -1023,6 +1023,7 @@ struct JCC {
     HashMap macros;
     CondIncl *cond_incl;
     HashMap pragma_once;
+    HashMap included_headers;  // Track which standard headers have been included (for lazy stdlib loading)
     int include_next_idx;
 
     // Pragma macro system

@@ -1,6 +1,5 @@
 # jcc
 
-> [!WARNING]
 > Work in progress, see [TODO](#todo)
 
 `JCC` is a ~~C89~~/~~C99~~/C11* JIT C Compiler. The preprocessor/lexer/parser is taken from [chibicc](http://https://github.com/rui314/chibicc) and the VM was built off [c4](https://github.com/rswier/c4) and [write-a-C-interpreter](https://github.com/lotabout/write-a-C-interpreter).
@@ -15,7 +14,7 @@ The goal of this project is correctness and safety. This is just a toy, and won'
 
 ### Debugger
 
-The debugger is a GDB-like interface for controlling program flow and inspecting state. It is enabled with the `-g` or `--debug` flags. See [Debugger](./DEBUGGER.md) for more details.
+The debugger is a GDB-like interface for controlling program flow and inspecting state. It is enabled with the `-g` or `--debug` flags. See [DEBUGGER.md](./DEBUGGER.md) for more details.
 
 ### Memory Safety
 
@@ -43,12 +42,10 @@ There are lots of memory safety features available. See [SAFETY.md](./SAFETY.md)
 - `--control-flow-integrity` **Control flow integrity (shadow stack for return address validation)**
 - `--vm-heap` **Route all malloc/free through VM heap (enables memory safety features)**
 
-> [!NOTE]
 > **VM Heap Mode**: Most memory safety features require heap allocations to go through the VM's internal allocator (MALC/MFRE opcodes) rather than system malloc/free. The `--vm-heap` flag automatically intercepts malloc/free calls at compile time and routes them through the VM heap. Without this flag, memory safety checks only apply to code that directly uses VM heap opcodes. Use `--vm-heap` in combination with other safety flags for comprehensive protection.
 
 ### Pragma Macros
 
-> [!WARNING]
 > This is a very early feature and a wip. The API may change in the future and some features may not be fully implemented.
 
 Pragma macros are a feature that allows you to define macros that are expanded at compile time. Create functions, structs, unions, enums, and variables at compile time. There is a comprehensive reflection API. A common problem in C is creating "enum_to_string" functions. Now you can write a single pragma macro that generates the function at compile time for *any* enum:
@@ -183,7 +180,6 @@ $ ./jcc --json -o lib.json lib.h
 
 ### Threading + Atomics Support
 
-> [!WARNING]
 > Not supported (yet)
 
 JCC is single-threaded and does not implement any threading or atomic operations yet.
@@ -305,7 +301,25 @@ echo $status  # Check exit code
 
 ## Standard Library Support
 
-JCC includes a **Foreign Function Interface (FFI)** that allows compiled C code to call native standard library functions directly, without reimplementing them as VM opcodes. The FFI is automatically initialized by `cc_init()` via `cc_load_stdlib()`, which registers most C standard library functions.
+JCC includes a **Foreign Function Interface (FFI)** that allows compiled C code to call native standard library functions directly, without reimplementing them as VM opcodes. The FFI uses a **header-based lazy loading** system that automatically registers functions when their corresponding standard headers are included.
+
+### Header-Based Registration
+
+Functions are registered on-demand during preprocessing when you `#include` standard headers:
+
+- `#include <stdio.h>` → Registers `printf`, `fopen`, `fread`, etc. (~50 functions)
+- `#include <stdlib.h>` → Registers `malloc`, `atoi`, `rand`, etc. (~40 functions)
+- `#include <string.h>` → Registers `strlen`, `strcmp`, `memcpy`, etc. (~25 functions)
+- `#include <math.h>` → Registers `sin`, `cos`, `sqrt`, `pow`, etc. (~180 functions)
+- `#include <ctype.h>` → Registers `isalpha`, `isdigit`, `tolower`, etc. (~11 functions)
+- `#include <time.h>` → Registers `time`, `clock`, `strftime`, etc. (~14 functions)
+
+**Benefits:**
+- **Smaller FFI table:** Only loads functions you actually use (~70% reduction for typical programs)
+- **Faster initialization:** Functions registered during preprocessing, not at runtime
+- **Backward compatible:** Programs calling `cc_load_stdlib()` directly still work (registers all functions)
+
+**Implementation:** The preprocessor calls `register_stdlib_for_header()` in `include_file()` when a standard header is encountered. Each header has a dedicated registration function in `src/stdlib/*.c`.
 
 ### Variadic Foreign Functions
 

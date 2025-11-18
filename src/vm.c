@@ -147,6 +147,11 @@ void cc_init(JCC *vm, uint32_t flags) {
     vm->ptr_tags.buckets = NULL;
     vm->ptr_tags.used = 0;
 
+    // Initialize included_headers HashMap for header-based stdlib loading
+    vm->included_headers.capacity = 0;
+    vm->included_headers.buckets = NULL;
+    vm->included_headers.used = 0;
+
     // Initialize sorted allocation array for O(log n) pointer validation
     vm->sorted_allocs.addresses = NULL;
     vm->sorted_allocs.headers = NULL;
@@ -274,6 +279,10 @@ void cc_destroy(JCC *vm) {
     // Free ptr_tags HashMap (integer keys, values are casted integers - no heap allocation)
     if (vm->ptr_tags.buckets)
         free(vm->ptr_tags.buckets);
+
+    // Free included_headers HashMap (string literal keys - not allocated, values are casted integers - no heap allocation)
+    if (vm->included_headers.buckets)
+        free(vm->included_headers.buckets);
 
     // Free sorted allocation arrays
     if (vm->sorted_allocs.addresses)
@@ -594,6 +603,27 @@ int cc_load_libc(JCC *vm) {
     if (vm->debug_vm)
         printf("Loading standard C library: %s\n", libc_path);
     return cc_dlopen(vm, libc_path);
+}
+
+// Load standard library (for backward compatibility)
+// This function is kept for programs that don't use #include,
+// or want all stdlib functions available regardless of includes
+void cc_load_stdlib(JCC *vm) {
+    // Register all standard library functions regardless of includes
+    register_ctype_functions(vm);
+    register_math_functions(vm);
+    register_stdio_functions(vm);
+    register_stdlib_functions(vm);
+    register_string_functions(vm);
+    register_time_functions(vm);
+
+    // Mark all headers as included
+    hashmap_put(&vm->included_headers, "ctype.h", (void*)1);
+    hashmap_put(&vm->included_headers, "math.h", (void*)1);
+    hashmap_put(&vm->included_headers, "stdio.h", (void*)1);
+    hashmap_put(&vm->included_headers, "stdlib.h", (void*)1);
+    hashmap_put(&vm->included_headers, "string.h", (void*)1);
+    hashmap_put(&vm->included_headers, "time.h", (void*)1);
 }
 
 int cc_run(JCC *vm, int argc, char **argv) {

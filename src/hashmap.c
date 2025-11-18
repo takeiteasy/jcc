@@ -57,7 +57,7 @@ static uint64_t int_hash(long long key) {
     return hash;
 }
 
-void hashmap_put2(HashMap *map, char *key, int keylen, void *val);
+void hashmap_put2(HashMap *map, const char *key, int keylen, void *val);
 
 // Make room for new entires in a given hashmap by removing
 // tombstones and possibly extending the bucket size.
@@ -154,32 +154,32 @@ static HashEntry *get_or_insert_entry(HashMap *map, char *key, int keylen) {
     return NULL;
 }
 
-void *hashmap_get2(HashMap *map, char *key, int keylen) {
-    HashEntry *ent = get_entry(map, key, keylen);
+void *hashmap_get2(HashMap *map, const char *key, int keylen) {
+    HashEntry *ent = get_entry(map, (char*)key, keylen);
     return ent ? ent->val : NULL;
 }
 
-void *hashmap_get(HashMap *map, char *key) {
+void *hashmap_get(HashMap *map, const char *key) {
     return hashmap_get2(map, key, strlen(key));
 }
 
-void hashmap_put2(HashMap *map, char *key, int keylen, void *val) {
-    HashEntry *ent = get_or_insert_entry(map, key, keylen);
+void hashmap_put2(HashMap *map, const char *key, int keylen, void *val) {
+    HashEntry *ent = get_or_insert_entry(map, (char*)key, keylen);
     ent->val = val;
 }
 
-void hashmap_put(HashMap *map, char *key, void *val) {
+void hashmap_put(HashMap *map, const char *key, void *val) {
     hashmap_put2(map, key, strlen(key), val);
 }
 
-void hashmap_delete2(HashMap *map, char *key, int keylen) {
-    HashEntry *ent = get_entry(map, key, keylen);
+void hashmap_delete2(HashMap *map, const char *key, int keylen) {
+    HashEntry *ent = get_entry(map, (char*)key, keylen);
     if (ent)
         ent->key = TOMBSTONE;
 }
 
 
-void hashmap_delete(HashMap *map, char *key) {
+void hashmap_delete(HashMap *map, const char *key) {
     hashmap_delete2(map, key, strlen(key));
 }
 

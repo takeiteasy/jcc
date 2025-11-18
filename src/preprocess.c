@@ -806,6 +806,34 @@ static char *detect_include_guard(Token *tok) {
     return NULL;
 }
 
+// Register stdlib functions for a specific header
+// Called automatically when a standard header is #include'd
+static void register_stdlib_for_header(JCC *vm, const char *header_name) {
+    // Check if already registered
+    if (hashmap_get(&vm->included_headers, header_name)) {
+        return;  // Already registered
+    }
+
+    // Mark as registered
+    hashmap_put(&vm->included_headers, header_name, (void*)1);
+
+    // Dispatch to appropriate registration function
+    if (strcmp(header_name, "ctype.h") == 0) {
+        register_ctype_functions(vm);
+    } else if (strcmp(header_name, "math.h") == 0) {
+        register_math_functions(vm);
+    } else if (strcmp(header_name, "stdio.h") == 0) {
+        register_stdio_functions(vm);
+    } else if (strcmp(header_name, "stdlib.h") == 0) {
+        register_stdlib_functions(vm);
+    } else if (strcmp(header_name, "string.h") == 0) {
+        register_string_functions(vm);
+    } else if (strcmp(header_name, "time.h") == 0) {
+        register_time_functions(vm);
+    }
+    // Note: Other headers (like stddef.h, stdbool.h, etc.) don't have runtime functions
+}
+
 static Token *include_file(JCC *vm, Token *tok, char *path, Token *filename_tok) {
     // Check for "#pragma once"
     if (hashmap_get(&vm->pragma_once, path))
@@ -822,6 +850,11 @@ static Token *include_file(JCC *vm, Token *tok, char *path, Token *filename_tok)
     Token *tok2 = tokenize_file(vm, path);
     if (!tok2)
         error_tok(vm, filename_tok, "%s: cannot open file: %s", path, strerror(errno));
+
+    // Register stdlib functions for standard headers (header-based lazy loading)
+    char *basename = strrchr(path, '/');
+    basename = basename ? basename + 1 : path;
+    register_stdlib_for_header(vm, basename);
 
     guard_name = detect_include_guard(tok2);
     if (guard_name)
