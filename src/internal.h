@@ -136,12 +136,12 @@ int display_width(JCC *vm, char *p, int len);
 // hashmap.c
 //
 
-void *hashmap_get(HashMap *map, char *key);
-void *hashmap_get2(HashMap *map, char *key, int keylen);
-void hashmap_put(HashMap *map, char *key, void *val);
-void hashmap_put2(HashMap *map, char *key, int keylen, void *val);
-void hashmap_delete(HashMap *map, char *key);
-void hashmap_delete2(HashMap *map, char *key, int keylen);
+void *hashmap_get(HashMap *map, const char *key);
+void *hashmap_get2(HashMap *map, const char *key, int keylen);
+void hashmap_put(HashMap *map, const char *key, void *val);
+void hashmap_put2(HashMap *map, const char *key, int keylen, void *val);
+void hashmap_delete(HashMap *map, const char *key);
+void hashmap_delete2(HashMap *map, const char *key, int keylen);
 
 // Integer key HashMap functions (avoid overhead of snprintf/strdup)
 void *hashmap_get_int(HashMap *map, long long key);
@@ -162,7 +162,6 @@ void hashmap_test_iteration(void);
 // stdlib.c
 //
 
-void register_variadic_wrappers(JCC *vm);
 long long wrap_strlen(long long s);
 long long wrap_strcmp(long long s1, long long s2);
 long long wrap_strncmp(long long s1, long long s2, long long n);
@@ -234,3 +233,14 @@ void print_escaped_string(FILE *f, const char *str);
 //
 
 long long generate_random_canary(void);
+
+//
+// stdlib
+//
+
+void register_ctype_functions(JCC *vm);
+void register_math_functions(JCC *vm);
+void register_stdio_functions(JCC *vm);
+void register_stdlib_functions(JCC *vm);
+void register_string_functions(JCC *vm);
+void register_time_functions(JCC *vm);
