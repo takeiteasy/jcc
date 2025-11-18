@@ -152,6 +152,12 @@ void cc_init(JCC *vm, uint32_t flags) {
     vm->included_headers.buckets = NULL;
     vm->included_headers.used = 0;
 
+    // Initialize url_to_path HashMap for URL include tracking
+    vm->url_to_path.capacity = 0;
+    vm->url_to_path.buckets = NULL;
+    vm->url_to_path.used = 0;
+    vm->url_cache_dir = NULL;  // Will be initialized on first URL include
+
     // Initialize sorted allocation array for O(log n) pointer validation
     vm->sorted_allocs.addresses = NULL;
     vm->sorted_allocs.headers = NULL;

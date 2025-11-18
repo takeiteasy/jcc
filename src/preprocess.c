@@ -997,6 +997,22 @@ static Token *preprocess2(JCC *vm, Token *tok) {
             bool is_dquote;
             char *filename = read_include_filename(vm, &tok, tok->next, &is_dquote);
 
+            // Check for URL includes (supported with both <...> and "...")
+            if (is_url(filename)) {
+#ifdef JCC_HAS_CURL
+                char *cache_path = fetch_url_to_cache(vm, filename);
+                if (!cache_path) {
+                    error_tok(vm, start->next, "failed to fetch URL: %s", filename);
+                }
+                // Track URL -> cache path mapping for error reporting
+                hashmap_put(&vm->url_to_path, cache_path, (void *)filename);
+                tok = include_file(vm, tok, cache_path, start->next->next);
+                continue;
+#else
+                error_tok(vm, start->next, "URL includes require JCC to be built with JCC_HAS_CURL=1");
+#endif
+            }
+
             if (filename[0] != '/' && is_dquote) {
                 char *path = format("%s/%s", dirname(strdup(start->file->name)), filename);
                 if (file_exists(path)) {

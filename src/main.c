@@ -155,6 +155,8 @@ int main(int argc, const char* argv[]) {
     int skip_preprocess = 0; // -X
     int skip_stdlib = 0; // -S
     int output_json = 0; // -j
+    char *url_cache_dir = NULL; // --url-cache-dir
+    int url_cache_clear = 0; // --url-cache-clear
 
     if (argc <= 1)
         usage(argv[0], 1);
@@ -194,6 +196,8 @@ int main(int argc, const char* argv[]) {
         {"include", required_argument, 0, 'I'},
         {"define", required_argument, 0, 'D'},
         {"undef", required_argument, 0, 'U'},
+        {"url-cache-dir", required_argument, 0, 1008},
+        {"url-cache-clear", no_argument, 0, 1009},
         {0, 0, 0, 0}
     };
 
@@ -308,6 +312,12 @@ int main(int argc, const char* argv[]) {
         case 'j':
             output_json = 1;
             break;
+        case 1008:
+            url_cache_dir = strdup(optarg);
+            break;
+        case 1009:
+            url_cache_clear = 1;
+            break;
         case '?':
             if (optopt)
                 fprintf(stderr, "error: option -%c requires an argument\n", optopt);
@@ -373,6 +383,14 @@ int main(int argc, const char* argv[]) {
     // If random canaries are enabled, regenerate the stack canary
     if (vm.flags & JCC_RANDOM_CANARIES) {
         vm.stack_canary = generate_random_canary();
+    }
+
+    // Configure URL cache if needed
+    if (url_cache_dir) {
+        vm.url_cache_dir = url_cache_dir;
+    }
+    if (url_cache_clear) {
+        clear_url_cache(&vm);
     }
 
     if (!skip_stdlib)

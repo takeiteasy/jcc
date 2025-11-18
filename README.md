@@ -4,11 +4,13 @@
 
 `JCC` is a ~~C89~~/~~C99~~/C11* JIT C Compiler. The preprocessor/lexer/parser is taken from [chibicc](http://https://github.com/rui314/chibicc) and the VM was built off [c4](https://github.com/rswier/c4) and [write-a-C-interpreter](https://github.com/lotabout/write-a-C-interpreter).
 
-**\*** Most C11 features implemented, see [TODO](#todo) for features still missing
+**\*** *Most* C11 features implemented.
 
 The goal of this project is correctness and safety. This is just a toy, and won't be 🚀🔥 **BLAZING FAST** 🔥🚀. I wouldn't recommend using this for anything important or in any production code. I'm not an expert, so safety features may not be perfect and will have *minimal* to **significant** performance overhead (depending on which features are enabled).
 
 `JCC` is not just a JIT compiler. It also extends the C preprocessor with new features, see [Pragma Macros](#pragma-macros) for more details. I have lots of other ideas for more `#pragma` extensions too.
+
+See [here](https://takeiteasy.github.io/jcc) for some basic documentation on the API.
 
 ## Features
 
@@ -51,6 +53,75 @@ There are lots of memory safety features available. See [SAFETY.md](./SAFETY.md)
 Pragma macros are a feature that allows you to define macros that are expanded at compile time. Create functions, structs, unions, enums, and variables at compile time. There is a comprehensive reflection API. A common problem in C is creating "enum_to_string" functions. Now you can write a single pragma macro that generates the function at compile time for *any* enum:
 
 ```TODO: Example```
+
+### URL Header Imports
+
+JCC supports including header files directly from URLs, enabling remote header distribution and easier dependency management. This feature is **optional** and requires building with libcurl support.
+
+**Key Features:**
+- Include headers from `http://` or `https://` URLs
+- Automatic caching in `~/.jcc_cache/` for offline access
+- HTTPS certificate verification for security
+- Manual cache control (persistent until cleared)
+
+**Syntax:**
+```c
+// Both angle bracket and quoted syntax work for URLs
+#include <https://raw.githubusercontent.com/user/repo/main/header.h>
+#include "https://example.com/lib/myheader.h"
+```
+
+**Build with URL Support:**
+```bash
+# Install libcurl (if not already installed)
+# macOS:
+brew install curl
+
+# Linux (Debian/Ubuntu):
+sudo apt-get install libcurl4-openssl-dev
+
+# Linux (Fedora/RHEL):
+sudo dnf install libcurl-devel
+
+# Build JCC with URL support
+make JCC_HAS_CURL=1
+```
+
+**Cache Management:**
+```bash
+# Downloaded headers are cached in ~/.jcc_cache/
+# Cache persists across runs for offline access
+
+# Clear cache
+./jcc --url-cache-clear program.c
+
+# Use custom cache directory
+./jcc --url-cache-dir /path/to/cache program.c
+```
+
+**Security Considerations:**
+- Always use HTTPS URLs to prevent man-in-the-middle attacks
+- SSL certificates are verified by default
+- Downloaded files are size-limited (10MB max)
+- Network timeout is 30 seconds
+- HTTP URLs will work but are not recommended
+
+**Example:**
+```c
+// Include a header from GitHub
+#include <https://raw.githubusercontent.com/nothings/stb/master/stb_sprintf.h>
+
+int main() {
+    char buffer[100];
+    stbsp_sprintf(buffer, "Hello from URL include!");
+    return 0;
+}
+```
+
+**Limitations:**
+- Relative includes in URL-fetched headers are **not supported** - they must use absolute URLs or local filesystem paths
+- Requires network connectivity on first include (cached afterward)
+- Works with both `<...>` and `"..."` syntax
 
 ### JSON Output
 
@@ -230,7 +301,12 @@ make all        # Build everything (jcc, libjcc.dylib) and run tests
 
 # Optional: Build with libffi support for true variadic foreign functions
 make JCC_HAS_FFI=1
-# or export JCC_HAS_FFI=1 && make
+
+# Optional: Build with libcurl support for URL header imports
+make JCC_HAS_CURL=1
+
+# Optional: Build with both features
+make JCC_HAS_FFI=1 JCC_HAS_CURL=1
 ```
 
 This produces:
@@ -264,6 +340,34 @@ With libffi enabled:
 - No need for macro-based dispatch
 - Standard headers (`stdio.h`) use real variadic declarations
 - Backward compatible: code written for non-libffi mode still works
+
+### libcurl Support (URL Header Imports)
+
+To enable URL-based `#include` directives, build with libcurl:
+
+**macOS (Homebrew):**
+```bash
+brew install curl
+make JCC_HAS_CURL=1
+```
+
+**Linux:**
+```bash
+# Debian/Ubuntu
+sudo apt-get install libcurl4-openssl-dev
+
+# Fedora/RHEL
+sudo dnf install libcurl-devel
+
+# Then build
+make JCC_HAS_CURL=1
+```
+
+With libcurl enabled:
+- Include header files directly from HTTP/HTTPS URLs
+- Automatic caching in `~/.jcc_cache/` directory
+- HTTPS certificate verification for secure downloads
+- See [URL Header Imports](#url-header-imports) section for detailed usage
 
 ### Compile to Bytecode
 

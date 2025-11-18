@@ -1062,6 +1062,10 @@ struct JCC {
     StringArray include_paths;
     StringArray system_include_paths;  // System header search paths for <...>
 
+    // URL include cache (only used when JCC_HAS_CURL is enabled)
+    char *url_cache_dir;               // Directory for caching downloaded headers
+    HashMap url_to_path;               // Maps URLs to cached file paths (for error reporting)
+
     // Code generation state
     int label_counter;          // For generating unique labels
     int local_offset;           // Current local variable offset
