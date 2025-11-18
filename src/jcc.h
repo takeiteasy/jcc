@@ -50,6 +50,101 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#define OPS_X \
+    X(LEA) \
+    X(IMM) \
+    X(JMP) \
+    X(CALL) \
+    X(CALLI) \
+    X(JZ) \
+    X(JNZ) \
+    X(ENT) \
+    X(ADJ) \
+    X(LEV) \
+    X(LI) \
+    X(LC) \
+    X(LS) \
+    X(LW) \
+    X(SI) \
+    X(SC) \
+    X(SS) \
+    X(SW) \
+    X(PUSH) \
+    X(OR) \
+    X(XOR) \
+    X(AND) \
+    X(EQ) \
+    X(NE) \
+    X(LT) \
+    X(GT) \
+    X(LE) \
+    X(GE) \
+    X(SHL) \
+    X(SHR) \
+    X(ADD) \
+    X(SUB) \
+    X(MUL) \
+    X(DIV) \
+    X(MOD) \
+    /* Checked arithmetic operations (overflow detection) */ \
+    X(ADDC) \
+    X(SUBC) \
+    X(MULC) \
+    X(DIVC) \
+    /* VM memory operations (self-contained, no system calls) */ \
+    X(MALC) \
+    X(MFRE) \
+    X(MCPY) \
+    X(REALC) \
+    X(CALC) \
+    /* Type conversion instructions */ \
+    /* Sign extend 1/2/4 bytes to 8 bytes */ \
+    X(SX1) \
+    X(SX2) \
+    X(SX4) \
+    /* Zero extend 1/2/4 bytes to 8 bytes */ \
+    X(ZX1) \
+    X(ZX2) \
+    X(ZX4) \
+    /* Floating-point instructions */ \
+    X(FLD) \
+    X(FST) \
+    X(FADD) \
+    X(FSUB) \
+    X(FMUL) \
+    X(FDIV) \
+    X(FNEG) \
+    X(FEQ) \
+    X(FNE) \
+    X(FLT) \
+    X(FLE) \
+    X(FGT) \
+    X(FGE) \
+    X(I2F) \
+    X(F2I) \
+    X(FPUSH) \
+    X(CALLF) /* Foreign function interface */  \
+    /* Memory safety opcodes */ \
+    X(CHKB) /* Check array bounds */ \
+    X(CHKP) /* Check pointer validity (UAF detection) */ \
+    X(CHKT) /* Check type on dereference */ \
+    X(CHKI) /* Check initialization */ \
+    X(MARKI) /* Mark as initialized */ \
+    X(MARKA) /* Mark address (track stack pointer for dangling detection) */ \
+    X(CHKA) /* Check alignment */ \
+    X(CHKPA) /* Check pointer arithmetic (invalid arithmetic detection) */ \
+    X(MARKP) /* Mark provenance (track pointer origin) */ \
+    /* Stack instrumentation opcodes */                             \
+    X(SCOPEIN) /* Mark scope entry (allocate/activate variables) */ \
+    X(SCOPEOUT) /* Mark scope exit (invalidate variables, detect dangling pointers) */ \
+    X(CHKL) /* Check variable liveness before access */ \
+    X(MARKR) /* Mark variable read access */ \
+    X(MARKW) /* Mark variable write access */ \
+    /* Non-local jump instructions (setjmp/longjmp) */ \
+    X(SETJMP) /* Save execution context to jmp_buf, return 0 */ \
+    X(LONGJMP) /* Restore execution context from jmp_buf, return val */
+
 /*!
  @enum JCC_OP
  @abstract VM instruction opcodes for the JCC bytecode.
@@ -58,40 +153,9 @@ extern "C" {
  emitted by the code generator and interpreted by the VM executor.
 */
 typedef enum {
-    LEA, IMM, JMP, CALL, CALLI, JZ, JNZ, ENT, ADJ, LEV, LI, LC, LS, LW, SI, SC, SS, SW, PUSH,
-    OR, XOR, AND, EQ, NE, LT, GT, LE, GE, SHL, SHR, ADD, SUB, MUL, DIV, MOD,
-    // Checked arithmetic operations (overflow detection)
-    ADDC, SUBC, MULC, DIVC,
-    // VM memory operations (self-contained, no system calls)
-    MALC, MFRE, MCPY, REALC, CALC,
-    // Type conversion instructions
-    SX1, SX2, SX4,  // Sign extend 1/2/4 bytes to 8 bytes
-    ZX1, ZX2, ZX4,  // Zero extend 1/2/4 bytes to 8 bytes
-    // Floating-point instructions
-    FLD, FST, FADD, FSUB, FMUL, FDIV, FNEG,
-    FEQ, FNE, FLT, FLE, FGT, FGE,
-    I2F, F2I, FPUSH,
-    // Foreign function interface
-    CALLF,
-    // Memory safety opcodes
-    CHKB,   // Check array bounds
-    CHKP,   // Check pointer validity (UAF detection)
-    CHKT,   // Check type on dereference
-    CHKI,   // Check initialization
-    MARKI,  // Mark as initialized
-    MARKA,  // Mark address (track stack pointer for dangling detection)
-    CHKA,   // Check alignment
-    CHKPA,  // Check pointer arithmetic (invalid arithmetic detection)
-    MARKP,  // Mark provenance (track pointer origin)
-    // Stack instrumentation opcodes
-    SCOPEIN,  // Mark scope entry (allocate/activate variables)
-    SCOPEOUT, // Mark scope exit (invalidate variables, detect dangling pointers)
-    CHKL,     // Check variable liveness before access
-    MARKR,    // Mark variable read access
-    MARKW,    // Mark variable write access
-    // Non-local jump instructions (setjmp/longjmp)
-    SETJMP, // Save execution context to jmp_buf, return 0
-    LONGJMP // Restore execution context from jmp_buf, return val
+#define X(NAME) NAME,
+    OPS_X
+#undef X
 } JCC_OP;
 
 /*!

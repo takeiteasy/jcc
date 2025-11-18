@@ -41,6 +41,9 @@
 #define JCC_MAGIC "JCC\0"
 #define JCC_VERSION 1
 
+// Stack canary constant for detecting stack overflows (used when random canaries disabled)
+#define STACK_CANARY 0xDEADBEEFCAFEBABELL
+
 void strarray_push(StringArray *arr, char *s);
 char *format(char *fmt, ...) __attribute__((format(printf, 1, 2)));
 Token *preprocess(JCC *vm, Token *tok);

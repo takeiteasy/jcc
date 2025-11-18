@@ -2,8 +2,8 @@
 #include "setjmp.h"
 
 #pragma macro
-long make_error_code(long vm) {
-    return ast_int_literal(vm, 42);
+long make_error_code() {
+    return ast_int_literal(__VM, 42);
 }
 
 jmp_buf error_handler;
@@ -25,7 +25,7 @@ int main() {
     } else {
         // Returned from longjmp
         if (result == 42) {
-            return 0;  // Success! Both features working together
+            return 42;  // Success! Both features working together
         }
         return 1;  // Wrong error code
     }
