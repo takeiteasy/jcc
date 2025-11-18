@@ -20,7 +20,7 @@ extern int vm_eval(JCC *vm);
 static int debugger_eval_condition(JCC *vm, const char *condition_str);
 
 void debugger_init(JCC *vm) {
-    vm->enable_debugger = 1;  // Make sure it's enabled
+    vm->flags |= JCC_ENABLE_DEBUGGER;  // Make sure it's enabled
     vm->num_breakpoints = 0;
     vm->num_watchpoints = 0;  // Initialize watchpoint counter
     vm->single_step = 0;
@@ -647,7 +647,7 @@ int debugger_run(JCC *vm, int argc, char **argv) {
     vm->initial_bp = vm->stack_seg;
 
     // Setup shadow stack for CFI if enabled
-    if (vm->enable_cfi) {
+    if (vm->flags & JCC_CFI) {
         vm->shadow_sp = vm->shadow_stack;
     }
 
@@ -674,7 +674,7 @@ int debugger_run(JCC *vm, int argc, char **argv) {
 // ============================================================================
 
 int cc_get_source_location(JCC *vm, long long *pc, File **out_file, int *out_line) {
-    if (!vm->enable_debugger || !vm->source_map || vm->source_map_count == 0) {
+    if (!(vm->flags & JCC_ENABLE_DEBUGGER) || !vm->source_map || vm->source_map_count == 0) {
         return 0;
     }
 
@@ -712,7 +712,7 @@ int cc_get_source_location(JCC *vm, long long *pc, File **out_file, int *out_lin
 }
 
 long long *cc_find_pc_for_source(JCC *vm, File *file, int line) {
-    if (!vm->enable_debugger || !vm->source_map || vm->source_map_count == 0) {
+    if (!(vm->flags & JCC_ENABLE_DEBUGGER) || !vm->source_map || vm->source_map_count == 0) {
         return NULL;
     }
 
@@ -747,7 +747,7 @@ long long *cc_find_function_entry(JCC *vm, const char *name) {
 }
 
 DebugSymbol *cc_lookup_symbol(JCC *vm, const char *name) {
-    if (!vm->enable_debugger || !name) {
+    if (!(vm->flags & JCC_ENABLE_DEBUGGER) || !name) {
         return NULL;
     }
 
@@ -799,7 +799,7 @@ static long long eval_ast_node(JCC *vm, Node *node, int *error) {
                 long long offset = sym->offset;
                 // Adjust for stack canaries if enabled
                 // Use same value as STACK_CANARY_SLOTS in vm.c
-                if (vm->enable_stack_canaries && offset < 0) {
+                if ((vm->flags & JCC_STACK_CANARIES) && offset < 0) {
                     offset -= 1;  // STACK_CANARY_SLOTS
                 }
                 addr = vm->bp + offset;
@@ -1080,7 +1080,7 @@ void cc_remove_watchpoint(JCC *vm, int index) {
 // Returns: watchpoint index if triggered, -1 otherwise
 int debugger_check_watchpoint(JCC *vm, void *addr, int size, int access_type) {
     // Safety checks
-    if (!vm || !vm->enable_debugger || vm->num_watchpoints == 0 || !addr) {
+    if (!vm || !(vm->flags & JCC_ENABLE_DEBUGGER) || vm->num_watchpoints == 0 || !addr) {
         return -1;
     }
 

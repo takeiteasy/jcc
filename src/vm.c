@@ -31,7 +31,7 @@ static int eval1(JCC *vm) {
     vm->cycle++;
 
     // Debugger hooks - check before executing instruction
-    if (vm->enable_debugger) {
+    if (vm->flags & JCC_ENABLE_DEBUGGER) {
         // Check for breakpoints
         if (debugger_check_breakpoint(vm)) {
             printf("\nBreakpoint hit at PC %p (offset: %lld)\n",
@@ -100,9 +100,12 @@ int vm_eval(JCC *vm) {
     return result;
 }
 
-void cc_init(JCC *vm, bool enable_debugger) {
+void cc_init(JCC *vm, uint32_t flags) {
     // Zero-initialize the VM struct
     memset(vm, 0, sizeof(JCC));
+
+    // Set runtime flags
+    vm->flags = flags;
 
     // Set defaults
     vm->poolsize = 256 * 1024;  // 256KB default
@@ -166,7 +169,7 @@ void cc_init(JCC *vm, bool enable_debugger) {
     vm->stack_high_water = 0;
 
     // Initialize stack canary (will be set to random or fixed value based on flag)
-    // The flag enable_random_canaries will be set by CLI parsing in main.c
+    // The flag JCC_RANDOM_CANARIES will trigger regeneration in main.c
     // For now, initialize to fixed value; it will be regenerated if random canaries enabled
     vm->stack_canary = STACK_CANARY;
 
@@ -178,11 +181,9 @@ void cc_init(JCC *vm, bool enable_debugger) {
     cc_define(vm, "JCC_HAS_FFI", "1");
 #endif
 
-    if (enable_debugger) {
-        vm->enable_debugger = true;
+    if (vm->flags & JCC_ENABLE_DEBUGGER) {
         debugger_init(vm);
-    } else
-        vm->enable_debugger = false;
+    }
 }
 
 void cc_destroy(JCC *vm) {
@@ -329,7 +330,7 @@ void cc_destroy(JCC *vm) {
 }
 
 void cc_print_stack_report(JCC *vm) {
-    if (!vm || !vm->enable_stack_instrumentation) {
+    if (!vm || !(vm->flags & JCC_STACK_INSTR)) {
         printf("Stack instrumentation not enabled.\n");
         return;
     }
@@ -611,7 +612,7 @@ int cc_run(JCC *vm, int argc, char **argv) {
     vm->bp = vm->sp;  // Initialize base pointer to top of stack
 
     // Setup shadow stack for CFI if enabled
-    if (vm->enable_cfi) {
+    if (vm->flags & JCC_CFI) {
         vm->shadow_sp = (long long *)((char *)vm->shadow_stack + vm->poolsize * sizeof(long long));
     }
 
@@ -627,5 +628,5 @@ int cc_run(JCC *vm, int argc, char **argv) {
     *--vm->sp = argc;             // argc parameter (will be at bp+2 after ENT)
     *--vm->sp = 0;                // Return address = NULL (signals exit, will be at bp+1 after ENT)
 
-    return vm->enable_debugger ? debugger_run(vm, argc, argv) : vm_eval(vm);
+    return (vm->flags & JCC_ENABLE_DEBUGGER) ? debugger_run(vm, argc, argv) : vm_eval(vm);
 }

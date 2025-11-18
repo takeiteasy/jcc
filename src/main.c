@@ -149,28 +149,7 @@ int main(int argc, const char* argv[]) {
     char *out_file = NULL; // -o (single)
     int dump_ast = 0;      // -a
     int verbose = 0;       // -v
-    int enable_debugger = 0; // --debug / -g
-    int enable_bounds_checks = 0;
-    int enable_uaf_detection = 0;
-    int enable_type_checks = 0;
-    int enable_uninitialized_detection = 0;
-    int enable_overflow_checks = 0;
-    int enable_stack_canaries = 0;
-    int enable_heap_canaries = 0;
-    int enable_pointer_sanitizer = 0;
-    int enable_memory_leak_detection = 0;
-    int enable_stack_instrumentation = 0;
-    int stack_instr_errors = 0;
-    int enable_dangling_detection = 0;
-    int enable_alignment_checks = 0;
-    int enable_provenance_tracking = 0;
-    int enable_invalid_arithmetic = 0;
-    int enable_format_string_checks = 0;
-    int enable_random_canaries = 0;
-    int enable_memory_poisoning = 0;
-    int enable_memory_tagging = 0;
-    int enable_vm_heap = 0;
-    int enable_cfi = 0;
+    uint32_t flags = 0;    // JCCFlags bitfield for runtime features
     int print_tokens = 0; // -P
     int preprocess_only = 0; // -E
     int skip_preprocess = 0; // -X
@@ -237,7 +216,7 @@ int main(int argc, const char* argv[]) {
             dump_ast = 1;
             break;
         case 'g':
-            enable_debugger = 1;
+            flags |= JCC_ENABLE_DEBUGGER;
             break;
         case 'I':
             inc_paths = realloc(inc_paths, sizeof(*inc_paths) * (inc_paths_count + 1));
@@ -252,71 +231,67 @@ int main(int argc, const char* argv[]) {
             undefs[undefs_count++] = strdup(optarg);
             break;
         case 'b':
-            enable_bounds_checks = 1;
+            flags |= JCC_BOUNDS_CHECKS;
             break;
         case 'f':
-            enable_uaf_detection = 1;
+            flags |= JCC_UAF_DETECTION;
             break;
         case 't':
-            enable_type_checks = 1;
+            flags |= JCC_TYPE_CHECKS;
             break;
         case 'z':
-            enable_uninitialized_detection = 1;
+            flags |= JCC_UNINIT_DETECTION;
             break;
         case 'O':
-            enable_overflow_checks = 1;
+            flags |= JCC_OVERFLOW_CHECKS;
             break;
         case 's':
-            enable_stack_canaries = 1;
+            flags |= JCC_STACK_CANARIES;
             break;
         case 'k':
-            enable_heap_canaries = 1;
+            flags |= JCC_HEAP_CANARIES;
             break;
         case 'p':
-            enable_pointer_sanitizer = 1;
-            // Enable all pointer checks as a group
-            enable_bounds_checks = 1;
-            enable_uaf_detection = 1;
-            enable_type_checks = 1;
+            flags |= JCC_POINTER_SANITIZER;
             break;
         case 'l':
-            enable_memory_leak_detection = 1;
+            flags |= JCC_MEMORY_LEAK_DETECT;
             break;
         case 'i':
-            enable_stack_instrumentation = 1;
+            flags |= JCC_STACK_INSTR;
             break;
         case 1001:
-            enable_dangling_detection = 1;
+            flags |= JCC_DANGLING_DETECT;
             break;
         case 1002:
-            enable_alignment_checks = 1;
+            flags |= JCC_ALIGNMENT_CHECKS;
             break;
         case 1003:
-            enable_provenance_tracking = 1;
+            flags |= JCC_PROVENANCE_TRACK;
             break;
         case 1004:
-            enable_invalid_arithmetic = 1;
+            flags |= JCC_INVALID_ARITH;
             break;
         case 1005:
-            stack_instr_errors = 1;
+            flags |= JCC_STACK_INSTR_ERRORS;
             break;
         case 'F':
-            enable_format_string_checks = 1;
+            flags |= JCC_FORMAT_STR_CHECKS;
             break;
         case 1006:
-            enable_random_canaries = 1;
+            flags |= JCC_RANDOM_CANARIES;
             break;
         case 1007:
-            enable_memory_poisoning = 1;
+            flags |= JCC_MEMORY_POISONING;
             break;
         case 'T':
-            enable_memory_tagging = 1;
+            flags |= JCC_MEMORY_TAGGING;
             break;
         case 'V':
-            enable_vm_heap = 1;
+            flags |= JCC_VM_HEAP;
             break;
         case 'C':
-            enable_cfi = 1;
+            flags |= JCC_CFI;
             break;
         case 'P':
             print_tokens = 1;
@@ -390,35 +365,13 @@ int main(int argc, const char* argv[]) {
     }
 
     JCC vm;
-    cc_init(&vm, enable_debugger);
+    cc_init(&vm, flags);
 
     if (verbose)
         vm.debug_vm = 1;
 
-    vm.enable_bounds_checks = enable_bounds_checks;
-    vm.enable_uaf_detection = enable_uaf_detection;
-    vm.enable_type_checks = enable_type_checks;
-    vm.enable_uninitialized_detection = enable_uninitialized_detection;
-    vm.enable_overflow_checks = enable_overflow_checks;
-    vm.enable_stack_canaries = enable_stack_canaries;
-    vm.enable_heap_canaries = enable_heap_canaries;
-    vm.enable_pointer_sanitizer = enable_pointer_sanitizer;
-    vm.enable_memory_leak_detection = enable_memory_leak_detection;
-    vm.enable_stack_instrumentation = enable_stack_instrumentation;
-    vm.stack_instr_errors = stack_instr_errors;
-    vm.enable_dangling_detection = enable_dangling_detection;
-    vm.enable_alignment_checks = enable_alignment_checks;
-    vm.enable_provenance_tracking = enable_provenance_tracking;
-    vm.enable_invalid_arithmetic = enable_invalid_arithmetic;
-    vm.enable_format_string_checks = enable_format_string_checks;
-    vm.enable_random_canaries = enable_random_canaries;
-    vm.enable_memory_poisoning = enable_memory_poisoning;
-    vm.enable_memory_tagging = enable_memory_tagging;
-    vm.enable_vm_heap = enable_vm_heap;
-    vm.enable_cfi = enable_cfi;
-
     // If random canaries are enabled, regenerate the stack canary
-    if (enable_random_canaries) {
+    if (vm.flags & JCC_RANDOM_CANARIES) {
         vm.stack_canary = generate_random_canary();
     }
 

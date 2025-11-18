@@ -4,16 +4,16 @@ JCC includes a suite of powerful memory safety features designed to detect commo
 
 ## Memory safety features
 
-- [x] `--stack-canaries` **Stack overflow protection**
+- `--stack-canaries` **Stack overflow protection**
   - Places canary values (0xDEADBEEFCAFEBABE) on the stack between saved base pointer and local variables
   - Validates canary on function return (LEV instruction)
   - Detects stack buffer overflows with detailed error reporting including PC offset
-- [x] `--heap-canaries` **Heap overflow protection**
+- `--heap-canaries` **Heap overflow protection**
   - Front canary in AllocHeader (before user data)
   - Rear canary after user data
   - Both canaries (0xCAFEBABEDEADBEEF) validated on free()
   - Detects heap buffer over/underflows with allocation site information
-- [x] `--random-canaries` **Random stack canaries**
+- `--random-canaries` **Random stack canaries**
   - Generates cryptographically random canary value on VM initialization
   - Uses /dev/urandom on Unix-like systems for strong randomness
   - Falls back to time-seeded rand() if /dev/urandom unavailable
@@ -21,7 +21,7 @@ JCC includes a suite of powerful memory safety features designed to detect commo
   - Works with `--stack-canaries` flag (canaries are fixed by default)
   - Minimal performance overhead (one-time generation at startup)
   - Canary value stored in `vm->stack_canary` field
-- [x] `--memory-poisoning` **Uninitialized memory poisoning**
+- `--memory-poisoning` **Uninitialized memory poisoning**
   - Fills newly allocated memory with 0xCD pattern (clean/allocated)
   - Fills freed memory with 0xDD pattern (dead/freed)
   - Makes uninitialized reads return consistent bad values (0xCDCDCDCD...)
@@ -30,40 +30,40 @@ JCC includes a suite of powerful memory safety features designed to detect commo
   - Works independently of other safety features
   - Performance overhead proportional to allocation size (memset on alloc/free)
   - Compatible with both VM heap and regular malloc/free
-- [x] `--memory-leak-detection` **Memory leak detection**
+- `--memory-leak-detection` **Memory leak detection**
   - Tracks all VM heap allocations in a linked list
   - Removes from list on free()
   - Reports all unfreed allocations at program exit
   - Shows address, size, and PC offset of allocation site for each leak
-- [x] `--uaf-detection` **Use-after-free detection**
+- `--uaf-detection` **Use-after-free detection**
   - Marks freed blocks instead of reusing them
   - Increments generation counter on each free
   - CHKP opcode checks if accessed pointer has been freed
   - Reports UAF with allocation details and generation number
-- [x] **Double-free detection** (always enabled)
+- **Double-free detection** (always enabled)
   - Automatically detects attempts to free the same pointer twice
   - Works independently of UAF detection setting
   - Tracks freed state in allocation header
   - Prevents free list corruption and security vulnerabilities
   - Aborts execution with detailed error message including address, size, and generation
-- [x] `--bounds-checks` **Runtime array bounds checking**
+- `--bounds-checks` **Runtime array bounds checking**
   - Tracks requested vs allocated sizes for all heap allocations
   - CHKP opcode validates pointer is within allocated region
   - Checks against originally requested size (not rounded allocation)
   - Detects out-of-bounds array accesses with offset information
-- [x] `--type-checks` **Runtime type checking on pointer dereferences**
+- `--type-checks` **Runtime type checking on pointer dereferences**
   - Tracks allocation type information in heap headers
   - CHKT opcode validates pointer type matches expected type on dereference
   - Detects type confusion bugs (e.g., casting `int*` to `float*`)
   - Only checks heap allocations (stack types not tracked at runtime)
   - Skips checks for `void*` and generic pointers (universal pointers)
-- [x] `--uninitialized-detection` **Uninitialized variable detection**
+- `--uninitialized-detection` **Uninitialized variable detection**
   - Tracks initialization state of stack variables using HashMap
   - MARKI opcode marks variables as initialized after assignment
   - CHKI opcode validates variable is initialized before read
   - Detects use of uninitialized local variables with stack offset info
   - HashMap key: BP address + offset for per-function-call tracking
-- [x] `--overflow-checks` **Signed integer overflow detection**
+- `--overflow-checks` **Signed integer overflow detection**
   - Detects arithmetic overflow for addition, subtraction, multiplication, and division
   - Uses checked opcodes (ADDC, SUBC, MULC, DIVC) when enabled
   - ADDC/SUBC: Validates result stays within LLONG_MIN to LLONG_MAX range
@@ -72,36 +72,36 @@ JCC includes a suite of powerful memory safety features designed to detect commo
   - Reports overflow with operands, operation type, and PC offset
   - Zero overhead when disabled (uses regular ADD/SUB/MUL/DIV opcodes)
   - Does not affect floating-point operations
-- [x] `--pointer-sanitizer` **Comprehensive pointer checking (convenience flag)**
+- `--pointer-sanitizer` **Comprehensive pointer checking (convenience flag)**
   - Enables `--bounds-checks`, `--uaf-detection`, and `--type-checks` together
   - Provides comprehensive pointer safety in a single flag
   - Recommended for development and testing
 
 ## Advanced Pointer Tracking Features
 
-- [x] `--dangling-pointers` **Dangling stack pointer detection**
+- `--dangling-pointers` **Dangling stack pointer detection**
   - Tracks all stack pointer creations via MARKA opcode
   - Invalidates pointers when function returns (LEV instruction)
   - CHKP validates pointer hasn't been invalidated before dereference
   - Detects use-after-return bugs (e.g., returning `&local_var`)
   - HashMap tracks: pointer value → {BP, stack offset, size}
-- [x] `--alignment-checks` **Pointer alignment validation**
+- `--alignment-checks` **Pointer alignment validation**
   - CHKA opcode validates pointer alignment before dereference
   - Checks that `pointer % type_size == 0`
   - Detects misaligned memory access (e.g., `int*` at odd address)
   - Only checks types larger than 1 byte
-- [x] `--provenance-tracking` **Pointer origin tracking**
+- `--provenance-tracking` **Pointer origin tracking**
   - Tracks pointer provenance: HEAP, STACK, or GLOBAL
   - MARKP opcode records origin when pointers are created
   - Automatically tracks heap allocations in MALC opcode
   - HashMap stores: pointer → {origin_type, base, size}
   - Enables validation of pointer operations within original object bounds
-- [x] `--invalid-arithmetic` **Pointer arithmetic bounds checking**
+- `--invalid-arithmetic` **Pointer arithmetic bounds checking**
   - Requires `--provenance-tracking` to be enabled
   - Checks that `ptr` stays within `[base, base+size]` after arithmetic
   - Detects out-of-bounds pointer computations before dereference
   - Prevents pointer escape from original object
-- [x] `--stack-instrumentation` **Stack variable lifetime and access tracking**
+- `--stack-instrumentation` **Stack variable lifetime and access tracking**
   - Tracks all stack variable lifetimes with full block-level scoping
   - SCOPEIN/SCOPEOUT opcodes mark scope entry/exit for each `{ }` block
   - CHKL opcode validates variable is alive before access
@@ -111,7 +111,7 @@ JCC includes a suite of powerful memory safety features designed to detect commo
   - Integrated with `--dangling-pointers` for comprehensive temporal safety
   - Use `--stack-errors` flag to enable runtime errors (vs logging only)
   - Use `cc_print_stack_report()` API to print access statistics
-- [x] `--format-string-checks` **Format string validation**
+- `--format-string-checks` **Format string validation**
   - Validates format strings in printf-family functions at runtime
   - Counts format specifiers (%d, %s, %f, %x, %p, %c, etc.) and compares with argument count
   - Detects mismatches before function execution to prevent undefined behavior
@@ -124,7 +124,7 @@ JCC includes a suite of powerful memory safety features designed to detect commo
   - Prints detailed error message showing expected vs. actual argument counts
   - Zero overhead when disabled (simple flag check at runtime)
   - Prevents format string vulnerabilities and crashes from argument mismatches
-- [x] `--memory-tagging` **Temporal memory tagging**
+- `--memory-tagging` **Temporal memory tagging**
   - Tracks generation counter for each heap allocation
   - Records pointer-to-generation mapping at allocation time (MALC opcode)
   - Increments generation counter when memory is freed
@@ -135,7 +135,7 @@ JCC includes a suite of powerful memory safety features designed to detect commo
   - Generation stored as generation+1 to avoid HashMap NULL ambiguity
   - Works with `--vm-heap` flag to intercept malloc/free calls
   - Provides stronger temporal safety than UAF detection alone
-- [x] `--control-flow-integrity` **Control flow integrity (CFI)**
+- `--control-flow-integrity` **Control flow integrity (CFI)**
   - Implements shadow stack to detect ROP attacks and stack corruption
   - On CALL/CALLI: pushes return address to both main stack and shadow stack
   - On LEV (function return): validates return address matches shadow stack
@@ -146,7 +146,7 @@ JCC includes a suite of powerful memory safety features designed to detect commo
   - Zero overhead when disabled
   - Works with all function calls including recursion and indirect calls
   - Automatically skips validation for main() exit (no corresponding CALL)
-- [x] `--vm-heap` **Force VM heap allocation**
+- `--vm-heap` **Force VM heap allocation**
   - Intercepts malloc/free calls at compile time (codegen phase)
   - Routes malloc → MALC opcode, free → MFRE opcode
   - Enables memory safety features for user code using standard malloc/free
@@ -157,25 +157,25 @@ JCC includes a suite of powerful memory safety features designed to detect commo
 
 ## FFI Safety Features
 
-- [x] `--ffi-allow=func1,func2` **FFI function whitelist**
+- `--ffi-allow=func1,func2` **FFI function whitelist**
   - Comma-separated list of allowed FFI function names
   - When allow list is non-empty, only listed functions can be called via FFI
   - Enforced at runtime during CALLF instruction execution
   - Use with `cc_ffi_allow()` API for programmatic configuration
-- [x] `--ffi-deny=func1,func2` **FFI function blacklist**
+- `--ffi-deny=func1,func2` **FFI function blacklist**
   - Comma-separated list of denied FFI function names
   - Prevents specific functions from being called via FFI
   - Only checked when allow list is empty
   - Use with `cc_ffi_deny()` API for programmatic configuration
-- [x] `--disable-ffi` **Disable all FFI calls**
+- `--disable-ffi` **Disable all FFI calls**
   - Completely blocks all foreign function calls at runtime
   - Overrides both allow and deny lists
   - Useful for sandboxing untrusted code
-- [x] `--ffi-errors-fatal` **Make FFI errors abort execution**
+- `--ffi-errors-fatal` **Make FFI errors abort execution**
   - By default, FFI safety violations print warnings and skip the call
   - With this flag, violations cause the program to abort with exit code 1
   - Provides strict enforcement mode for production environments
-- [x] `--ffi-type-checking` **Runtime type validation on FFI calls**
+- `--ffi-type-checking` **Runtime type validation on FFI calls**
   - Validates argument counts match registered FFI function signatures
   - Checks argument types are compatible with expected parameter types
   - Detects type mismatches at compile time before calling native code
@@ -789,7 +789,7 @@ The FFI safety features can also be controlled programmatically using the JCC AP
 
 int main() {
     JCC vm;
-    cc_init(&vm, false);
+    cc_init(&vm, 0);  // Initialize without debugger
 
     // Configure FFI safety
     cc_ffi_allow(&vm, "malloc");

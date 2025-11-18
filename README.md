@@ -3,7 +3,7 @@
 > [!WARNING]
 > Work in progress, see [TODO](#todo)
 
-`JCC` is a ~~C89~~/~~C99~~/C11* JIT C Compiler. The preprocessor/lexer/parser is taken from [chibicc](http://https://github.com/rui314/chibicc) and the VM was built off [c4](https://github.com/rswier/c4) and [write-a-C-interpreter](https://github.com/lotabout/write-a-C-interpreter). 
+`JCC` is a ~~C89~~/~~C99~~/C11* JIT C Compiler. The preprocessor/lexer/parser is taken from [chibicc](http://https://github.com/rui314/chibicc) and the VM was built off [c4](https://github.com/rswier/c4) and [write-a-C-interpreter](https://github.com/lotabout/write-a-C-interpreter).
 
 **\*** Most C11 features implemented, see [TODO](#todo) for features still missing
 
@@ -192,39 +192,39 @@ JCC is single-threaded and does not implement any threading or atomic operations
 
 ### C11 Features
 
-- [ ] Anonymous structs/unions (Direct member access without intermediate name)
-- [ ] Bitfields - Bit-level struct member access
+- Anonymous structs/unions (Direct member access without intermediate name)
+- Bitfields - Bit-level struct member access
 
-### Clang + GNU Extensions 
+### Clang + GNU Extensions
 
-- [ ] Universal character names - `\uXXXX` escapes in strings
-- [ ] Blocks/closures - `^{}` (**important**)
-- [ ] Zero-length arrays - `int arr[0];` as flexible array alternative
-- [ ] Nested functions
-- [ ] Labels as values - `&&label` and `goto *ptr;`
-- [ ] Switch case ranges - `case 1 ... 5:`
+- Universal character names - `\uXXXX` escapes in strings
+- Blocks/closures - `^{}` (**important**)
+- Zero-length arrays - `int arr[0];` as flexible array alternative
+- Nested functions
+- Labels as values - `&&label` and `goto *ptr;`
+- Switch case ranges - `case 1 ... 5:`
 
 ### C23 Features (very limited support)
-- [ ] #elifdef and #elifndef directives for cleaner conditional compilation
-- [ ] #warning directive standardized
-- [ ] #embed directive for embedding binary data directly
-- [ ] `__VA_OPT__` for better variadic macro handling
-- [ ] `[[deprecated]]` for marking deprecated code
-    - [ ] Also support GNU `__attribute__((deprecated))` (and other matching attributes if possible)
-- [ ] `[[nodiscard]]` for warning about ignored return values
-- [ ] `[[maybe_unused]]` for suppressing unused warnings
-- [ ] `[[noreturn]]` and `[[ _Noreturn]]` for non-returning functions
-- [ ] `[[unsequenced]], [[reproducible]]` for function properties
-- [ ] `[[fallthrough]]` for intentional switch fallthrough
-- [ ] Binary integer literals (0b prefix)
-- [ ] Digit separators with single quotes (e.g., 1’000’000)
-- [ ] Empty initializer lists {}
+- #elifdef and #elifndef directives for cleaner conditional compilation
+- #warning directive standardized
+- #embed directive for embedding binary data directly
+- `__VA_OPT__` for better variadic macro handling
+- `[[deprecated]]` for marking deprecated code
+    - Also support GNU `__attribute__((deprecated))` (and other matching attributes if possible)
+- `[[nodiscard]]` for warning about ignored return values
+- `[[maybe_unused]]` for suppressing unused warnings
+- `[[noreturn]]` and `[[ _Noreturn]]` for non-returning functions
+- `[[unsequenced]], [[reproducible]]` for function properties
+- `[[fallthrough]]` for intentional switch fallthrough
+- Binary integer literals (0b prefix)
+- Digit separators with single quotes (e.g., 1’000’000)
+- Empty initializer lists {}
 
 ### Quality-of-Life Features
 
-- [ ] **Optimization passes** - Constant folding, dead code elimination
-- [ ] **Better error messages** - Line numbers in runtime errors
-- [ ] **Specify C versions** - `-std=c89`, `-std=c11` etc
+- **Optimization passes** - Constant folding, dead code elimination
+- **Better error messages** - Line numbers in runtime errors
+- **Specify C versions** - `-std=c89`, `-std=c11` etc
 
 ## Building
 
@@ -357,7 +357,7 @@ void my_native_func(int x, double y) {
 }
 
 JCC vm;
-cc_init(&vm);
+cc_init(&vm, 0);  // 0 for no flags, or JCC_ENABLE_DEBUGGER etc.
 
 // Register fixed-arg function: name, function pointer, arg count, returns_double
 cc_register_cfunc(&vm, "my_native_func", (void*)my_native_func, 2, 0);

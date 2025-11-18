@@ -159,6 +159,52 @@ typedef enum {
 } JCC_OP;
 
 /*!
+ @enum JCCFlags
+ @abstract Bitwise flags for JCC runtime features and safety checks.
+ @discussion
+ These flags control memory safety features, debugging, and runtime behavior.
+ Flags can be combined with bitwise OR. Some flags are convenience constants
+ that represent multiple underlying flags.
+*/
+typedef enum {
+    // Memory safety flags (bits 0-19)
+    JCC_BOUNDS_CHECKS      = (1 << 0),   // 0x00000001 - Array bounds checking
+    JCC_UAF_DETECTION      = (1 << 1),   // 0x00000002 - Use-after-free detection
+    JCC_TYPE_CHECKS        = (1 << 2),   // 0x00000004 - Runtime type checking
+    JCC_UNINIT_DETECTION   = (1 << 3),   // 0x00000008 - Uninitialized variable detection
+    JCC_OVERFLOW_CHECKS    = (1 << 4),   // 0x00000010 - Integer overflow detection
+    JCC_STACK_CANARIES     = (1 << 5),   // 0x00000020 - Stack canary protection
+    JCC_HEAP_CANARIES      = (1 << 6),   // 0x00000040 - Heap canary protection
+    JCC_MEMORY_LEAK_DETECT = (1 << 7),   // 0x00000080 - Memory leak detection
+    JCC_STACK_INSTR        = (1 << 8),   // 0x00000100 - Stack variable instrumentation
+    JCC_DANGLING_DETECT    = (1 << 9),   // 0x00000200 - Dangling pointer detection
+    JCC_ALIGNMENT_CHECKS   = (1 << 10),  // 0x00000400 - Pointer alignment checking
+    JCC_PROVENANCE_TRACK   = (1 << 11),  // 0x00000800 - Pointer provenance tracking
+    JCC_INVALID_ARITH      = (1 << 12),  // 0x00001000 - Invalid pointer arithmetic detection
+    JCC_FORMAT_STR_CHECKS  = (1 << 13),  // 0x00002000 - Format string validation
+    JCC_RANDOM_CANARIES    = (1 << 14),  // 0x00004000 - Random canary values
+    JCC_MEMORY_POISONING   = (1 << 15),  // 0x00008000 - Poison allocated/freed memory
+    JCC_MEMORY_TAGGING     = (1 << 16),  // 0x00010000 - Temporal memory tagging
+    JCC_VM_HEAP            = (1 << 17),  // 0x00020000 - Force VM-managed heap
+    JCC_CFI                = (1 << 18),  // 0x00040000 - Control flow integrity
+    JCC_STACK_INSTR_ERRORS = (1 << 19),  // 0x00080000 - Stack instrumentation errors
+    JCC_ENABLE_DEBUGGER    = (1 << 20),  // 0x00100000 - Interactive debugger
+
+    // Convenience flag combinations
+    JCC_POINTER_SANITIZER  = (JCC_BOUNDS_CHECKS | JCC_UAF_DETECTION | JCC_TYPE_CHECKS),
+    JCC_ALL_SAFETY         = 0x000FFFFF,  // All safety features (bits 0-19)
+
+    // VM heap is auto-enabled when any of these flags are set
+    JCC_VM_HEAP_TRIGGERS   = (JCC_VM_HEAP | JCC_HEAP_CANARIES | JCC_MEMORY_LEAK_DETECT |
+                              JCC_UAF_DETECTION | JCC_POINTER_SANITIZER | JCC_BOUNDS_CHECKS |
+                              JCC_MEMORY_TAGGING),
+
+    // Pointer validity checks
+    JCC_POINTER_CHECKS     = (JCC_UAF_DETECTION | JCC_BOUNDS_CHECKS | JCC_DANGLING_DETECT |
+                              JCC_MEMORY_TAGGING),
+} JCCFlags;
+
+/*!
  @struct HashEntry
  @abstract Simple key/value bucket used by the project's HashMap.
  @field key Null-terminated string key.
@@ -930,31 +976,9 @@ struct JCC {
     int poolsize;              // Size of memory segments (bytes)
     int debug_vm;              // Enable debug output during execution
 
-    // Memory safety features (all disabled by default)
-    int enable_bounds_checks;           // Runtime array bounds checking
-    int enable_uaf_detection;           // Use-after-free detection
-    int enable_type_checks;             // Runtime type checking on pointer dereferences
-    int enable_uninitialized_detection; // Uninitialized variable detection
-    int enable_overflow_checks;         // Signed integer overflow detection
-    int enable_stack_canaries;          // Stack overflow protection
-    int enable_heap_canaries;           // Heap overflow protection
-    int enable_pointer_sanitizer;       // Convenience flag: enables bounds, UAF, and type checks together
-    int enable_memory_leak_detection;   // Track allocations and report leaks at exit
-    int enable_stack_instrumentation;   // Track stack variable lifetimes and accesses
-    int stack_instr_errors;             // Enable runtime errors for stack instrumentation (vs logging only)
-    int enable_random_canaries;         // Use random stack canaries (prevents predictable bypass)
-    int enable_memory_poisoning;        // Poison allocated/freed memory (0xCD/0xDD patterns)
-    long long stack_canary;             // Stack canary value (random if enable_random_canaries, else fixed)
-
-    // Advanced pointer tracking features
-    int enable_dangling_detection;      // Detect use of stack pointers after function return
-    int enable_alignment_checks;        // Validate pointer alignment for type
-    int enable_provenance_tracking;     // Track pointer origin and validate operations
-    int enable_invalid_arithmetic;      // Detect pointer arithmetic outside object bounds
-    int enable_format_string_checks;    // Validate format strings in printf-family functions
-    int enable_memory_tagging;          // Temporal memory tagging (track pointer generation tags)
-    int enable_vm_heap;                 // Force all malloc/free through VM heap (MALC/MFRE)
-    int enable_cfi;                     // Control flow integrity (shadow stack for return address validation)
+    // Runtime flags (bitwise combination of JCCFlags)
+    uint32_t flags;                     // JCCFlags bitfield for all safety and runtime features
+    long long stack_canary;             // Stack canary value (random if JCC_RANDOM_CANARIES set, else fixed)
     int in_vm_alloc;                    // Reentrancy guard: prevents HashMap from triggering VM heap recursion
 
     // Control Flow Integrity (shadow stack)
@@ -966,8 +990,7 @@ struct JCC {
     int current_function_scope_id;      // Scope ID of current function being generated
     long long stack_high_water;         // Maximum stack usage tracking
 
-    // Debugger state
-    int enable_debugger;                // Enable interactive debugger
+    // Debugger state (enable via JCC_ENABLE_DEBUGGER flag)
     Breakpoint breakpoints[MAX_BREAKPOINTS]; // Breakpoint table
     int num_breakpoints;                // Number of active breakpoints
     int single_step;                    // Single-step mode (stop after each instruction)
@@ -1099,9 +1122,9 @@ struct JCC {
              memory segments, default include paths, and other runtime
              defaults.
  @param vm Pointer to an uninitialized JCC struct to initialize.
- @param enable_debugger Non-zero to enable the built-in debugger.
+ @param flags Bitwise combination of JCCFlags to enable features (0 for none).
 */
-void cc_init(JCC *vm, bool enable_debugger);
+void cc_init(JCC *vm, uint32_t flags);
 
 /*!
  @function cc_destroy
