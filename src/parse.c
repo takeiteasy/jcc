@@ -706,7 +706,7 @@ static Type *pointers(JCC *vm, Token **rest, Token *tok, Type *ty) {
 static Type *declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
     // Handle __attribute__ before declarator
     tok = attribute_list(vm, tok, ty);
-    
+
     ty = pointers(vm, &tok, tok, ty);
 
     if (equal(tok, "(")) {
@@ -716,7 +716,7 @@ static Type *declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
         tok = skip(vm, tok, ")");
         ty = type_suffix(vm, &tok, tok, ty);
         ty = declarator(vm, &tok, start->next, ty);
-        
+
         // Handle __attribute__ after declarator
         tok = attribute_list(vm, tok, ty);
         *rest = tok;
@@ -732,10 +732,10 @@ static Type *declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
     }
 
     ty = type_suffix(vm, &tok, tok, ty);
-    
+
     // Handle __attribute__ after declarator
     tok = attribute_list(vm, tok, ty);
-    
+
     ty->name = name;
     ty->name_pos = name_pos;
     *rest = tok;
@@ -746,7 +746,7 @@ static Type *declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
 static Type *abstract_declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
     // Handle __attribute__ before abstract declarator
     tok = attribute_list(vm, tok, ty);
-    
+
     ty = pointers(vm, &tok, tok, ty);
 
     if (equal(tok, "(")) {
@@ -756,7 +756,7 @@ static Type *abstract_declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
         tok = skip(vm, tok, ")");
         ty = type_suffix(vm, &tok, tok, ty);
         ty = abstract_declarator(vm, &tok, start->next, ty);
-        
+
         // Handle __attribute__ after abstract declarator
         tok = attribute_list(vm, tok, ty);
         *rest = tok;
@@ -764,11 +764,11 @@ static Type *abstract_declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
     }
 
     ty = type_suffix(vm, &tok, tok, ty);
-    
+
     // Handle __attribute__ after abstract declarator
     tok = attribute_list(vm, tok, ty);
     *rest = tok;
-    
+
     return ty;
 }
 
@@ -839,20 +839,20 @@ static Type *enum_specifier(JCC *vm, Token **rest, Token *tok) {
         VarScope *sc = push_scope(vm, name);
         sc->enum_ty = ty;
         sc->enum_val = val;
-        
+
         // Store enum constant in Type structure for code emission
         struct EnumConstant *ec = calloc(1, sizeof(struct EnumConstant));
         ec->name = strdup(name);
         ec->value = val;
         ec->next = NULL;
-        
+
         if (enum_tail) {
             enum_tail->next = ec;
         } else {
             ty->enum_constants = ec;
         }
         enum_tail = ec;
-        
+
         val++;
     }
 
@@ -1121,7 +1121,7 @@ static void designation(JCC *vm, Token **rest, Token *tok, Initializer *init) {
         Member *mem = struct_designator(vm, &tok, tok, init->ty);
         designation(vm, &tok, tok, init->children[mem->idx]);
         init->expr = NULL;
-        
+
         // Only continue with struct_initializer2 if we're not immediately followed
         // by another designator (which might re-designate the same nested struct)
         // This allows {.tl.x = 10, .tl.y = 20} to work correctly
@@ -2766,7 +2766,7 @@ static Token *attribute_list(JCC *vm, Token *tok, Type *ty) {
             // This includes: unused, noreturn, const, pure, nonnull, warn_unused_result, etc.
             if (tok->kind == TK_IDENT) {
                 tok = tok->next;
-                
+
                 // Handle attributes with parameters: attr(args...)
                 if (equal(tok, "(")) {
                     int depth = 1;
@@ -3248,15 +3248,15 @@ static Node *primary(JCC *vm, Token **rest, Token *tok) {
         if (equal(tok->next, "(")) {
             char *name = strndup(tok->loc, tok->len);
             PragmaMacro *pm = find_pragma_macro(vm, name);
-            
+
             if (pm) {
                 // This is a pragma macro call - execute it
                 tok = tok->next->next;  // Skip name and '('
-                
+
                 // Parse arguments
                 Node *args[32];  // Max 32 arguments
                 int arg_count = 0;
-                
+
                 if (!equal(tok, ")")) {
                     while (true) {
                         if (arg_count >= 32)
@@ -3267,21 +3267,25 @@ static Node *primary(JCC *vm, Token **rest, Token *tok) {
                         tok = skip(vm, tok, ",");
                     }
                 }
-                
+
                 *rest = tok->next;  // Skip ')'
-                
+
                 // Execute the pragma macro
                 Node *generated = execute_pragma_macro(vm, pm, args, arg_count);
                 if (!generated) {
                     error_tok(vm, start, "pragma macro '%s' failed to generate node", pm->name);
                 }
-                
-                free(name);
+
+                if (name != NULL) {
+                  free(name);
+                  name = NULL;
+                }
                 return generated;
             }
-            free(name);
+            if (name != NULL)
+              free(name);
         }
-        
+
         // Variable or enum constant
         VarScope *sc = find_var(vm, tok);
         *rest = tok->next;
@@ -3434,11 +3438,12 @@ static Token *function(JCC *vm, Token *tok, Type *basety, VarAttr *attr) {
     enter_scope(vm);
     create_param_lvars(vm, ty->params);
 
-    // A buffer for a struct/union return value is passed
-    // as the hidden first parameter.
-    Type *rty = ty->return_ty;
-    if ((rty->kind == TY_STRUCT || rty->kind == TY_UNION) && rty->size > 16)
-        new_lvar(vm, "", pointer_to(rty));
+    // Note: Struct/union returns are handled via return_buffer in codegen.c
+    // The hidden parameter approach was incomplete (caller never provided it),
+    // so it has been removed to fix variadic functions with struct returns.
+    // Type *rty = ty->return_ty;
+    // if ((rty->kind == TY_STRUCT || rty->kind == TY_UNION) && rty->size > 16)
+    //     new_lvar(vm, "", pointer_to(rty));
 
     fn->params = vm->locals;
 
@@ -3557,7 +3562,7 @@ static void declare_builtin_functions(JCC *vm) {
 Obj *parse(JCC *vm, Token *tok) {
     // Initialize global scope
     enter_scope(vm);
-    
+
     declare_builtin_functions(vm);
     vm->globals = NULL;
 

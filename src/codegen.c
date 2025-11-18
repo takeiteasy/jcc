@@ -892,6 +892,34 @@ void gen_expr(JCC *vm, Node *node) {
                     // ax contains 0 after MFRE
                     return;
                 }
+
+                if (strcmp(node->lhs->var->name, "realloc") == 0) {
+                    // Emit VM realloc (REALC) instead of FFI call
+                    // realloc(ptr, size)
+                    if (!node->args || !node->args->next) {
+                        error_tok(vm, node->tok, "realloc requires two arguments (ptr, size)");
+                    }
+                    gen_expr(vm, node->args);        // ptr in ax
+                    emit(vm, PUSH);                  // Push ptr onto stack
+                    gen_expr(vm, node->args->next);  // size in ax
+                    emit(vm, PUSH);                  // Push size onto stack
+                    emit(vm, REALC);                 // Realloc, returns new pointer in ax
+                    return;
+                }
+
+                if (strcmp(node->lhs->var->name, "calloc") == 0) {
+                    // Emit VM calloc (CALC) instead of FFI call
+                    // calloc(count, size)
+                    if (!node->args || !node->args->next) {
+                        error_tok(vm, node->tok, "calloc requires two arguments (count, size)");
+                    }
+                    gen_expr(vm, node->args);        // count in ax
+                    emit(vm, PUSH);                  // Push count onto stack
+                    gen_expr(vm, node->args->next);  // size in ax
+                    emit(vm, PUSH);                  // Push size onto stack
+                    emit(vm, CALC);                  // Calloc, returns zeroed pointer in ax
+                    return;
+                }
             }
 
             // Function call: push arguments right-to-left, then CALL

@@ -91,6 +91,11 @@ static int size_to_class(size_t size) {
     return 11;  // LARGE class
 }
 
+// Forward declarations for sorted allocation array helpers
+static int find_containing_allocation(JCC *vm, void *ptr);
+static void insert_sorted_allocation(JCC *vm, void *address, AllocHeader *header);
+static void remove_sorted_allocation(JCC *vm, void *address);
+
 // Helper function to count format specifiers in a format string
 // Returns -1 if format string is invalid or inaccessible
 static int count_format_specifiers(const char *fmt) {
@@ -304,11 +309,19 @@ static int remove_from_segregated_lists(JCC *vm, FreeBlock *target) {
     return -1;  // Not found
 }
 
+// Comparator for qsort: sort FreeBlocks by address
+static int compare_blocks_by_address(const void *a, const void *b) {
+    FreeBlock *block_a = *(FreeBlock **)a;
+    FreeBlock *block_b = *(FreeBlock **)b;
+    if (block_a < block_b) return -1;
+    if (block_a > block_b) return 1;
+    return 0;
+}
+
 // Coalesce adjacent free blocks across all segregated lists
 // This is more complex than single-list coalescing because blocks can be in different size classes
 static void coalesce_free_blocks(JCC *vm) {
     size_t canary_overhead = vm->enable_heap_canaries ? sizeof(long long) : 0;
-    int coalesced = 0;
 
     // Collect all free blocks into a temporary array for easier processing
     FreeBlock *all_blocks[1024];  // Reasonable limit
@@ -330,60 +343,66 @@ static void coalesce_free_blocks(JCC *vm) {
         curr = curr->next;
     }
 
-    // Try to merge adjacent blocks
-    for (int i = 0; i < block_count; i++) {
-        if (!all_blocks[i]) continue;  // Already merged
+    if (block_count == 0) {
+        return;  // No blocks to coalesce
+    }
 
-        FreeBlock *block1 = all_blocks[i];
-        char *block1_start = (char *)block1;
-        char *block1_end = block1_start + sizeof(AllocHeader) + block1->size + canary_overhead;
+    // First, remove all blocks from their current size classes
+    // This ensures we start with empty lists and rebuild them
+    for (int i = 0; i < NUM_SIZE_CLASSES - 1; i++) {
+        vm->size_class_lists[i] = NULL;
+    }
+    vm->large_list = NULL;
 
-        for (int j = i + 1; j < block_count; j++) {
-            if (!all_blocks[j]) continue;
+    // Sort blocks by address - O(n log n)
+    qsort(all_blocks, block_count, sizeof(FreeBlock *), compare_blocks_by_address);
 
-            FreeBlock *block2 = all_blocks[j];
-            char *block2_start = (char *)block2;
-            char *block2_end = block2_start + sizeof(AllocHeader) + block2->size + canary_overhead;
+    // Single-pass merge of adjacent blocks - O(n)
+    FreeBlock *merged_blocks[1024];
+    int merged_count = 0;
 
-            // Check if blocks are adjacent
-            if (block1_end == block2_start) {
-                // block1 is immediately before block2 - merge block2 into block1
-                remove_from_segregated_lists(vm, block2);
-                block1->size += sizeof(AllocHeader) + block2->size + canary_overhead;
-                all_blocks[j] = NULL;  // Mark as merged
-                block1_end = block1_start + sizeof(AllocHeader) + block1->size + canary_overhead;
-                coalesced = 1;
+    FreeBlock *current = all_blocks[0];
+    char *current_start = (char *)current;
+    char *current_end = current_start + sizeof(AllocHeader) + current->size + canary_overhead;
 
-                if (vm->debug_vm) {
-                    printf("COALESCE: merged adjacent blocks (new size: %zu bytes)\n", block1->size);
-                }
-            } else if (block2_end == block1_start) {
-                // block2 is immediately before block1 - merge block1 into block2
-                remove_from_segregated_lists(vm, block1);
-                block2->size += sizeof(AllocHeader) + block1->size + canary_overhead;
-                all_blocks[i] = block2;  // Update reference
-                all_blocks[j] = NULL;     // Mark block2's old position
-                block1 = block2;
-                block1_start = (char *)block1;
-                block1_end = block1_start + sizeof(AllocHeader) + block1->size + canary_overhead;
-                coalesced = 1;
+    for (int i = 1; i < block_count; i++) {
+        FreeBlock *next = all_blocks[i];
+        char *next_start = (char *)next;
 
-                if (vm->debug_vm) {
-                    printf("COALESCE: merged adjacent blocks (new size: %zu bytes)\n", block2->size);
-                }
+        // Check if current and next are adjacent
+        if (current_end == next_start) {
+            // Adjacent! Merge next into current
+            // Expand current block to include next block
+            current->size += sizeof(AllocHeader) + next->size + canary_overhead;
+            current_end = current_start + sizeof(AllocHeader) + current->size + canary_overhead;
+
+            if (vm->debug_vm) {
+                printf("COALESCE: merged adjacent blocks at 0x%llx (new size: %zu bytes)\n",
+                       (long long)current, current->size);
             }
+        } else {
+            // Not adjacent - save current block and move to next
+            merged_blocks[merged_count++] = current;
+            current = next;
+            current_start = next_start;
+            current_end = current_start + sizeof(AllocHeader) + current->size + canary_overhead;
         }
+    }
 
-        // After potential merges, re-insert block1 into appropriate size class
-        if (coalesced && all_blocks[i]) {
-            int new_class = size_to_class(all_blocks[i]->size);
-            if (new_class < NUM_SIZE_CLASSES - 1) {
-                all_blocks[i]->next = vm->size_class_lists[new_class];
-                vm->size_class_lists[new_class] = all_blocks[i];
-            } else {
-                all_blocks[i]->next = vm->large_list;
-                vm->large_list = all_blocks[i];
-            }
+    // Don't forget the last block
+    merged_blocks[merged_count++] = current;
+
+    // Re-insert all merged blocks into appropriate size classes
+    for (int i = 0; i < merged_count; i++) {
+        FreeBlock *block = merged_blocks[i];
+        int new_class = size_to_class(block->size);
+
+        if (new_class < NUM_SIZE_CLASSES - 1) {
+            block->next = vm->size_class_lists[new_class];
+            vm->size_class_lists[new_class] = block;
+        } else {
+            block->next = vm->large_list;
+            vm->large_list = block;
         }
     }
 }
@@ -435,7 +454,7 @@ int vm_eval(JCC *vm) {
             else
                 printf("\n");
         }
-        
+
         if (op == IMM)        { vm->ax = *vm->pc++; }                                        // load immediate value to ax
         else if (op == LC)    {
             // Check read watchpoints before loading
@@ -879,6 +898,9 @@ int vm_eval(JCC *vm) {
                     // Add to alloc_map for fast pointer validation
                     hashmap_put_int(&vm->alloc_map, vm->ax, header);
 
+                    // Add to sorted array for O(log n) pointer validation
+                    insert_sorted_allocation(vm, (void *)vm->ax, header);
+
                     // If memory poisoning enabled, fill with 0xCD pattern
                     if (vm->enable_memory_poisoning) {
                         memset((void *)vm->ax, 0xCD, header->size);
@@ -946,6 +968,9 @@ int vm_eval(JCC *vm) {
 
                     // Add to alloc_map for fast pointer validation
                     hashmap_put_int(&vm->alloc_map, vm->ax, header);
+
+                    // Add to sorted array for O(log n) pointer validation
+                    insert_sorted_allocation(vm, (void *)vm->ax, header);
 
                     // If memory poisoning enabled, fill with 0xCD pattern
                     if (vm->enable_memory_poisoning) {
@@ -1123,6 +1148,9 @@ int vm_eval(JCC *vm) {
                     // Remove from alloc_map (no longer tracking this allocation)
                     hashmap_delete_int(&vm->alloc_map, ptr);
 
+                    // Remove from sorted array
+                    remove_sorted_allocation(vm, (void *)ptr);
+
                     // Remove from ptr_tags if present
                     if (vm->ptr_tags.capacity > 0) {
                         hashmap_delete_int(&vm->ptr_tags, ptr);
@@ -1168,16 +1196,218 @@ int vm_eval(JCC *vm) {
             long long size = *vm->sp++;
             char *src = (char *)*vm->sp++;
             char *dest = (char *)*vm->sp++;
-            
+
+            // Validate size
+            if (size < 0) {
+                fprintf(stderr, "MCPY: negative size %lld\n", size);
+                return -1;
+            }
+            if (size > 1024*1024*1024) {  // 1GB sanity limit
+                fprintf(stderr, "MCPY: unreasonable size %lld (max 1GB)\n", size);
+                return -1;
+            }
+
+            // Optional: bounds check src and dest if vm-heap enabled
+            if (vm->enable_vm_heap && size > 0) {
+                // Check if src and dest are valid pointers
+                // For now, just ensure they're non-null
+                if (!src || !dest) {
+                    fprintf(stderr, "MCPY: null pointer (src=0x%llx, dest=0x%llx)\n",
+                            (long long)src, (long long)dest);
+                    return -1;
+                }
+            }
+
             // Simple byte-by-byte copy (no overlapping check)
             for (long long i = 0; i < size; i++) {
                 dest[i] = src[i];
             }
-            
+
             vm->ax = (long long)dest;  // Return destination pointer
             if (vm->debug_vm) {
-                printf("MCPY: copied %lld bytes from 0x%llx to 0x%llx\n", 
+                printf("MCPY: copied %lld bytes from 0x%llx to 0x%llx\n",
                        size, (long long)src, (long long)dest);
+            }
+        }
+        else if (op == REALC) {
+            // realloc: pop new_size, ptr from stack, realloc memory, return new pointer in ax
+            long long new_size = *vm->sp++;
+            long long old_ptr = *vm->sp++;
+
+            if (old_ptr == 0) {
+                // realloc(NULL, size) is equivalent to malloc(size)
+                vm->sp--;  // Push new_size back
+                *vm->sp = new_size;
+                // Simulate MALC - just set ax to new_size and execute MALC logic
+                // For simplicity, we'll just allocate new memory here
+                if (new_size <= 0) {
+                    vm->ax = 0;
+                } else {
+                    // Simplified allocation - just push size and "call" MALC
+                    // We'll inline a simplified version here
+                    size_t size = (new_size + 7) & ~7;
+                    size_t canary_overhead = vm->enable_heap_canaries ? sizeof(long long) : 0;
+                    size_t total_size = size + sizeof(AllocHeader) + canary_overhead;
+                    size_t available = (size_t)(vm->heap_end - vm->heap_ptr);
+
+                    if (total_size > available) {
+                        vm->ax = 0;  // Out of memory
+                    } else {
+                        AllocHeader *header = (AllocHeader *)vm->heap_ptr;
+                        header->size = size;
+                        header->requested_size = new_size;
+                        header->magic = 0xDEADBEEF;
+                        header->freed = 0;
+                        header->generation = 0;
+                        header->alloc_pc = vm->text_seg ? (long long)(vm->pc - vm->text_seg) : 0;
+                        header->type_kind = TY_VOID;
+
+                        if (vm->enable_heap_canaries) {
+                            header->canary = HEAP_CANARY;
+                            long long *rear_canary = (long long *)((char *)(header + 1) + size);
+                            *rear_canary = HEAP_CANARY;
+                        }
+
+                        vm->heap_ptr += total_size;
+                        vm->ax = (long long)(header + 1);
+                        hashmap_put_int(&vm->alloc_map, vm->ax, header);
+
+                        if (vm->enable_memory_poisoning) {
+                            memset((void *)vm->ax, 0xCD, size);
+                        }
+                    }
+                }
+            } else if (new_size == 0) {
+                // realloc(ptr, 0) is equivalent to free(ptr) and return NULL
+                // Free the old pointer
+                AllocHeader *header = ((AllocHeader *)old_ptr) - 1;
+                if (header->magic == 0xDEADBEEF && !header->freed) {
+                    header->freed = 1;
+                    header->generation++;
+                    hashmap_delete_int(&vm->alloc_map, old_ptr);
+                    if (vm->enable_memory_poisoning) {
+                        memset((void *)old_ptr, 0xDD, header->size);
+                    }
+                }
+                vm->ax = 0;
+            } else {
+                // Actual realloc: allocate new, copy old, free old
+                AllocHeader *old_header = ((AllocHeader *)old_ptr) - 1;
+
+                // Validate old pointer
+                if (old_header->magic != 0xDEADBEEF) {
+                    fprintf(stderr, "REALC: invalid pointer 0x%llx\n", old_ptr);
+                    vm->ax = 0;
+                } else if (old_header->freed) {
+                    fprintf(stderr, "REALC: use-after-free on pointer 0x%llx\n", old_ptr);
+                    vm->ax = 0;
+                } else {
+                    // Allocate new memory (simplified)
+                    size_t new_aligned = (new_size + 7) & ~7;
+                    size_t canary_overhead = vm->enable_heap_canaries ? sizeof(long long) : 0;
+                    size_t total_size = new_aligned + sizeof(AllocHeader) + canary_overhead;
+                    size_t available = (size_t)(vm->heap_end - vm->heap_ptr);
+
+                    if (total_size > available) {
+                        vm->ax = 0;  // Out of memory, old pointer unchanged
+                    } else {
+                        // Allocate new block
+                        AllocHeader *new_header = (AllocHeader *)vm->heap_ptr;
+                        new_header->size = new_aligned;
+                        new_header->requested_size = new_size;
+                        new_header->magic = 0xDEADBEEF;
+                        new_header->freed = 0;
+                        new_header->generation = 0;
+                        new_header->alloc_pc = vm->text_seg ? (long long)(vm->pc - vm->text_seg) : 0;
+                        new_header->type_kind = TY_VOID;
+
+                        if (vm->enable_heap_canaries) {
+                            new_header->canary = HEAP_CANARY;
+                            long long *rear_canary = (long long *)((char *)(new_header + 1) + new_aligned);
+                            *rear_canary = HEAP_CANARY;
+                        }
+
+                        vm->heap_ptr += total_size;
+                        long long new_ptr = (long long)(new_header + 1);
+
+                        // Copy old data to new location
+                        size_t copy_size = (old_header->size < new_aligned) ? old_header->size : new_aligned;
+                        memcpy((void *)new_ptr, (void *)old_ptr, copy_size);
+
+                        // Free old pointer
+                        old_header->freed = 1;
+                        old_header->generation++;
+                        hashmap_delete_int(&vm->alloc_map, old_ptr);
+
+                        if (vm->enable_memory_poisoning) {
+                            memset((void *)old_ptr, 0xDD, old_header->size);
+                        }
+
+                        // Register new pointer
+                        hashmap_put_int(&vm->alloc_map, new_ptr, new_header);
+                        vm->ax = new_ptr;
+
+                        if (vm->debug_vm) {
+                            printf("REALC: reallocated from 0x%llx (%zu bytes) to 0x%llx (%zu bytes)\n",
+                                   old_ptr, old_header->size, new_ptr, new_aligned);
+                        }
+                    }
+                }
+            }
+        }
+        else if (op == CALC) {
+            // calloc: pop size, count from stack, allocate zeroed memory, return pointer in ax
+            // Stack has [count][size] (size on top), so pop size first, then count
+            long long elem_size = *vm->sp++;
+            long long count = *vm->sp++;
+
+            if (count <= 0 || elem_size <= 0) {
+                vm->ax = 0;  // Return NULL for invalid size
+            } else {
+                // Check for overflow in count * elem_size
+                if (count > (1LL << 32) / elem_size) {
+                    fprintf(stderr, "CALC: size overflow (count=%lld, elem_size=%lld)\n", count, elem_size);
+                    vm->ax = 0;
+                } else {
+                    long long total = count * elem_size;
+                    size_t size = (total + 7) & ~7;
+                    size_t canary_overhead = vm->enable_heap_canaries ? sizeof(long long) : 0;
+                    size_t alloc_size = size + sizeof(AllocHeader) + canary_overhead;
+                    size_t available = (size_t)(vm->heap_end - vm->heap_ptr);
+
+                    if (alloc_size > available) {
+                        vm->ax = 0;  // Out of memory
+                    } else {
+                        AllocHeader *header = (AllocHeader *)vm->heap_ptr;
+                        header->size = size;
+                        header->requested_size = total;
+                        header->magic = 0xDEADBEEF;
+                        header->freed = 0;
+                        header->generation = 0;
+                        header->alloc_pc = vm->text_seg ? (long long)(vm->pc - vm->text_seg) : 0;
+                        header->type_kind = TY_VOID;
+
+                        if (vm->enable_heap_canaries) {
+                            header->canary = HEAP_CANARY;
+                            long long *rear_canary = (long long *)((char *)(header + 1) + size);
+                            *rear_canary = HEAP_CANARY;
+                        }
+
+                        vm->heap_ptr += alloc_size;
+                        vm->ax = (long long)(header + 1);
+
+                        // Zero the memory (calloc's defining characteristic)
+                        memset((void *)vm->ax, 0, size);
+
+                        // Register allocation
+                        hashmap_put_int(&vm->alloc_map, vm->ax, header);
+
+                        if (vm->debug_vm) {
+                            printf("CALC: allocated %zu bytes (%lld x %lld) at 0x%llx (zeroed)\n",
+                                   size, count, elem_size, vm->ax);
+                        }
+                    }
+                }
             }
         }
 
@@ -1308,40 +1538,16 @@ int vm_eval(JCC *vm) {
 
             // Check if pointer is in heap range
             if (ptr >= (long long)vm->heap_seg && ptr < (long long)vm->heap_end) {
-                // Find the allocation that contains this pointer using hash map
-                // We iterate through alloc_map (O(m) where m = number of allocations)
-                // instead of scanning the entire heap (O(n) where n = heap bytes)
+                // Find the allocation that contains this pointer using binary search
+                // O(log n) instead of O(m) where m = HashMap capacity
+                int alloc_index = find_containing_allocation(vm, (void *)ptr);
                 AllocHeader *found_header = NULL;
                 long long base_addr = 0;
 
-                // Iterate through all allocations in hash map
-                for (int i = 0; i < vm->alloc_map.capacity; i++) {
-                    HashEntry *entry = &vm->alloc_map.buckets[i];
-
-                    // Skip empty or deleted entries
-                    if (!entry->key || entry->key == (void *)-1)
-                        continue;
-
-                    // Integer keys have keylen == -1
-                    if (entry->keylen != -1)
-                        continue;
-
-                    // Get base address and header
-                    long long alloc_start = (long long)entry->key;
-                    AllocHeader *header = (AllocHeader *)entry->val;
-
-                    if (!header || header->magic != 0xDEADBEEF)
-                        continue;
-
-                    long long alloc_end = alloc_start + header->size;
-
-                    // Allow pointer up to (and including) one past the end
-                    // This is valid in C, but dereferencing it is not
-                    if (ptr >= alloc_start && ptr <= alloc_end) {
-                        found_header = header;
-                        base_addr = alloc_start;
-                        break;
-                    }
+                // If found, get header and base address from sorted array
+                if (alloc_index >= 0) {
+                    found_header = vm->sorted_allocs.headers[alloc_index];
+                    base_addr = (long long)vm->sorted_allocs.addresses[alloc_index];
                 }
 
                 if (found_header) {
@@ -1784,35 +1990,14 @@ int vm_eval(JCC *vm) {
 
             // Only check heap allocations (we can't track stack variable types at runtime)
             if (ptr >= (long long)vm->heap_seg && ptr < (long long)vm->heap_end) {
-                // Find the allocation header using hash map
-                // O(m) iteration where m = number of allocations (much better than O(n) heap scan)
+                // Find the allocation header using binary search
+                // O(log n) instead of O(m) where m = HashMap capacity
+                int alloc_index = find_containing_allocation(vm, (void *)ptr);
                 AllocHeader *found_header = NULL;
 
-                // Iterate through all allocations in hash map
-                for (int i = 0; i < vm->alloc_map.capacity; i++) {
-                    HashEntry *entry = &vm->alloc_map.buckets[i];
-
-                    // Skip empty or deleted entries
-                    if (!entry->key || entry->key == (void *)-1)
-                        continue;
-
-                    // Integer keys have keylen == -1
-                    if (entry->keylen != -1)
-                        continue;
-
-                    // Get base address and header
-                    long long alloc_start = (long long)entry->key;
-                    AllocHeader *header = (AllocHeader *)entry->val;
-
-                    if (!header || header->magic != 0xDEADBEEF)
-                        continue;
-
-                    long long alloc_end = alloc_start + header->size;
-
-                    if (ptr >= alloc_start && ptr <= alloc_end) {
-                        found_header = header;
-                        break;
-                    }
+                // If found, get header from sorted array
+                if (alloc_index >= 0) {
+                    found_header = vm->sorted_allocs.headers[alloc_index];
                 }
 
                 if (found_header) {
@@ -2249,6 +2434,136 @@ int vm_eval(JCC *vm) {
     }
 }
 
+// ========== SORTED ALLOCATION ARRAY HELPERS ==========
+// For O(log n) pointer validation in CHKP/CHKT opcodes
+
+// Comparator for qsort/bsearch: compare base addresses
+static int compare_alloc_by_address(const void *a, const void *b) {
+    void *addr_a = *(void **)a;
+    void *addr_b = *(void **)b;
+    if (addr_a < addr_b) return -1;
+    if (addr_a > addr_b) return 1;
+    return 0;
+}
+
+// Binary search to find allocation containing the given pointer
+// Returns the index in sorted_allocs if found, -1 otherwise
+static int find_containing_allocation(JCC *vm, void *ptr) {
+    if (vm->sorted_allocs.count == 0) {
+        return -1;
+    }
+
+    long long ptr_addr = (long long)ptr;
+
+    // Binary search for the allocation that contains ptr
+    // We need to find an allocation where: base <= ptr <= base + size
+    int left = 0;
+    int right = vm->sorted_allocs.count - 1;
+
+    while (left <= right) {
+        int mid = left + (right - left) / 2;
+        void *base = vm->sorted_allocs.addresses[mid];
+        AllocHeader *header = vm->sorted_allocs.headers[mid];
+        long long base_addr = (long long)base;
+        long long end_addr = base_addr + header->size;
+
+        // Check if ptr is within this allocation's range
+        if (ptr_addr >= base_addr && ptr_addr <= end_addr) {
+            return mid;  // Found it!
+        }
+
+        // Adjust search range
+        if (ptr_addr < base_addr) {
+            right = mid - 1;
+        } else {
+            // ptr is after this allocation, but it might be in a later one
+            left = mid + 1;
+        }
+    }
+
+    return -1;  // Not found in any allocation
+}
+
+// Insert allocation into sorted array (maintains sorted order)
+static void insert_sorted_allocation(JCC *vm, void *address, AllocHeader *header) {
+    // Grow array if needed
+    if (vm->sorted_allocs.count >= vm->sorted_allocs.capacity) {
+        int new_capacity = vm->sorted_allocs.capacity == 0 ? 256 : vm->sorted_allocs.capacity * 2;
+
+        void **new_addresses = (void **)realloc(vm->sorted_allocs.addresses,
+                                                 new_capacity * sizeof(void *));
+        AllocHeader **new_headers = (AllocHeader **)realloc(vm->sorted_allocs.headers,
+                                                             new_capacity * sizeof(AllocHeader *));
+
+        if (!new_addresses || !new_headers) {
+            printf("FATAL: Failed to grow sorted_allocs array\n");
+            exit(1);
+        }
+
+        vm->sorted_allocs.addresses = new_addresses;
+        vm->sorted_allocs.headers = new_headers;
+        vm->sorted_allocs.capacity = new_capacity;
+    }
+
+    // Binary search to find insertion point
+    int left = 0;
+    int right = vm->sorted_allocs.count;
+
+    while (left < right) {
+        int mid = left + (right - left) / 2;
+        if (vm->sorted_allocs.addresses[mid] < address) {
+            left = mid + 1;
+        } else {
+            right = mid;
+        }
+    }
+
+    // Shift elements to make room
+    int insert_pos = left;
+    for (int i = vm->sorted_allocs.count; i > insert_pos; i--) {
+        vm->sorted_allocs.addresses[i] = vm->sorted_allocs.addresses[i - 1];
+        vm->sorted_allocs.headers[i] = vm->sorted_allocs.headers[i - 1];
+    }
+
+    // Insert new allocation
+    vm->sorted_allocs.addresses[insert_pos] = address;
+    vm->sorted_allocs.headers[insert_pos] = header;
+    vm->sorted_allocs.count++;
+}
+
+// Remove allocation from sorted array
+static void remove_sorted_allocation(JCC *vm, void *address) {
+    // Binary search to find the allocation
+    int left = 0;
+    int right = vm->sorted_allocs.count - 1;
+    int found_index = -1;
+
+    while (left <= right) {
+        int mid = left + (right - left) / 2;
+        if (vm->sorted_allocs.addresses[mid] == address) {
+            found_index = mid;
+            break;
+        } else if (vm->sorted_allocs.addresses[mid] < address) {
+            left = mid + 1;
+        } else {
+            right = mid - 1;
+        }
+    }
+
+    if (found_index == -1) {
+        // Not found - this can happen for quarantined blocks that were never added
+        return;
+    }
+
+    // Shift elements to fill the gap
+    for (int i = found_index; i < vm->sorted_allocs.count - 1; i++) {
+        vm->sorted_allocs.addresses[i] = vm->sorted_allocs.addresses[i + 1];
+        vm->sorted_allocs.headers[i] = vm->sorted_allocs.headers[i + 1];
+    }
+
+    vm->sorted_allocs.count--;
+}
+
 void cc_init(JCC *vm, bool enable_debugger) {
     // Zero-initialize the VM struct
     memset(vm, 0, sizeof(JCC));
@@ -2292,6 +2607,12 @@ void cc_init(JCC *vm, bool enable_debugger) {
     vm->ptr_tags.capacity = 0;
     vm->ptr_tags.buckets = NULL;
     vm->ptr_tags.used = 0;
+
+    // Initialize sorted allocation array for O(log n) pointer validation
+    vm->sorted_allocs.addresses = NULL;
+    vm->sorted_allocs.headers = NULL;
+    vm->sorted_allocs.count = 0;
+    vm->sorted_allocs.capacity = 0;
 
     // Initialize CFI shadow stack (will be allocated if enable_cfi is set)
     vm->shadow_stack = NULL;
@@ -2417,6 +2738,41 @@ void cc_destroy(JCC *vm) {
     if (vm->ptr_tags.buckets)
         free(vm->ptr_tags.buckets);
 
+    // Free sorted allocation arrays
+    if (vm->sorted_allocs.addresses)
+        free(vm->sorted_allocs.addresses);
+    if (vm->sorted_allocs.headers)
+        free(vm->sorted_allocs.headers);
+
+    // Free macros HashMap (string keys from tokens - not allocated, but Macro values are allocated)
+    if (vm->macros.buckets) {
+        for (int i = 0; i < vm->macros.capacity; i++) {
+            HashEntry *entry = &vm->macros.buckets[i];
+            if (entry->key && entry->key != (void *)-1) {
+                // Don't free key - it points to token loc, not allocated by HashMap
+                // Free Macro value (Macro struct is defined in preprocess.c, treat as opaque)
+                // Note: Internal Macro fields (params, body tokens) are acceptable leaks
+                // for short-lived compiler invocations, or should be freed in preprocess.c cleanup
+                if (entry->val) {
+                    free(entry->val);
+                }
+            }
+        }
+        free(vm->macros.buckets);
+    }
+
+    // Free pragma_once HashMap (string keys from file names - allocated, values are just (void*)1)
+    if (vm->pragma_once.buckets) {
+        for (int i = 0; i < vm->pragma_once.capacity; i++) {
+            HashEntry *entry = &vm->pragma_once.buckets[i];
+            if (entry->key && entry->key != (void *)-1 && entry->keylen != -1) {
+                // Free string key (file name)
+                free(entry->key);
+            }
+        }
+        free(vm->pragma_once.buckets);
+    }
+
     // Free FFI table
     if (vm->ffi_table) {
         for (int i = 0; i < vm->ffi_count; i++) {
@@ -2428,7 +2784,7 @@ void cc_destroy(JCC *vm) {
         }
         free(vm->ffi_table);
     }
-    
+
     // Free error message buffer if set
     if (vm->error_message) {
         free(vm->error_message);
@@ -2707,10 +3063,10 @@ int cc_run(JCC *vm, int argc, char **argv) {
     if (!vm || !vm->text_seg) {
         error("VM not initialized - call cc_compile first");
     }
- 
+
     // Get entry point (main function) from text_seg[0]
     long long main_addr = vm->text_seg[0];
-    
+
     // main_addr is an offset from text_seg
     vm->pc = vm->text_seg + main_addr;
 
@@ -2726,7 +3082,7 @@ int cc_run(JCC *vm, int argc, char **argv) {
     // Save initial stack/base pointers for exit detection in vm_eval
     vm->initial_sp = vm->sp;
     vm->initial_bp = vm->bp;
-    
+
     // Push a sentinel return address (0) so LEV can detect when main returns
     // Stack layout before main's ENT:
     // [argv] [argc] [ret=0] ← sp

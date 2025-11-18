@@ -63,7 +63,7 @@ typedef enum {
     // Checked arithmetic operations (overflow detection)
     ADDC, SUBC, MULC, DIVC,
     // VM memory operations (self-contained, no system calls)
-    MALC, MFRE, MCPY,
+    MALC, MFRE, MCPY, REALC, CALC,
     // Type conversion instructions
     SX1, SX2, SX4,  // Sign extend 1/2/4 bytes to 8 bytes
     ZX1, ZX2, ZX4,  // Zero extend 1/2/4 bytes to 8 bytes
@@ -854,6 +854,14 @@ struct JCC {
     HashMap alloc_map;         // Maps base addresses to AllocHeaders (for fast pointer validation)
     HashMap ptr_tags;          // Maps pointers to their creation generation tags (for temporal safety)
 
+    // Sorted allocation array for O(log n) range queries (CHKP/CHKT performance)
+    struct {
+        void **addresses;      // Sorted array of base addresses
+        AllocHeader **headers; // Parallel array of headers
+        int count;             // Number of active allocations
+        int capacity;          // Allocated array capacity
+    } sorted_allocs;
+
     // Configuration
     int poolsize;              // Size of memory segments (bytes)
     int debug_vm;              // Enable debug output during execution
@@ -883,6 +891,7 @@ struct JCC {
     int enable_memory_tagging;          // Temporal memory tagging (track pointer generation tags)
     int enable_vm_heap;                 // Force all malloc/free through VM heap (MALC/MFRE)
     int enable_cfi;                     // Control flow integrity (shadow stack for return address validation)
+    int in_vm_alloc;                    // Reentrancy guard: prevents HashMap from triggering VM heap recursion
 
     // Control Flow Integrity (shadow stack)
     long long *shadow_stack;            // Shadow stack for return addresses (CFI)
@@ -928,7 +937,7 @@ struct JCC {
     CondIncl *cond_incl;
     HashMap pragma_once;
     int include_next_idx;
-    
+
     // Pragma macro system
     struct PragmaMacro *pragma_macros;  // Linked list of compile-time macros
     bool compiling_pragma_macro;        // True when compiling a pragma macro (skip main() requirement)
