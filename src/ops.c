@@ -174,7 +174,7 @@ static int count_format_specifiers(const char *fmt) {
 }
 
 static void report_memory_leaks(JCC *vm) {
-    if (!vm->enable_memory_leak_detection)
+    if (!(vm->flags & JCC_MEMORY_LEAK_DETECT))
         return;
 
     if (!vm->alloc_list) {
@@ -318,7 +318,7 @@ static int compare_blocks_by_address(const void *a, const void *b) {
 // Coalesce adjacent free blocks across all segregated lists
 // This is more complex than single-list coalescing because blocks can be in different size classes
 static void coalesce_free_blocks(JCC *vm) {
-    size_t canary_overhead = vm->enable_heap_canaries ? sizeof(long long) : 0;
+    size_t canary_overhead = vm->flags & JCC_HEAP_CANARIES ? sizeof(long long) : 0;
 
     // Collect all free blocks into a temporary array for easier processing
     FreeBlock *all_blocks[1024];  // Reasonable limit
@@ -540,7 +540,7 @@ int op_LEA_fn(JCC *vm) {
 
     // If stack canaries are enabled and this is a local variable (negative offset),
     // we need to adjust by -STACK_CANARY_SLOTS because the canary occupies bp-1
-    if (vm->enable_stack_canaries && offset < 0) {
+    if (vm->flags & JCC_STACK_CANARIES && offset < 0) {
         offset -= STACK_CANARY_SLOTS;  // Shift locals down by canary slots
     }
 
@@ -562,7 +562,7 @@ int op_CALL_fn(JCC *vm) {
     // Call subroutine: push return address to main stack and shadow stack
     long long ret_addr = (long long)(vm->pc+1);
     *--vm->sp = ret_addr;
-    if (vm->enable_cfi) {
+    if (vm->flags & JCC_CFI) {
         *--vm->shadow_sp = ret_addr;  // Also push to shadow stack for CFI
     }
     vm->pc = (long long *)*vm->pc;
@@ -573,7 +573,7 @@ int op_CALLI_fn(JCC *vm) {
     // Call subroutine indirect: push return address to main stack and shadow stack
     long long ret_addr = (long long)vm->pc;
     *--vm->sp = ret_addr;
-    if (vm->enable_cfi) {
+    if (vm->flags & JCC_CFI) {
         *--vm->shadow_sp = ret_addr;  // Also push to shadow stack for CFI
     }
     vm->pc = (long long *)*vm->pc;
@@ -596,7 +596,7 @@ int op_ENT_fn(JCC *vm) {
     vm->bp = vm->sp;                 // Set new base pointer
 
     // If stack canaries are enabled, write canary after old bp
-    if (vm->enable_stack_canaries) {
+    if (vm->flags & JCC_STACK_CANARIES) {
         *--vm->sp = vm->stack_canary;
     }
 
@@ -605,7 +605,7 @@ int op_ENT_fn(JCC *vm) {
     vm->sp = vm->sp - stack_size;
 
     // Stack overflow checking (for stack instrumentation)
-    if (vm->enable_stack_instrumentation) {
+    if (vm->flags & JCC_STACK_INSTR) {
         long long stack_used = (long long)(vm->initial_sp - vm->sp);
         if (stack_used > vm->stack_high_water) {
             vm->stack_high_water = stack_used;
@@ -614,7 +614,7 @@ int op_ENT_fn(JCC *vm) {
         // Check if we're approaching stack limit (within 10% of segment size)
         long long stack_limit = vm->poolsize * 9 / 10;  // 90% threshold
         if (stack_used > stack_limit) {
-            if (vm->stack_instr_errors) {
+            if (vm->flags & JCC_STACK_INSTR_ERRORS) {
                 printf("\n========== STACK OVERFLOW WARNING ==========\n");
                 printf("Stack usage: %lld bytes (limit: %lld bytes)\n", stack_used, stack_limit);
                 printf("Current PC: 0x%llx (offset: %lld)\n",
@@ -644,7 +644,7 @@ int op_LEV_fn(JCC *vm) {
     vm->sp = vm->bp;  // Reset stack pointer to base pointer
 
     // If stack canaries are enabled, check canary (it's at bp-1)
-    if (vm->enable_stack_canaries) {
+    if (vm->flags & JCC_STACK_CANARIES) {
         // Canary is one slot below the saved bp
         long long canary = vm->sp[-1];
         if (canary != vm->stack_canary) {
@@ -661,7 +661,7 @@ int op_LEV_fn(JCC *vm) {
     }
 
     // Invalidate stack pointers for this frame (dangling pointer detection)
-    if (vm->enable_dangling_detection && vm->stack_ptrs.buckets) {
+    if (vm->flags & JCC_DANGLING_DETECT && vm->stack_ptrs.buckets) {
         // Iterate through all stack pointers and invalidate those with matching BP
         long long current_bp = (long long)vm->bp;
         for (int i = 0; i < vm->stack_ptrs.capacity; i++) {
@@ -695,7 +695,7 @@ int op_LEV_fn(JCC *vm) {
 
     // CFI check: validate return address against shadow stack
     // Only for normal function returns (not main's exit)
-    if (vm->enable_cfi) {
+    if (vm->flags & JCC_CFI) {
         long long shadow_ret_addr = *vm->shadow_sp++;  // Pop return address from shadow stack
         long long main_ret_addr = (long long)vm->pc;   // Return address we just loaded
 
@@ -716,7 +716,7 @@ int op_LEV_fn(JCC *vm) {
 
 int op_LI_fn(JCC *vm) {
     // check read watchpoints before loading
-    if (vm->enable_debugger && vm->num_watchpoints > 0) {
+    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->num_watchpoints > 0) {
         debugger_check_watchpoint(vm, (void*)vm->ax, 8, WATCH_READ);
     }
     vm->ax = *(long long *)(long long)vm->ax; // load long long to ax, address in ax
@@ -725,7 +725,7 @@ int op_LI_fn(JCC *vm) {
 
 int op_LC_fn(JCC *vm) {
     // Check read watchpoints before loading
-    if (vm->enable_debugger && vm->num_watchpoints > 0) {
+    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->num_watchpoints > 0) {
         debugger_check_watchpoint(vm, (void*)vm->ax, 1, WATCH_READ);
     }
     vm->ax = (long long)(*(signed char *)(long long)vm->ax); // load signed char, sign-extend to long long
@@ -734,7 +734,7 @@ int op_LC_fn(JCC *vm) {
 
 int op_LS_fn(JCC *vm) {
     // Check read watchpoints before loading
-    if (vm->enable_debugger && vm->num_watchpoints > 0) {
+    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->num_watchpoints > 0) {
         debugger_check_watchpoint(vm, (void*)vm->ax, 2, WATCH_READ);
     }
     vm->ax = (long long)(*(short *)(long long)vm->ax); // load short, sign-extend to long long
@@ -743,7 +743,7 @@ int op_LS_fn(JCC *vm) {
 
 int op_LW_fn(JCC *vm) {
     // Check read watchpoints before loading
-    if (vm->enable_debugger && vm->num_watchpoints > 0) {
+    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->num_watchpoints > 0) {
         debugger_check_watchpoint(vm, (void*)vm->ax, 4, WATCH_READ);
     }
     vm->ax = (long long)(*(int *)(long long)vm->ax); // load int, sign-extend to long long
@@ -752,7 +752,7 @@ int op_LW_fn(JCC *vm) {
 
 int op_SI_fn(JCC *vm) {
     // Check write watchpoints before storing
-    if (vm->enable_debugger && vm->num_watchpoints > 0) {
+    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->num_watchpoints > 0) {
         debugger_check_watchpoint(vm, (void*)*vm->sp, 8, WATCH_WRITE);
     }
     *(long long *)*vm->sp++ = vm->ax; // save long long to address, value in ax, address on stack
@@ -761,7 +761,7 @@ int op_SI_fn(JCC *vm) {
 
 int op_SC_fn(JCC *vm) {
     // Check write watchpoints before storing
-    if (vm->enable_debugger && vm->num_watchpoints > 0) {
+    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->num_watchpoints > 0) {
         debugger_check_watchpoint(vm, (void*)*vm->sp, 1, WATCH_WRITE);
     }
     vm->ax = *(char *)*vm->sp++ = vm->ax; // save character to address, value in ax, address on stack
@@ -770,7 +770,7 @@ int op_SC_fn(JCC *vm) {
 
 int op_SS_fn(JCC *vm) {
     // Check write watchpoints before storing
-    if (vm->enable_debugger && vm->num_watchpoints > 0) {
+    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->num_watchpoints > 0) {
         debugger_check_watchpoint(vm, (void*)*vm->sp, 2, WATCH_WRITE);
     }
     vm->ax = *(short *)*vm->sp++ = vm->ax; // save short to address, value in ax, address on stack
@@ -779,7 +779,7 @@ int op_SS_fn(JCC *vm) {
 
 int op_SW_fn(JCC *vm) {
     // Check write watchpoints before storing
-    if (vm->enable_debugger && vm->num_watchpoints > 0) {
+    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->num_watchpoints > 0) {
         debugger_check_watchpoint(vm, (void*)*vm->sp, 4, WATCH_WRITE);
     }
     vm->ax = *(int *)*vm->sp++ = vm->ax; // save int (word) to address, value in ax, address on stack
@@ -998,7 +998,7 @@ int op_MALC_fn(JCC *vm) {
     size_t size = (requested_size + 7) & ~7;
 
     // If heap canaries enabled, add space for rear canary (front canary is in AllocHeader)
-    size_t canary_overhead = vm->enable_heap_canaries ? sizeof(long long) : 0;
+    size_t canary_overhead = vm->flags & JCC_HEAP_CANARIES ? sizeof(long long) : 0;
     size_t total_size = size + sizeof(AllocHeader) + canary_overhead;
 
     // Try to find a suitable block using segregated free lists
@@ -1080,7 +1080,7 @@ int op_MALC_fn(JCC *vm) {
         header->type_kind = TY_VOID;  // Default to void* (generic pointer)
 
         // If heap canaries enabled, write canaries
-        if (vm->enable_heap_canaries) {
+        if (vm->flags & JCC_HEAP_CANARIES) {
             header->canary = HEAP_CANARY;
             // Write rear canary after user data
             long long *rear_canary = (long long *)((char *)(header + 1) + header->size);
@@ -1096,12 +1096,12 @@ int op_MALC_fn(JCC *vm) {
         insert_sorted_allocation(vm, (void *)vm->ax, header);
 
         // If memory poisoning enabled, fill with 0xCD pattern
-        if (vm->enable_memory_poisoning) {
+        if (vm->flags & JCC_MEMORY_POISONING) {
             memset((void *)vm->ax, 0xCD, header->size);
         }
 
         // If memory tagging enabled, record pointer creation generation
-        if (vm->enable_memory_tagging) {
+        if (vm->flags & JCC_MEMORY_TAGGING) {
             // Store pointer -> generation mapping
             hashmap_put_int(&vm->ptr_tags, vm->ax, (void *)(long long)header->generation);
 
@@ -1150,7 +1150,7 @@ int op_MALC_fn(JCC *vm) {
         header->type_kind = TY_VOID;  // Default to void* (generic pointer)
 
         // If heap canaries enabled, write canaries
-        if (vm->enable_heap_canaries) {
+        if (vm->flags & JCC_HEAP_CANARIES) {
             header->canary = HEAP_CANARY;
             // Write rear canary after user data
             long long *rear_canary = (long long *)((char *)(header + 1) + size);
@@ -1167,7 +1167,7 @@ int op_MALC_fn(JCC *vm) {
         insert_sorted_allocation(vm, (void *)vm->ax, header);
 
         // If memory poisoning enabled, fill with 0xCD pattern
-        if (vm->enable_memory_poisoning) {
+        if (vm->flags & JCC_MEMORY_POISONING) {
             memset((void *)vm->ax, 0xCD, size);
         }
 
@@ -1179,7 +1179,7 @@ int op_MALC_fn(JCC *vm) {
 
 malc_done:
     // If leak detection enabled, track this allocation
-    if (vm->enable_memory_leak_detection && vm->ax != 0) {
+    if (vm->flags & JCC_MEMORY_LEAK_DETECT && vm->ax != 0) {
         // Allocate a record (using real malloc, not VM heap!)
         AllocRecord *record = (AllocRecord *)malloc(sizeof(AllocRecord));
         if (record) {
@@ -1192,7 +1192,7 @@ malc_done:
     }
 
     // If provenance tracking enabled, mark heap allocation
-    if (vm->enable_provenance_tracking && vm->ax != 0) {
+    if (vm->flags & JCC_PROVENANCE_TRACK && vm->ax != 0) {
         AllocHeader *header = (AllocHeader *)((char *)vm->ax - sizeof(AllocHeader));
 
         // Create ProvenanceInfo for heap allocation
@@ -1209,7 +1209,7 @@ malc_done:
     }
 
     // If memory tagging enabled, record pointer creation generation
-    if (vm->enable_memory_tagging && vm->ax != 0) {
+    if (vm->flags & JCC_MEMORY_TAGGING && vm->ax != 0) {
         AllocHeader *header = (AllocHeader *)((char *)vm->ax - sizeof(AllocHeader));
 
         // Store pointer -> generation mapping
@@ -1255,7 +1255,7 @@ int op_MFRE_fn(JCC *vm) {
     }
 
     // If heap canaries enabled, check both canaries
-    if (vm->enable_heap_canaries) {
+    if (vm->flags & JCC_HEAP_CANARIES) {
         // Check front canary (in header)
         if (header->canary != HEAP_CANARY) {
             printf("\n========== HEAP OVERFLOW DETECTED ==========\n");
@@ -1301,7 +1301,7 @@ int op_MFRE_fn(JCC *vm) {
     }
 
     // If leak detection enabled, remove from tracking list
-    if (vm->enable_memory_leak_detection) {
+    if (vm->flags & JCC_MEMORY_LEAK_DETECT) {
         AllocRecord **prev = &vm->alloc_list;
         AllocRecord *curr = vm->alloc_list;
         while (curr) {
@@ -1316,7 +1316,7 @@ int op_MFRE_fn(JCC *vm) {
     }
 
     // If memory poisoning enabled, fill with 0xDD (dead memory) pattern
-    if (vm->enable_memory_poisoning) {
+    if (vm->flags & JCC_MEMORY_POISONING) {
         memset((void *)ptr, 0xDD, size);
     }
 
@@ -1327,7 +1327,7 @@ int op_MFRE_fn(JCC *vm) {
     // If UAF detection or temporal tagging enabled, quarantine the memory (don't reuse)
     // Temporal tagging requires quarantine to prevent address reuse, which would
     // make it impossible to distinguish stale pointers from valid ones
-    int quarantine = vm->enable_uaf_detection || vm->enable_memory_tagging;
+    int quarantine = vm->flags & JCC_UAF_DETECTION || vm->flags & JCC_MEMORY_TAGGING;
 
     if (quarantine) {
         // Keep memory quarantined:
@@ -1335,7 +1335,7 @@ int op_MFRE_fn(JCC *vm) {
         // - Do NOT remove ptr_tags (needed for generation comparison)
         // - Do NOT add to free list (prevents reuse)
         if (vm->debug_vm) {
-            const char *reason = vm->enable_uaf_detection ? "UAF detection" : "memory tagging";
+            const char *reason = vm->flags & JCC_UAF_DETECTION ? "UAF detection" : "memory tagging";
             printf("MFRE: quarantined %zu bytes at 0x%llx (%s active, gen=%d)\n",
                     size, ptr, reason, header->generation);
         }
@@ -1405,7 +1405,7 @@ int op_MCPY_fn(JCC *vm) {
     }
 
     // Optional: bounds check src and dest if vm-heap enabled
-    if (vm->enable_vm_heap && size > 0) {
+    if (vm->flags & JCC_VM_HEAP && size > 0) {
         // Check if src and dest are valid pointers
         // For now, just ensure they're non-null
         if (!src || !dest) {
@@ -1445,7 +1445,7 @@ int op_REALC_fn(JCC *vm) {
             // Simplified allocation - just push size and "call" MALC
             // We'll inline a simplified version here
             size_t size = (new_size + 7) & ~7;
-            size_t canary_overhead = vm->enable_heap_canaries ? sizeof(long long) : 0;
+            size_t canary_overhead = vm->flags & JCC_HEAP_CANARIES ? sizeof(long long) : 0;
             size_t total_size = size + sizeof(AllocHeader) + canary_overhead;
             size_t available = (size_t)(vm->heap_end - vm->heap_ptr);
 
@@ -1461,7 +1461,7 @@ int op_REALC_fn(JCC *vm) {
                 header->alloc_pc = vm->text_seg ? (long long)(vm->pc - vm->text_seg) : 0;
                 header->type_kind = TY_VOID;
 
-                if (vm->enable_heap_canaries) {
+                if (vm->flags & JCC_HEAP_CANARIES) {
                     header->canary = HEAP_CANARY;
                     long long *rear_canary = (long long *)((char *)(header + 1) + size);
                     *rear_canary = HEAP_CANARY;
@@ -1471,7 +1471,7 @@ int op_REALC_fn(JCC *vm) {
                 vm->ax = (long long)(header + 1);
                 hashmap_put_int(&vm->alloc_map, vm->ax, header);
 
-                if (vm->enable_memory_poisoning) {
+                if (vm->flags & JCC_MEMORY_POISONING) {
                     memset((void *)vm->ax, 0xCD, size);
                 }
             }
@@ -1484,7 +1484,7 @@ int op_REALC_fn(JCC *vm) {
             header->freed = 1;
             header->generation++;
             hashmap_delete_int(&vm->alloc_map, old_ptr);
-            if (vm->enable_memory_poisoning) {
+            if (vm->flags & JCC_MEMORY_POISONING) {
                 memset((void *)old_ptr, 0xDD, header->size);
             }
         }
@@ -1503,7 +1503,7 @@ int op_REALC_fn(JCC *vm) {
         } else {
             // Allocate new memory (simplified)
             size_t new_aligned = (new_size + 7) & ~7;
-            size_t canary_overhead = vm->enable_heap_canaries ? sizeof(long long) : 0;
+            size_t canary_overhead = vm->flags & JCC_HEAP_CANARIES ? sizeof(long long) : 0;
             size_t total_size = new_aligned + sizeof(AllocHeader) + canary_overhead;
             size_t available = (size_t)(vm->heap_end - vm->heap_ptr);
 
@@ -1520,7 +1520,7 @@ int op_REALC_fn(JCC *vm) {
                 new_header->alloc_pc = vm->text_seg ? (long long)(vm->pc - vm->text_seg) : 0;
                 new_header->type_kind = TY_VOID;
 
-                if (vm->enable_heap_canaries) {
+                if (vm->flags & JCC_HEAP_CANARIES) {
                     new_header->canary = HEAP_CANARY;
                     long long *rear_canary = (long long *)((char *)(new_header + 1) + new_aligned);
                     *rear_canary = HEAP_CANARY;
@@ -1538,7 +1538,7 @@ int op_REALC_fn(JCC *vm) {
                 old_header->generation++;
                 hashmap_delete_int(&vm->alloc_map, old_ptr);
 
-                if (vm->enable_memory_poisoning) {
+                if (vm->flags & JCC_MEMORY_POISONING) {
                     memset((void *)old_ptr, 0xDD, old_header->size);
                 }
 
@@ -1572,7 +1572,7 @@ int op_CALC_fn(JCC *vm) {
         } else {
             long long total = count * elem_size;
             size_t size = (total + 7) & ~7;
-            size_t canary_overhead = vm->enable_heap_canaries ? sizeof(long long) : 0;
+            size_t canary_overhead = vm->flags & JCC_HEAP_CANARIES ? sizeof(long long) : 0;
             size_t alloc_size = size + sizeof(AllocHeader) + canary_overhead;
             size_t available = (size_t)(vm->heap_end - vm->heap_ptr);
 
@@ -1588,7 +1588,7 @@ int op_CALC_fn(JCC *vm) {
                 header->alloc_pc = vm->text_seg ? (long long)(vm->pc - vm->text_seg) : 0;
                 header->type_kind = TY_VOID;
 
-                if (vm->enable_heap_canaries) {
+                if (vm->flags & JCC_HEAP_CANARIES) {
                     header->canary = HEAP_CANARY;
                     long long *rear_canary = (long long *)((char *)(header + 1) + size);
                     *rear_canary = HEAP_CANARY;
@@ -1742,7 +1742,7 @@ int op_CALLF_fn(JCC *vm) {
                 ff->name, actual_nargs, ff->num_fixed_args, ff->is_variadic);
 
     // Format string validation for printf-family functions
-    if (vm->enable_format_string_checks) {
+    if (vm->flags & JCC_FORMAT_STR_CHECKS) {
         // Check if this is a printf-family function
         // Note: JCC creates specialized variants like printf0, printf1, etc.
         // for different call sites, so we need to check name prefixes
@@ -1976,7 +1976,7 @@ int op_CHKB_fn(JCC *vm) {
     // Check array bounds
     // Stack: [base_ptr, index]
     // Operands: element_size (in *pc)
-    if (!vm->enable_bounds_checks) {
+    if (!(vm->flags & JCC_BOUNDS_CHECKS)) {
         // Bounds checking not enabled, skip
         (void)*vm->pc++;  // Consume operand but don't use it
         return 0;
@@ -2035,8 +2035,9 @@ int op_CHKP_fn(JCC *vm) {
     // ax contains the pointer to check
     long long ptr = vm->ax;
 
-    if (!vm->enable_uaf_detection && !vm->enable_bounds_checks && !vm->enable_dangling_detection && !vm->enable_memory_tagging) {
+    if (!(vm->flags & JCC_POINTER_CHECKS)) {
         // No pointer checking enabled, skip
+        vm->pc++;
         return 0;
     }
 
@@ -2051,7 +2052,7 @@ int op_CHKP_fn(JCC *vm) {
     }
 
     // Check for dangling stack pointer
-    if (vm->enable_dangling_detection) {
+    if (vm->flags & JCC_DANGLING_DETECT) {
         if (vm->debug_vm) {
             printf("CHKP: checking pointer 0x%llx (buckets=%p, capacity=%d)\n",
                     ptr, (void*)vm->stack_ptrs.buckets, vm->stack_ptrs.capacity);
@@ -2085,7 +2086,7 @@ int op_CHKP_fn(JCC *vm) {
     }
 
     // Check temporal memory tagging (generation mismatch)
-    if (vm->enable_memory_tagging && ptr >= (long long)vm->heap_seg && ptr < (long long)vm->heap_end) {
+    if (vm->flags & JCC_MEMORY_TAGGING && ptr >= (long long)vm->heap_seg && ptr < (long long)vm->heap_end) {
         // Check if this memory is currently allocated
         void *header_val = hashmap_get_int(&vm->alloc_map, ptr);
 
@@ -2144,7 +2145,7 @@ int op_CHKP_fn(JCC *vm) {
 
         if (found_header) {
             // Check if freed (UAF detection)
-            if (vm->enable_uaf_detection && found_header->freed) {
+            if (vm->flags & JCC_UAF_DETECTION && found_header->freed) {
                 printf("\n========== USE-AFTER-FREE DETECTED ==========\n");
                 printf("Attempted to access freed memory\n");
                 printf("Address:     0x%llx\n", ptr);
@@ -2160,7 +2161,7 @@ int op_CHKP_fn(JCC *vm) {
             }
 
             // Check bounds (use requested_size, not rounded size)
-            if (vm->enable_bounds_checks) {
+            if (vm->flags & JCC_BOUNDS_CHECKS) {
                 long long offset = ptr - base_addr;
                 // Check against the originally requested size, not the rounded allocation size
                 if (offset < 0 || offset >= (long long)found_header->requested_size) {
@@ -2190,7 +2191,7 @@ int op_CHKT_fn(JCC *vm) {
     // Check type on pointer dereference
     // Operand: expected TypeKind
     // ax contains the pointer to check
-    if (!vm->enable_type_checks) {
+    if (!(vm->flags & JCC_TYPE_CHECKS)) {
         // Type checking not enabled, skip
         (void)*vm->pc++;  // Consume operand but don't use it
         return 0;
@@ -2262,7 +2263,7 @@ int op_CHKT_fn(JCC *vm) {
 int op_CHKI_fn(JCC *vm) {
     // Check if variable is initialized
     // Operand: stack offset (bp-relative)
-    if (!vm->enable_uninitialized_detection) {
+    if (!(vm->flags & JCC_UNINIT_DETECTION)) {
         // Uninitialized detection not enabled, skip
         (void)*vm->pc++;  // Consume operand but don't use it
         return 0;
@@ -2271,7 +2272,7 @@ int op_CHKI_fn(JCC *vm) {
     long long offset = *vm->pc++;
 
     // Adjust offset for stack canaries if enabled
-    if (vm->enable_stack_canaries && offset < 0) {
+    if (vm->flags & JCC_STACK_CANARIES && offset < 0) {
         offset -= STACK_CANARY_SLOTS;
     }
 
@@ -2299,7 +2300,7 @@ int op_CHKI_fn(JCC *vm) {
 int op_MARKI_fn(JCC *vm) {
     // Mark variable as initialized
     // Operand: stack offset (bp-relative)
-    if (!vm->enable_uninitialized_detection) {
+    if (!(vm->flags & JCC_UNINIT_DETECTION)) {
         // Uninitialized detection not enabled, skip
         (void)*vm->pc++;  // Consume operand but don't use it
         return 0;
@@ -2308,7 +2309,7 @@ int op_MARKI_fn(JCC *vm) {
     long long offset = *vm->pc++;
 
     // Adjust offset for stack canaries if enabled
-    if (vm->enable_stack_canaries && offset < 0) {
+    if (vm->flags & JCC_STACK_CANARIES && offset < 0) {
         offset -= STACK_CANARY_SLOTS;
     }
 
@@ -2325,7 +2326,7 @@ int op_MARKI_fn(JCC *vm) {
 int op_MARKA_fn(JCC *vm) {
     // Mark address for stack pointer tracking (dangling pointer detection)
     // Operands: stack offset (bp-relative), size, and scope_id (three immediate values)
-    if (!vm->enable_dangling_detection && !vm->enable_stack_instrumentation) {
+    if (!(vm->flags & JCC_DANGLING_DETECT) && !(vm->flags & JCC_STACK_INSTR)) {
         // Neither dangling nor stack instrumentation enabled, skip
         (void)*vm->pc++;  // Consume offset operand
         (void)*vm->pc++;  // Consume size operand
@@ -2371,7 +2372,7 @@ int op_MARKA_fn(JCC *vm) {
 int op_CHKA_fn(JCC *vm) {
     // Check pointer alignment
     // Operand: type size (for alignment check)
-    if (!vm->enable_alignment_checks) {
+    if (!(vm->flags & JCC_ALIGNMENT_CHECKS)) {
         // Alignment checking not enabled, skip
         (void)*vm->pc++;  // Consume operand
         return 0;
@@ -2404,8 +2405,9 @@ int op_CHKA_fn(JCC *vm) {
 int op_CHKPA_fn(JCC *vm) {
     // Check pointer arithmetic (invalid arithmetic detection)
     // Uses provenance tracking to validate result is within bounds
-    if (!vm->enable_invalid_arithmetic || !vm->enable_provenance_tracking) {
+    if (!(vm->flags & JCC_INVALID_ARITH) || !(vm->flags & JCC_PROVENANCE_TRACK)) {
         // Need both features enabled
+        vm->pc++;
         return 0;
     }
 
@@ -2448,7 +2450,7 @@ int op_CHKPA_fn(JCC *vm) {
 int op_MARKP_fn(JCC *vm) {
     // Mark provenance for pointer tracking
     // Operands: origin_type, base, size (encoded as three immediate values)
-    if (!vm->enable_provenance_tracking) {
+    if (!(vm->flags & JCC_PROVENANCE_TRACK)) {
         // Provenance tracking not enabled, skip
         (void)*vm->pc++;  // Consume origin_type operand
         (void)*vm->pc++;  // Consume base operand
@@ -2479,7 +2481,7 @@ int op_MARKP_fn(JCC *vm) {
 int op_SCOPEIN_fn(JCC *vm) {
     // Mark scope entry - activate all variables in this scope
     // Operand: scope_id
-    if (!vm->enable_stack_instrumentation) {
+    if (!(vm->flags & JCC_STACK_INSTR)) {
         (void)*vm->pc++;  // Consume scope_id operand
         return 0;
     }
@@ -2510,7 +2512,7 @@ int op_SCOPEIN_fn(JCC *vm) {
 int op_SCOPEOUT_fn(JCC *vm) {
     // Mark scope exit - deactivate variables and detect dangling pointers
     // Operand: scope_id
-    if (!vm->enable_stack_instrumentation) {
+    if (!(vm->flags & JCC_STACK_INSTR)) {
         (void)*vm->pc++;  // Consume scope_id operand
         return 0;
     }
@@ -2536,12 +2538,12 @@ int op_SCOPEOUT_fn(JCC *vm) {
     }
 
     // Check for dangling pointers (pointers to variables in this scope)
-    if (vm->enable_dangling_detection) {
+    if (vm->flags & JCC_DANGLING_DETECT) {
         for (int i = 0; i < vm->stack_ptrs.capacity; i++) {
             if (vm->stack_ptrs.buckets[i].key != NULL) {
                 StackPtrInfo *ptr_info = (StackPtrInfo *)vm->stack_ptrs.buckets[i].val;
                 if (ptr_info && ptr_info->scope_id == scope_id && ptr_info->bp == (long long)vm->bp) {
-                    if (vm->stack_instr_errors) {
+                    if (vm->flags & JCC_STACK_INSTR_ERRORS) {
                         printf("\n========== DANGLING POINTER DETECTED ==========\n");
                         printf("Pointer to stack variable in scope %d still exists\n", scope_id);
                         printf("Pointer: 0x%s (bp=%+lld)\n", vm->stack_ptrs.buckets[i].key, ptr_info->offset);
@@ -2564,7 +2566,7 @@ int op_SCOPEOUT_fn(JCC *vm) {
 int op_CHKL_fn(JCC *vm) {
     // Check variable liveness before access
     // Operand: offset (bp-relative)
-    if (!vm->enable_stack_instrumentation) {
+    if (!(vm->flags & JCC_STACK_INSTR)) {
         (void)*vm->pc++;  // Consume offset operand
         return 0;
     }
@@ -2579,7 +2581,7 @@ int op_CHKL_fn(JCC *vm) {
         // Check if variable matches current BP (different frames shouldn't interfere)
         if (meta->bp != (long long)vm->bp && meta->bp != 0) {
             // Different frame - this is use after function return
-            if (vm->stack_instr_errors) {
+            if (vm->flags & JCC_STACK_INSTR_ERRORS) {
                 printf("\n========== USE AFTER RETURN DETECTED ==========\n");
                 printf("Variable '%s' at bp%+lld accessed after function return\n",
                         meta->name, meta->offset);
@@ -2594,7 +2596,7 @@ int op_CHKL_fn(JCC *vm) {
 
         // Check if variable is alive
         if (!meta->is_alive) {
-            if (vm->stack_instr_errors) {
+            if (vm->flags & JCC_STACK_INSTR_ERRORS) {
                 printf("\n========== USE AFTER SCOPE DETECTED ==========\n");
                 printf("Variable '%s' at bp%+lld accessed after scope exit\n",
                         meta->name, meta->offset);
@@ -2615,7 +2617,7 @@ int op_CHKL_fn(JCC *vm) {
 int op_MARKR_fn(JCC *vm) {
     // Mark variable read access
     // Operand: offset (bp-relative)
-    if (!vm->enable_stack_instrumentation) {
+    if (!(vm->flags & JCC_STACK_INSTR)) {
         (void)*vm->pc++;  // Consume offset operand
         return 0;
     }
@@ -2639,7 +2641,7 @@ int op_MARKR_fn(JCC *vm) {
 int op_MARKW_fn(JCC *vm) {
     // Mark variable write access
     // Operand: offset (bp-relative)
-    if (!vm->enable_stack_instrumentation) {
+    if (!(vm->flags & JCC_STACK_INSTR)) {
         (void)*vm->pc++;  // Consume offset operand
         return 0;
     }

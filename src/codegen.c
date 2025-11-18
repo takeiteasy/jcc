@@ -36,11 +36,11 @@ static void emit_with_arg(JCC *vm, int instruction, long long arg) {
 static void emit_load(JCC *vm, Type *ty, int is_deref) {
     // If UAF detection, bounds checking, dangling detection, or memory tagging enabled, check pointer before dereferencing
     // Only check on actual dereferences, not when loading pointer values
-    if (is_deref && (vm->enable_uaf_detection || vm->enable_bounds_checks || vm->enable_dangling_detection || vm->enable_memory_tagging))
+    if (is_deref && (vm->flags & JCC_POINTER_CHECKS))
         emit(vm, CHKP);  // Check that pointer in ax is valid
 
     // If alignment checking enabled, check pointer alignment before dereferencing
-    if (is_deref && vm->enable_alignment_checks) {
+    if (is_deref && vm->flags & JCC_ALIGNMENT_CHECKS) {
         // Emit alignment check with type size
         size_t type_size = ty->size;
         if (type_size > 1) {  // Only check for types larger than 1 byte
@@ -49,7 +49,7 @@ static void emit_load(JCC *vm, Type *ty, int is_deref) {
     }
 
     // If type checking enabled, check the type on dereference
-    if (is_deref && vm->enable_type_checks) {
+    if (is_deref && vm->flags & JCC_TYPE_CHECKS) {
         // Emit type check with expected type
         emit_with_arg(vm, CHKT, ty->kind);
     }
@@ -86,7 +86,7 @@ static void emit_store(JCC *vm, Type *ty) {
 
 // Emit debug info (source location mapping) for debugger
 static void emit_debug_info(JCC *vm, Token *tok) {
-    if (!vm->enable_debugger || !tok || !tok->file) {
+    if (!(vm->flags & JCC_ENABLE_DEBUGGER) || !tok || !tok->file) {
         return;
     }
 
@@ -210,11 +210,11 @@ void gen_expr(JCC *vm, Node *node) {
                                   node->ty->kind != TY_UNION);
 
                 // Check if variable is alive (for stack instrumentation)
-                if (vm->enable_stack_instrumentation) {
+                if (vm->flags & JCC_STACK_INSTR) {
                     emit_with_arg(vm, CHKL, node->var->offset);
                 }
 
-                if (vm->enable_uninitialized_detection && is_scalar) {
+                if (vm->flags & JCC_UNINIT_DETECTION && is_scalar) {
                     emit_with_arg(vm, CHKI, node->var->offset);
                 }
 
@@ -230,7 +230,7 @@ void gen_expr(JCC *vm, Node *node) {
                     // For scalar types, we need to load the value
                     emit_load(vm, node->ty, 0);  // Not a dereference, just loading variable value
                     // Mark read access for stack instrumentation
-                    if (vm->enable_stack_instrumentation) {
+                    if (vm->flags & JCC_STACK_INSTR) {
                         emit_with_arg(vm, MARKR, node->var->offset);
                     }
                 }
@@ -254,7 +254,7 @@ void gen_expr(JCC *vm, Node *node) {
             if (node->lhs->kind == ND_VAR) {
                 if (node->lhs->var->is_local) {
                     // Check if variable is alive (for stack instrumentation)
-                    if (vm->enable_stack_instrumentation) {
+                    if (vm->flags & JCC_STACK_INSTR) {
                         emit_with_arg(vm, CHKL, node->lhs->var->offset);
                     }
                     emit_with_arg(vm, LEA, node->lhs->var->offset);
@@ -325,14 +325,14 @@ void gen_expr(JCC *vm, Node *node) {
             } else {
                 // For scalar types, emit appropriate store instruction
                 // Mark write access for stack instrumentation (before store)
-                if (vm->enable_stack_instrumentation && node->lhs->kind == ND_VAR && node->lhs->var->is_local) {
+                if (vm->flags & JCC_STACK_INSTR && node->lhs->kind == ND_VAR && node->lhs->var->is_local) {
                     emit_with_arg(vm, MARKW, node->lhs->var->offset);
                 }
                 emit_store(vm, node->ty);
             }
 
             // Mark local variable as initialized (for uninitialized detection)
-            if (vm->enable_uninitialized_detection && node->lhs->kind == ND_VAR && node->lhs->var->is_local) {
+            if (vm->flags & JCC_UNINIT_DETECTION && node->lhs->kind == ND_VAR && node->lhs->var->is_local) {
                 bool is_scalar = (node->ty->kind != TY_ARRAY &&
                                   node->ty->kind != TY_STRUCT &&
                                   node->ty->kind != TY_UNION);
@@ -354,11 +354,11 @@ void gen_expr(JCC *vm, Node *node) {
             } else {
                 emit(vm, PUSH);
                 gen_expr(vm, node->rhs);
-                emit(vm, vm->enable_overflow_checks ? ADDC : ADD);
+                emit(vm, vm->flags & JCC_OVERFLOW_CHECKS ? ADDC : ADD);
             }
 
             // Check pointer arithmetic if result is a pointer type
-            if (vm->enable_invalid_arithmetic && node->ty->kind == TY_PTR) {
+            if (vm->flags & JCC_INVALID_ARITH && node->ty->kind == TY_PTR) {
                 emit(vm, CHKPA);
             }
             return;
@@ -372,11 +372,11 @@ void gen_expr(JCC *vm, Node *node) {
             } else {
                 emit(vm, PUSH);
                 gen_expr(vm, node->rhs);
-                emit(vm, vm->enable_overflow_checks ? SUBC : SUB);
+                emit(vm, vm->flags & JCC_OVERFLOW_CHECKS ? SUBC : SUB);
             }
 
             // Check pointer arithmetic if result is a pointer type
-            if (vm->enable_invalid_arithmetic && node->ty->kind == TY_PTR) {
+            if (vm->flags & JCC_INVALID_ARITH && node->ty->kind == TY_PTR) {
                 emit(vm, CHKPA);
             }
             return;
@@ -390,7 +390,7 @@ void gen_expr(JCC *vm, Node *node) {
             } else {
                 emit(vm, PUSH);
                 gen_expr(vm, node->rhs);
-                emit(vm, vm->enable_overflow_checks ? MULC : MUL);
+                emit(vm, vm->flags & JCC_OVERFLOW_CHECKS ? MULC : MUL);
             }
             return;
 
@@ -403,7 +403,7 @@ void gen_expr(JCC *vm, Node *node) {
             } else {
                 emit(vm, PUSH);
                 gen_expr(vm, node->rhs);
-                emit(vm, vm->enable_overflow_checks ? DIVC : DIV);
+                emit(vm, vm->flags & JCC_OVERFLOW_CHECKS ? DIVC : DIV);
             }
             return;
 
@@ -522,7 +522,7 @@ void gen_expr(JCC *vm, Node *node) {
                     emit_with_arg(vm, LEA, node->lhs->var->offset);
 
                     // Mark address for dangling pointer detection
-                    if (vm->enable_dangling_detection || vm->enable_stack_instrumentation) {
+                    if (vm->flags & JCC_DANGLING_DETECT || vm->flags & JCC_STACK_INSTR) {
                         // ax now contains the address of the stack variable
                         // Emit MARKA with stack offset, size, and scope_id as three operands
                         // node->ty is the pointer type, node->ty->base is what it points to
@@ -534,7 +534,7 @@ void gen_expr(JCC *vm, Node *node) {
                     }
 
                     // Mark provenance for stack pointer
-                    if (vm->enable_provenance_tracking) {
+                    if (vm->flags & JCC_PROVENANCE_TRACK) {
                         size_t pointed_size = node->ty->base ? node->ty->base->size : 1;
                         emit(vm, MARKP);
                         *++vm->text_ptr = 1;  // Origin type: 1=STACK
@@ -547,7 +547,7 @@ void gen_expr(JCC *vm, Node *node) {
                     emit_with_arg(vm, IMM, (long long)(vm->data_seg + resolved->offset));
 
                     // Mark provenance for global pointer
-                    if (vm->enable_provenance_tracking) {
+                    if (vm->flags & JCC_PROVENANCE_TRACK) {
                         size_t pointed_size = node->ty->base ? node->ty->base->size : 1;
                         emit(vm, MARKP);
                         *++vm->text_ptr = 2;  // Origin type: 2=GLOBAL
@@ -864,10 +864,7 @@ void gen_expr(JCC *vm, Node *node) {
 
             // Check if this is malloc/free and memory safety is enabled
             // When safety features are active, use VM heap (MALC/MFRE) instead of FFI
-            int use_vm_heap = vm->enable_vm_heap ||  // Explicit flag to force VM heap
-                              vm->enable_heap_canaries || vm->enable_memory_leak_detection ||
-                              vm->enable_uaf_detection || vm->enable_pointer_sanitizer ||
-                              vm->enable_bounds_checks || vm->enable_memory_tagging;
+            int use_vm_heap = (vm->flags & JCC_VM_HEAP_TRIGGERS) != 0;
 
             if (use_vm_heap && node->lhs->kind == ND_VAR && node->lhs->var->name) {
                 if (strcmp(node->lhs->var->name, "malloc") == 0) {
@@ -1164,7 +1161,7 @@ static void gen_stmt(JCC *vm, Node *node) {
             // Clean up VLA allocations before return
             emit_vla_cleanup(vm);
             // Emit SCOPEOUT for function scope before return
-            if (vm->enable_stack_instrumentation) {
+            if (vm->flags & JCC_STACK_INSTR) {
                 emit_with_arg(vm, SCOPEOUT, vm->current_function_scope_id);
             }
             emit(vm, LEV);  // Return from function
@@ -1173,7 +1170,7 @@ static void gen_stmt(JCC *vm, Node *node) {
         case ND_BLOCK: {
             // Emit SCOPEIN for this block (nested scope)
             int block_scope_id = -1;
-            if (vm->enable_stack_instrumentation) {
+            if (vm->flags & JCC_STACK_INSTR) {
                 block_scope_id = vm->current_scope_id++;
                 emit_with_arg(vm, SCOPEIN, block_scope_id);
             }
@@ -1184,7 +1181,7 @@ static void gen_stmt(JCC *vm, Node *node) {
             }
 
             // Emit SCOPEOUT for this block
-            if (vm->enable_stack_instrumentation && block_scope_id >= 0) {
+            if (vm->flags & JCC_STACK_INSTR && block_scope_id >= 0) {
                 emit_with_arg(vm, SCOPEOUT, block_scope_id);
             }
             return;
@@ -1439,7 +1436,7 @@ static void gen_stmt(JCC *vm, Node *node) {
 
 // Add a variable to the debug symbol table
 static void add_debug_symbol(JCC *vm, const char *name, long long offset, Type *ty, int is_local) {
-    if (!vm->enable_debugger || vm->num_debug_symbols >= MAX_DEBUG_SYMBOLS) {
+    if (!(vm->flags & JCC_ENABLE_DEBUGGER) || vm->num_debug_symbols >= MAX_DEBUG_SYMBOLS) {
         return;
     }
 
@@ -1453,7 +1450,7 @@ static void add_debug_symbol(JCC *vm, const char *name, long long offset, Type *
 
 // Add stack variable metadata for instrumentation
 static void add_stack_var_meta(JCC *vm, const char *name, long long offset, Type *ty, int scope_id) {
-    if (!vm->enable_stack_instrumentation) {
+    if (!(vm->flags & JCC_STACK_INSTR)) {
         return;
     }
 
@@ -1503,7 +1500,7 @@ void gen_function(JCC *vm, Obj *fn) {
     // Save number of global debug symbols (don't clear globals)
     // We only clear locals when entering a new function
     int num_global_symbols = 0;
-    if (vm->enable_debugger) {
+    if (vm->flags & JCC_ENABLE_DEBUGGER) {
         // Count global symbols (is_local == 0)
         for (int i = 0; i < vm->num_debug_symbols; i++) {
             if (!vm->debug_symbols[i].is_local) {
@@ -1593,12 +1590,12 @@ void gen_function(JCC *vm, Obj *fn) {
     emit_with_arg(vm, ENT, stack_size);
 
     // Emit SCOPEIN for function-level scope (activates all function variables)
-    if (vm->enable_stack_instrumentation) {
+    if (vm->flags & JCC_STACK_INSTR) {
         emit_with_arg(vm, SCOPEIN, function_scope_id);
     }
 
     // Mark function parameters as initialized (for uninitialized detection)
-    if (vm->enable_uninitialized_detection) {
+    if (vm->flags & JCC_UNINIT_DETECTION) {
         for (Obj *param = fn->params; param; param = param->next) {
             // Only mark scalar types (arrays/structs don't need tracking)
             bool is_scalar = (param->ty->kind != TY_ARRAY &&
@@ -1619,7 +1616,7 @@ void gen_function(JCC *vm, Obj *fn) {
     // 2. Functions without explicit returns reaching here is undefined behavior
     //    for non-void functions, so VLA cleanup is not critical
     // Emit SCOPEOUT for function scope before final return
-    if (vm->enable_stack_instrumentation) {
+    if (vm->flags & JCC_STACK_INSTR) {
         emit_with_arg(vm, SCOPEOUT, function_scope_id);
     }
     emit(vm, LEV);

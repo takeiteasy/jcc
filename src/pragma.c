@@ -170,7 +170,7 @@ static bool compile_single_pragma_macro(JCC *parent_vm, PragmaMacro *pm) {
     pm->macro_vm->initial_bp = pm->macro_vm->bp;
 
     // Setup shadow stack for CFI if enabled
-    if (pm->macro_vm->enable_cfi) {
+    if (pm->macro_vm->flags & JCC_CFI) {
         pm->macro_vm->shadow_sp = (long long *)((char *)pm->macro_vm->shadow_stack + pm->macro_vm->poolsize * sizeof(long long));
     }
 

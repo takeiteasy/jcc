@@ -21,13 +21,23 @@
 #include "./internal.h"
 
 // Bytecode file format:
-// Magic: "JJCC" (4 bytes)
-// Version: 1 (4 bytes)
-// Text size: size in bytes (8 bytes)
-// Data size: size in bytes (8 bytes)
-// Main offset: offset of main() in text segment (8 bytes)
-// Text segment: bytecode (text_size bytes)
-// Data segment: global data (data_size bytes)
+// V1:
+//   Magic: "JCC\0" (4 bytes)
+//   Version: 1 (4 bytes)
+//   Text size: size in bytes (8 bytes)
+//   Data size: size in bytes (8 bytes)
+//   Main offset: offset of main() in text segment (8 bytes)
+//   Text segment: bytecode (text_size bytes)
+//   Data segment: global data (data_size bytes)
+// V2 (adds flags):
+//   Magic: "JCC\0" (4 bytes)
+//   Version: 2 (4 bytes)
+//   Flags: JCCFlags bitfield (4 bytes)
+//   Text size: size in bytes (8 bytes)
+//   Data size: size in bytes (8 bytes)
+//   Main offset: offset of main() in text segment (8 bytes)
+//   Text segment: bytecode (text_size bytes)
+//   Data segment: global data (data_size bytes)
 
 int cc_save_bytecode(JCC *vm, const char *path) {
     if (!vm || !path) {
@@ -127,7 +137,15 @@ int cc_save_bytecode(JCC *vm, const char *path) {
         fclose(f);
         return -1;
     }
-    
+
+    // Write flags (v2 format)
+    uint32_t flags = vm->flags;
+    if (fwrite(&flags, sizeof(uint32_t), 1, f) != 1) {
+        fprintf(stderr, "error: failed to write flags: %s\n", strerror(errno));
+        fclose(f);
+        return -1;
+    }
+
     if (fwrite(&text_size, sizeof(long long), 1, f) != 1) {
         fprintf(stderr, "error: failed to write text size: %s\n", strerror(errno));
         fclose(f);
@@ -198,12 +216,18 @@ static int load_bytecode(JCC *vm, const char *data, size_t size) {
     
     // Read version
     READ_AND_INCR(version, int);
-    if (version != JCC_VERSION) {
-        fprintf(stderr, "error: unsupported bytecode version %d (expected %d)\n", 
-                version, JCC_VERSION);
+    if (version != 1 && version != 2) {
+        fprintf(stderr, "error: unsupported bytecode version %d (expected 1 or 2)\n", version);
         return -1;
     }
-    
+
+    // Read flags (v2 only)
+    uint32_t flags = 0;
+    if (version == 2) {
+        READ_AND_INCR(flags, uint32_t);
+        vm->flags = flags;
+    }
+
     // Read sizes
     READ_AND_INCR(text_size, long long);
     READ_AND_INCR(data_size, long long);
@@ -353,7 +377,7 @@ void cc_compile(JCC *vm, Obj *prog) {
         }
 
         // Allocate shadow stack for CFI if enabled
-        if (vm->enable_cfi) {
+        if (vm->flags & JCC_CFI) {
             if (!(vm->shadow_stack = malloc(vm->poolsize * sizeof(long long)))) {
                 error("could not malloc for shadow stack (CFI)");
             }
@@ -364,7 +388,7 @@ void cc_compile(JCC *vm, Obj *prog) {
         memset(vm->stack_seg, 0, vm->poolsize * sizeof(long long));
         memset(vm->heap_seg, 0, vm->poolsize);
 
-        if (vm->enable_cfi) {
+        if (vm->flags & JCC_CFI) {
             memset(vm->shadow_stack, 0, vm->poolsize * sizeof(long long));
         }
 
@@ -379,7 +403,7 @@ void cc_compile(JCC *vm, Obj *prog) {
         vm->current_codegen_fn = NULL;
 
         // Initialize source map for debugger (if enabled)
-        if (vm->enable_debugger) {
+        if (vm->flags & JCC_ENABLE_DEBUGGER) {
             vm->source_map_capacity = 1024;  // Initial capacity
             vm->source_map = malloc(vm->source_map_capacity * sizeof(SourceMap));
             if (!vm->source_map) {
