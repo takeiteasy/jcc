@@ -622,6 +622,38 @@ void cc_output_json(FILE *f, Obj *prog) {
     fprintf(f, "}\n");
 
     // Cleanup
-    if (seen_types) 
+    if (seen_types)
         free(seen_types);
+}
+
+void cc_output_source_map_json(JCC *vm, FILE *f) {
+    if (!vm || !f) {
+        return;
+    }
+
+    fprintf(f, "{\n");
+    fprintf(f, "  \"version\": 3,\n");
+    fprintf(f, "  \"mappings\": [\n");
+
+    for (int i = 0; i < vm->source_map_count; i++) {
+        SourceMap *map = &vm->source_map[i];
+
+        fprintf(f, "    {");
+        fprintf(f, "\"pc\": %lld, ", map->pc_offset);
+        fprintf(f, "\"file\": ");
+        print_escaped_string(f, map->file ? map->file->name : NULL);
+        fprintf(f, ", ");
+        fprintf(f, "\"line\": %d, ", map->line_no);
+        fprintf(f, "\"col\": %d, ", map->col_no);
+        fprintf(f, "\"end_col\": %d", map->end_col_no);
+        fprintf(f, "}");
+
+        if (i < vm->source_map_count - 1) {
+            fprintf(f, ",");
+        }
+        fprintf(f, "\n");
+    }
+
+    fprintf(f, "  ]\n");
+    fprintf(f, "}\n");
 }

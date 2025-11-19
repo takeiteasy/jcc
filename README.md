@@ -140,6 +140,46 @@ $ ./jcc --json -o lib.json lib.h
     "variables": [...]
 }
 ```
+
+#### Source Map JSON Export
+
+JCC now supports exporting detailed source maps in JSON format, which map bytecode locations to source code positions including file, line, and column information. This is useful for debugging tools, IDE integration, and error reporting.
+
+**Features:**
+- Maps bytecode PC offsets to source locations
+- Includes column number tracking for precise positioning
+- UTF-8 aware column calculation
+- JSON format for easy integration with external tools
+
+**Using the API:**
+```c
+#include "jcc.h"
+
+JCC vm;
+cc_init(&vm, JCC_ENABLE_DEBUGGER);  // Source maps require debugger flag
+Token *tok = cc_preprocess(&vm, "program.c");
+Obj *prog = cc_parse(&vm, tok);
+cc_compile(&vm, prog);
+
+// Export source map to JSON file
+FILE *f = fopen("sourcemap.json", "w");
+cc_output_source_map_json(&vm, f);
+fclose(f);
+
+cc_destroy(&vm);
+```
+
+**JSON Format:**
+```json
+{
+  "version": 3,
+  "mappings": [
+    {"pc": 8, "file": "program.c", "line": 3, "col": 5, "end_col": 8},
+    {"pc": 16, "file": "program.c", "line": 4, "col": 9, "end_col": 14},
+    ...
+  ]
+}
+```
 ## Core C Language Support
 
 ### Operators

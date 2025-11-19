@@ -523,15 +523,20 @@ void convert_pp_tokens(JCC *vm, Token *tok) {
 // Initialize line info for all tokens.
 static void add_line_numbers(JCC *vm, Token *tok) {
     char *p = vm->current_file->contents;
+    char *line_start = p;
     int n = 1;
 
     do {
         if (p == tok->loc) {
             tok->line_no = n;
+            // Calculate column number using display_width for UTF-8 support
+            tok->col_no = display_width(vm, line_start, tok->loc - line_start) + 1;
             tok = tok->next;
         }
-        if (*p == '\n')
+        if (*p == '\n') {
             n++;
+            line_start = p + 1;  // Next line starts after newline
+        }
     } while (*p++);
 }
 

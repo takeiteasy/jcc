@@ -594,9 +594,10 @@ int ast_token_line(Token *tok) {
 }
 
 int ast_token_column(Token *tok) {
-    // Column calculation would require tracking position in line
-    // For now, return 0 TODO: implement column tracking
-    return 0;
+    if (!tok) {
+        return 0;
+    }
+    return tok->col_no;
 }
 
 int ast_token_text(Token *tok, char *buffer, int bufsize) {
