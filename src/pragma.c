@@ -119,7 +119,7 @@ static bool compile_single_pragma_macro(JCC *parent_vm, PragmaMacro *pm) {
     // Prepend #include "pragma_api.h" to the token stream
     // Create a synthetic include directive
     const char *include_pragma_api = "#include \"pragma_api.h\"\n";
-    Token *include_tok = tokenize(&macro_vm, new_file("<pragma-macro-header>", 1, (char*)include_pragma_api));
+    Token *include_tok = tokenize(&macro_vm, new_file(&macro_vm, "<pragma-macro-header>", 1, (char*)include_pragma_api));
 
     // Link the include tokens to the body tokens
     Token *last_include_tok = include_tok;

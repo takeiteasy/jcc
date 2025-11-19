@@ -51,11 +51,12 @@ static void verror_at(JCC *vm,
     // If error handling is enabled, save error to buffer
     if (vm && vm->error_jmp_buf) {
         // Build error message into a buffer
-        char *msg = malloc(4096);  // Allocate space for error message
+        char *msg = arena_alloc(&vm->parser_arena, 4096);  // Allocate space for error message
         if (!msg) {
             fprintf(stderr, "Failed to allocate error message buffer\n");
             exit(1);
         }
+        memset(msg, 0, 4096);
         
         // Format the error message
         int pos = snprintf(msg, 4096, "%s:%d: ", filename, line_no);
@@ -152,7 +153,8 @@ bool consume(JCC *vm, Token **rest, Token *tok, char *str) {
 
 // Create a new token.
 static Token *new_token(JCC *vm, TokenKind kind, char *start, char *end) {
-    Token *tok = calloc(1, sizeof(Token));
+    Token *tok = arena_alloc(&vm->parser_arena, sizeof(Token));
+    memset(tok, 0, sizeof(Token));
     tok->kind = kind;
     tok->loc = start;
     tok->len = end - start;
@@ -298,7 +300,8 @@ static char *string_literal_end(JCC *vm, char *p) {
 
 static Token *read_string_literal(JCC *vm, char *start, char *quote) {
     char *end = string_literal_end(vm, quote + 1);
-    char *buf = calloc(1, end - quote);
+    char *buf = arena_alloc(&vm->parser_arena, end - quote);
+    memset(buf, 0, end - quote);
     int len = 0;
 
     for (char *p = quote + 1; p < end;) {
@@ -323,7 +326,8 @@ static Token *read_string_literal(JCC *vm, char *start, char *quote) {
 // is called a "surrogate pair".
 static Token *read_utf16_string_literal(JCC *vm, char *start, char *quote) {
     char *end = string_literal_end(vm, quote + 1);
-    uint16_t *buf = calloc(2, end - start);
+    uint16_t *buf = arena_alloc(&vm->parser_arena, 2 * (end - start));
+    memset(buf, 0, 2 * (end - start));
     int len = 0;
 
     for (char *p = quote + 1; p < end;) {
@@ -356,7 +360,8 @@ static Token *read_utf16_string_literal(JCC *vm, char *start, char *quote) {
 // encoded in 4 bytes.
 static Token *read_utf32_string_literal(JCC *vm, char *start, char *quote, Type *ty) {
     char *end = string_literal_end(vm, quote + 1);
-    uint32_t *buf = calloc(4, end - quote);
+    uint32_t *buf = arena_alloc(&vm->parser_arena, 4 * (end - quote));
+    memset(buf, 0, 4 * (end - quote));
     int len = 0;
 
     for (char *p = quote + 1; p < end;) {
@@ -764,8 +769,9 @@ static char *read_file(char *path) {
     return buf;
 }
 
-File *new_file(char *name, int file_no, char *contents) {
-    File *file = calloc(1, sizeof(File));
+File *new_file(JCC *vm, char *name, int file_no, char *contents) {
+    File *file = arena_alloc(&vm->parser_arena, sizeof(File));
+    memset(file, 0, sizeof(File));
     file->name = name;
     file->display_name = name;
     file->file_no = file_no;
@@ -879,7 +885,7 @@ Token *tokenize_file(JCC *vm, char *path) {
 
     // Save the filename for assembler .file directive.
     static int file_no;
-    File *file = new_file(path, file_no + 1, p);
+    File *file = new_file(vm, path, file_no + 1, p);
 
     // Save the filename for assembler .file directive.
     vm->input_files = realloc(vm->input_files, sizeof(char *) * (file_no + 2));

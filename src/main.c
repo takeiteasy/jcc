@@ -516,8 +516,7 @@ BAIL:
     if (input_tokens)
         free(input_tokens);
     if (input_progs) {
-        for (int i = 0; i < input_files_count; i++)
-            free((void *)input_progs[i]);
+        // Don't free individual Obj* - they're arena-allocated and freed by cc_destroy()
         free(input_progs);
     }
     if (out_file)

@@ -192,6 +192,9 @@ void cc_init(JCC *vm, uint32_t flags) {
     cc_define(vm, "JCC_HAS_FFI", "1");
 #endif
 
+    // Initialize parser arena (1MB default block size)
+    arena_init(&vm->parser_arena, 0);  // 0 = use default (1MB)
+
     if (vm->flags & JCC_ENABLE_DEBUGGER) {
         debugger_init(vm);
     }
@@ -296,20 +299,10 @@ void cc_destroy(JCC *vm) {
     if (vm->sorted_allocs.headers)
         free(vm->sorted_allocs.headers);
 
-    // Free macros HashMap (string keys from tokens - not allocated, but Macro values are allocated)
+    // Free macros HashMap (string keys from tokens - not allocated, Macro values are arena-allocated)
     if (vm->macros.buckets) {
-        for (int i = 0; i < vm->macros.capacity; i++) {
-            HashEntry *entry = &vm->macros.buckets[i];
-            if (entry->key && entry->key != (void *)-1) {
-                // Don't free key - it points to token loc, not allocated by HashMap
-                // Free Macro value (Macro struct is defined in preprocess.c, treat as opaque)
-                // Note: Internal Macro fields (params, body tokens) are acceptable leaks
-                // for short-lived compiler invocations, or should be freed in preprocess.c cleanup
-                if (entry->val) {
-                    free(entry->val);
-                }
-            }
-        }
+        // Don't free individual Macro values - they're arena-allocated and will be freed by arena_destroy()
+        // Just free the HashMap buckets
         free(vm->macros.buckets);
     }
 
@@ -342,6 +335,9 @@ void cc_destroy(JCC *vm) {
         free(vm->error_message);
         vm->error_message = NULL;
     }
+
+    // Destroy parser arena (frees all tokens, AST nodes, preprocessor state)
+    arena_destroy(&vm->parser_arena);
 }
 
 void cc_print_stack_report(JCC *vm) {

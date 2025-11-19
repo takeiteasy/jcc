@@ -60,7 +60,7 @@ bool equal(Token *tok, char *op);
 Token *skip(JCC *vm, Token *tok, char *op);
 bool consume(JCC *vm, Token **rest, Token *tok, char *str);
 void convert_pp_tokens(JCC *vm, Token *tok);
-File *new_file(char *name, int file_no, char *contents);
+File *new_file(JCC *vm, char *name, int file_no, char *contents);
 Token *tokenize_string_literal(JCC *vm, Token *tok, Type *basety);
 Token *tokenize(JCC *vm, File *file);
 Token *tokenize_file(JCC *vm, char *filename);
@@ -131,6 +131,15 @@ uint32_t decode_utf8(JCC *vm, char **new_pos, char *p);
 bool is_ident1(uint32_t c);
 bool is_ident2(uint32_t c);
 int display_width(JCC *vm, char *p, int len);
+
+//
+// arena.c
+//
+
+void arena_init(Arena *arena, size_t default_block_size);
+void *arena_alloc(Arena *arena, size_t size);
+void arena_reset(Arena *arena);
+void arena_destroy(Arena *arena);
 
 //
 // hashmap.c

@@ -900,6 +900,38 @@ typedef struct Breakpoint {
 } Breakpoint;
 
 /*!
+ @struct ArenaBlock
+ @abstract Represents a single memory block in an arena allocator.
+ @field base Pointer to the start of the memory block (from mmap/VirtualAlloc).
+ @field ptr Current allocation pointer (bump pointer).
+ @field size Total size of this block in bytes.
+ @field next Pointer to the next block in the chain.
+*/
+typedef struct ArenaBlock {
+    char *base;                 // Start of memory block
+    char *ptr;                  // Current allocation pointer (bump pointer)
+    size_t size;                // Total block size
+    struct ArenaBlock *next;    // Next block in chain
+} ArenaBlock;
+
+/*!
+ @struct Arena
+ @abstract Arena allocator for fast, bulk memory allocation with single deallocation.
+ @field current Currently active block for allocations.
+ @field blocks Linked list of all allocated blocks (for cleanup).
+ @field default_block_size Default size for new blocks (typically 1MB).
+ @discussion Arena allocators use bump-pointer allocation within large memory
+             blocks (allocated via mmap/VirtualAlloc). All allocations are
+             freed together when the arena is destroyed. Used for parser
+             frontend (tokens, AST nodes) which have fire-and-forget lifetime.
+*/
+typedef struct Arena {
+    ArenaBlock *current;        // Current block for allocations
+    ArenaBlock *blocks;         // All blocks (for cleanup)
+    size_t default_block_size;  // Default block size (1MB)
+} Arena;
+
+/*!
  @struct PragmaMacro
  @abstract Represents a pragma macro function.
  @field name Function name.
@@ -1058,6 +1090,9 @@ struct JCC {
     Obj *builtin_alloca;
     Obj *builtin_setjmp;
     Obj *builtin_longjmp;
+
+    // Arena allocator for parser frontend (tokens, AST, preprocessor state)
+    Arena parser_arena;             // Fast bump-pointer allocator for compilation-time allocations
 
     StringArray include_paths;
     StringArray system_include_paths;  // System header search paths for <...>

@@ -90,32 +90,33 @@ static Token *skip_line(JCC *vm, Token *tok) {
     return tok;
 }
 
-static Token *copy_token(Token *tok) {
-    Token *t = calloc(1, sizeof(Token));
+static Token *copy_token(JCC *vm, Token *tok) {
+    Token *t = arena_alloc(&vm->parser_arena, sizeof(Token));
     *t = *tok;
     t->next = NULL;
     return t;
 }
 
-static Token *new_eof(Token *tok) {
-    Token *t = copy_token(tok);
+static Token *new_eof(JCC *vm, Token *tok) {
+    Token *t = copy_token(vm, tok);
     t->kind = TK_EOF;
     t->len = 0;
     return t;
 }
 
-static Hideset *new_hideset(char *name) {
-    Hideset *hs = calloc(1, sizeof(Hideset));
+static Hideset *new_hideset(JCC *vm, char *name) {
+    Hideset *hs = arena_alloc(&vm->parser_arena, sizeof(Hideset));
+    memset(hs, 0, sizeof(Hideset));
     hs->name = name;
     return hs;
 }
 
-static Hideset *hideset_union(Hideset *hs1, Hideset *hs2) {
+static Hideset *hideset_union(JCC *vm, Hideset *hs1, Hideset *hs2) {
     Hideset head = {};
     Hideset *cur = &head;
 
     for (; hs1; hs1 = hs1->next)
-        cur = cur->next = new_hideset(hs1->name);
+        cur = cur->next = new_hideset(vm, hs1->name);
     cur->next = hs2;
     return head.next;
 }
@@ -127,30 +128,30 @@ static bool hideset_contains(Hideset *hs, char *s, int len) {
     return false;
 }
 
-static Hideset *hideset_intersection(Hideset *hs1, Hideset *hs2) {
+static Hideset *hideset_intersection(JCC *vm, Hideset *hs1, Hideset *hs2) {
     Hideset head = {};
     Hideset *cur = &head;
 
     for (; hs1; hs1 = hs1->next)
         if (hideset_contains(hs2, hs1->name, strlen(hs1->name)))
-            cur = cur->next = new_hideset(hs1->name);
+            cur = cur->next = new_hideset(vm, hs1->name);
     return head.next;
 }
 
-static Token *add_hideset(Token *tok, Hideset *hs) {
+static Token *add_hideset(JCC *vm, Token *tok, Hideset *hs) {
     Token head = {};
     Token *cur = &head;
 
     for (; tok; tok = tok->next) {
-        Token *t = copy_token(tok);
-        t->hideset = hideset_union(t->hideset, hs);
+        Token *t = copy_token(vm, tok);
+        t->hideset = hideset_union(vm, t->hideset, hs);
         cur = cur->next = t;
     }
     return head.next;
 }
 
 // Append tok2 to the end of tok1.
-static Token *append(Token *tok1, Token *tok2) {
+static Token *append(JCC *vm, Token *tok1, Token *tok2) {
     if (tok1->kind == TK_EOF)
         return tok2;
 
@@ -158,7 +159,7 @@ static Token *append(Token *tok1, Token *tok2) {
     Token *cur = &head;
 
     for (; tok1->kind != TK_EOF; tok1 = tok1->next)
-        cur = cur->next = copy_token(tok1);
+        cur = cur->next = copy_token(vm, tok1);
     cur->next = tok2;
     return head.next;
 }
@@ -199,7 +200,7 @@ static Token *skip_cond_incl(Token *tok) {
 }
 
 // Double-quote a given string and returns it.
-static char *quote_string(char *str) {
+static char *quote_string(JCC *vm, char *str) {
     int bufsize = 3;
     for (int i = 0; str[i]; i++) {
         if (str[i] == '\\' || str[i] == '"')
@@ -207,9 +208,8 @@ static char *quote_string(char *str) {
         bufsize++;
     }
 
-    char *buf = calloc(1, bufsize);
-    if (!buf)
-      error("out of memory in quote_string");
+    char *buf = arena_alloc(&vm->parser_arena, bufsize);
+    memset(buf, 0, bufsize);
     char *p = buf;
     *p++ = '"';
     for (int i = 0; str[i]; i++) {
@@ -223,32 +223,32 @@ static char *quote_string(char *str) {
 }
 
 static Token *new_str_token(JCC *vm, char *str, Token *tmpl) {
-    char *buf = quote_string(str);
-    return tokenize(vm, new_file(tmpl->file->name, tmpl->file->file_no, buf));
+    char *buf = quote_string(vm, str);
+    return tokenize(vm, new_file(vm, tmpl->file->name, tmpl->file->file_no, buf));
 }
 
 // Copy all tokens until the next newline, terminate them with
 // an EOF token and then returns them. This function is used to
 // create a new list of tokens for `#if` arguments.
-static Token *copy_line(Token **rest, Token *tok) {
+static Token *copy_line(JCC *vm, Token **rest, Token *tok) {
     Token head = {};
     Token *cur = &head;
 
     for (; !tok->at_bol; tok = tok->next)
-        cur = cur->next = copy_token(tok);
+        cur = cur->next = copy_token(vm, tok);
 
-    cur->next = new_eof(tok);
+    cur->next = new_eof(vm, tok);
     *rest = tok;
     return head.next;
 }
 
 static Token *new_num_token(JCC *vm, int val, Token *tmpl) {
     char *buf = format("%d\n", val);
-    return tokenize(vm, new_file(tmpl->file->name, tmpl->file->file_no, buf));
+    return tokenize(vm, new_file(vm, tmpl->file->name, tmpl->file->file_no, buf));
 }
 
 static Token *read_const_expr(JCC *vm, Token **rest, Token *tok) {
-    tok = copy_line(rest, tok);
+    tok = copy_line(vm, rest, tok);
 
     Token head = {};
     Token *cur = &head;
@@ -312,7 +312,8 @@ static long eval_const_expr(JCC *vm, Token **rest, Token *tok) {
 }
 
 static CondIncl *push_cond_incl(JCC *vm, Token *tok, bool included) {
-    CondIncl *ci = calloc(1, sizeof(CondIncl));
+    CondIncl *ci = arena_alloc(&vm->parser_arena, sizeof(CondIncl));
+    memset(ci, 0, sizeof(CondIncl));
     ci->next = vm->cond_incl;
     ci->ctx = IN_THEN;
     ci->tok = tok;
@@ -328,7 +329,8 @@ static Macro *find_macro(JCC *vm, Token *tok) {
 }
 
 static Macro *add_macro(JCC *vm, char *name, bool is_objlike, Token *body) {
-    Macro *m = calloc(1, sizeof(Macro));
+    Macro *m = arena_alloc(&vm->parser_arena, sizeof(Macro));
+    memset(m, 0, sizeof(Macro));
     m->name = name;
     m->is_objlike = is_objlike;
     m->body = body;
@@ -359,7 +361,8 @@ static MacroParam *read_macro_params(JCC *vm, Token **rest, Token *tok, char **v
             return head.next;
         }
 
-        MacroParam *m = calloc(1, sizeof(MacroParam));
+        MacroParam *m = arena_alloc(&vm->parser_arena, sizeof(MacroParam));
+        memset(m, 0, sizeof(MacroParam));
         m->name = strndup(tok->loc, tok->len);
         cur = cur->next = m;
         tok = tok->next;
@@ -380,12 +383,12 @@ static void read_macro_definition(JCC *vm, Token **rest, Token *tok) {
         char *va_args_name = NULL;
         MacroParam *params = read_macro_params(vm, &tok, tok->next, &va_args_name);
 
-        Macro *m = add_macro(vm, name, false, copy_line(rest, tok));
+        Macro *m = add_macro(vm, name, false, copy_line(vm, rest, tok));
         m->params = params;
         m->va_args_name = va_args_name;
     } else {
         // Object-like macro
-        add_macro(vm, name, true, copy_line(rest, tok));
+        add_macro(vm, name, true, copy_line(vm, rest, tok));
     }
 }
 
@@ -408,13 +411,14 @@ static MacroArg *read_macro_arg_one(JCC *vm, Token **rest, Token *tok, bool read
         else if (equal(tok, ")"))
             level--;
 
-        cur = cur->next = copy_token(tok);
+        cur = cur->next = copy_token(vm, tok);
         tok = tok->next;
     }
 
-    cur->next = new_eof(tok);
+    cur->next = new_eof(vm, tok);
 
-    MacroArg *arg = calloc(1, sizeof(MacroArg));
+    MacroArg *arg = arena_alloc(&vm->parser_arena, sizeof(MacroArg));
+    memset(arg, 0, sizeof(MacroArg));
     arg->tok = head.next;
     *rest = tok;
     return arg;
@@ -439,8 +443,9 @@ read_macro_args(JCC *vm, Token **rest, Token *tok, MacroParam *params, char *va_
     if (va_args_name) {
         MacroArg *arg;
         if (equal(tok, ")")) {
-            arg = calloc(1, sizeof(MacroArg));
-            arg->tok = new_eof(tok);
+            arg = arena_alloc(&vm->parser_arena, sizeof(MacroArg));
+            memset(arg, 0, sizeof(MacroArg));
+            arg->tok = new_eof(vm, tok);
         } else {
             if (pp != params)
                 tok = skip(vm, tok, ",");
@@ -466,7 +471,7 @@ static MacroArg *find_arg(MacroArg *args, Token *tok) {
 }
 
 // Concatenates all tokens in `tok` and returns a new string.
-static char *join_tokens(Token *tok, Token *end) {
+static char *join_tokens(JCC *vm, Token *tok, Token *end) {
     // Compute the length of the resulting token.
     int len = 1;
     for (Token *t = tok; t != end && t->kind != TK_EOF; t = t->next) {
@@ -475,7 +480,8 @@ static char *join_tokens(Token *tok, Token *end) {
         len += t->len;
     }
 
-    char *buf = calloc(1, len);
+    char *buf = arena_alloc(&vm->parser_arena, len);
+    memset(buf, 0, len);
 
     // Copy token texts.
     int pos = 0;
@@ -495,7 +501,7 @@ static Token *stringize(JCC *vm, Token *hash, Token *arg) {
     // Create a new string token. We need to set some value to its
     // source location for error reporting function, so we use a macro
     // name token as a template.
-    char *s = join_tokens(arg, NULL);
+    char *s = join_tokens(vm, arg, NULL);
     return new_str_token(vm, s, hash);
 }
 
@@ -505,7 +511,7 @@ static Token *paste(JCC *vm, Token *lhs, Token *rhs) {
     char *buf = format("%.*s%.*s", lhs->len, lhs->loc, rhs->len, rhs->loc);
 
     // Tokenize the resulting string.
-    Token *tok = tokenize(vm, new_file(lhs->file->name, lhs->file->file_no, buf));
+    Token *tok = tokenize(vm, new_file(vm, lhs->file->name, lhs->file->file_no, buf));
     if (tok->next->kind != TK_EOF)
         error_tok(vm, lhs, "pasting forms '%s', an invalid token", buf);
     return tok;
@@ -543,7 +549,7 @@ static Token *subst(JCC *vm, Token *tok, MacroArg *args) {
                 if (arg->tok->kind == TK_EOF) {
                     tok = tok->next->next->next;
                 } else {
-                    cur = cur->next = copy_token(tok);
+                    cur = cur->next = copy_token(vm, tok);
                     tok = tok->next->next;
                 }
                 continue;
@@ -562,7 +568,7 @@ static Token *subst(JCC *vm, Token *tok, MacroArg *args) {
                 if (arg->tok->kind != TK_EOF) {
                     *cur = *paste(vm, cur, arg->tok);
                     for (Token *t = arg->tok->next; t->kind != TK_EOF; t = t->next)
-                        cur = cur->next = copy_token(t);
+                        cur = cur->next = copy_token(vm, t);
                 }
                 tok = tok->next->next;
                 continue;
@@ -582,16 +588,16 @@ static Token *subst(JCC *vm, Token *tok, MacroArg *args) {
                 MacroArg *arg2 = find_arg(args, rhs);
                 if (arg2) {
                     for (Token *t = arg2->tok; t->kind != TK_EOF; t = t->next)
-                        cur = cur->next = copy_token(t);
+                        cur = cur->next = copy_token(vm, t);
                 } else {
-                    cur = cur->next = copy_token(rhs);
+                    cur = cur->next = copy_token(vm, rhs);
                 }
                 tok = rhs->next;
                 continue;
             }
 
             for (Token *t = arg->tok; t->kind != TK_EOF; t = t->next)
-                cur = cur->next = copy_token(t);
+                cur = cur->next = copy_token(vm, t);
             tok = tok->next;
             continue;
         }
@@ -614,13 +620,13 @@ static Token *subst(JCC *vm, Token *tok, MacroArg *args) {
             t->at_bol = tok->at_bol;
             t->has_space = tok->has_space;
             for (; t->kind != TK_EOF; t = t->next)
-                cur = cur->next = copy_token(t);
+                cur = cur->next = copy_token(vm, t);
             tok = tok->next;
             continue;
         }
 
         // Handle a non-macro token.
-        cur = cur->next = copy_token(tok);
+        cur = cur->next = copy_token(vm, tok);
         tok = tok->next;
         continue;
     }
@@ -648,11 +654,11 @@ static bool expand_macro(JCC *vm, Token **rest, Token *tok) {
 
     // Object-like macro application
     if (m->is_objlike) {
-        Hideset *hs = hideset_union(tok->hideset, new_hideset(m->name));
-        Token *body = add_hideset(m->body, hs);
+        Hideset *hs = hideset_union(vm, tok->hideset, new_hideset(vm, m->name));
+        Token *body = add_hideset(vm, m->body, hs);
         for (Token *t = body; t->kind != TK_EOF; t = t->next)
             t->origin = tok;
-        *rest = append(body, tok->next);
+        *rest = append(vm, body, tok->next);
         (*rest)->at_bol = tok->at_bol;
         (*rest)->has_space = tok->has_space;
         return true;
@@ -673,14 +679,14 @@ static bool expand_macro(JCC *vm, Token **rest, Token *tok) {
     // for the new tokens should be. We take the interesection of the
     // macro token and the closing parenthesis and use it as a new hideset
     // as explained in the Dave Prossor's algorithm.
-    Hideset *hs = hideset_intersection(macro_token->hideset, rparen->hideset);
-    hs = hideset_union(hs, new_hideset(m->name));
+    Hideset *hs = hideset_intersection(vm, macro_token->hideset, rparen->hideset);
+    hs = hideset_union(vm, hs, new_hideset(vm, m->name));
 
     Token *body = subst(vm, m->body, args);
-    body = add_hideset(body, hs);
+    body = add_hideset(vm, body, hs);
     for (Token *t = body; t->kind != TK_EOF; t = t->next)
         t->origin = macro_token;
-    *rest = append(body, tok->next);
+    *rest = append(vm, body, tok->next);
     (*rest)->at_bol = macro_token->at_bol;
     (*rest)->has_space = macro_token->has_space;
     return true;
@@ -752,14 +758,14 @@ static char *read_include_filename(JCC *vm, Token **rest, Token *tok, bool *is_d
 
         *is_dquote = false;
         *rest = skip_line(vm, tok->next);
-        return join_tokens(start->next, tok);
+        return join_tokens(vm, start->next, tok);
     }
 
     // Pattern 3: #include FOO
     // In this case FOO must be macro-expanded to either
     // a single string token or a sequence of "<" ... ">".
     if (tok->kind == TK_IDENT) {
-        Token *tok2 = preprocess2(vm, copy_line(rest, tok));
+        Token *tok2 = preprocess2(vm, copy_line(vm, rest, tok));
         return read_include_filename(vm, &tok2, tok2, is_dquote);
     }
 
@@ -860,13 +866,13 @@ static Token *include_file(JCC *vm, Token *tok, char *path, Token *filename_tok)
     if (guard_name)
         hashmap_put(&include_guards, path, guard_name);
 
-    return append(tok2, tok);
+    return append(vm, tok2, tok);
 }
 
 // Read #line arguments
 static void read_line_marker(JCC *vm, Token **rest, Token *tok) {
     Token *start = tok;
-    tok = preprocess(vm, copy_line(rest, tok));
+    tok = preprocess(vm, copy_line(vm, rest, tok));
 
     if (tok->kind != TK_NUM || tok->ty->kind != TY_INT)
         error_tok(vm, tok, "invalid line marker");
@@ -953,12 +959,13 @@ static Token *extract_pragma_macro(JCC *vm, Token *tok) {
     Token head = {};
     Token *cur = &head;
     for (Token *t = body_start; t != body_end; t = t->next) {
-        cur = cur->next = copy_token(t);
+        cur = cur->next = copy_token(vm, t);
     }
-    cur->next = new_eof(body_end);
+    cur->next = new_eof(vm, body_end);
 
     // Create PragmaMacro entry
-    PragmaMacro *pm = calloc(1, sizeof(PragmaMacro));
+    PragmaMacro *pm = arena_alloc(&vm->parser_arena, sizeof(PragmaMacro));
+    memset(pm, 0, sizeof(PragmaMacro));
     pm->name = name;
     pm->body_tokens = head.next;
     pm->compiled_fn = NULL;
@@ -1153,7 +1160,7 @@ static Token *preprocess2(JCC *vm, Token *tok) {
 }
 
 void define_macro(JCC *vm, char *name, char *buf) {
-    Token *tok = tokenize(vm, new_file("<built-in>", 1, buf));
+    Token *tok = tokenize(vm, new_file(vm, "<built-in>", 1, buf));
     add_macro(vm, name, true, tok);
 }
 
@@ -1399,7 +1406,8 @@ static void join_adjacent_string_literals(JCC *vm, Token *tok) {
         for (Token *t = tok1->next; t != tok2; t = t->next)
             len = len + t->ty->array_len - 1;
 
-        char *buf = calloc(tok1->ty->base->size, len);
+        char *buf = arena_alloc(&vm->parser_arena, tok1->ty->base->size * len);
+        memset(buf, 0, tok1->ty->base->size * len);
 
         int i = 0;
         for (Token *t = tok1; t != tok2; t = t->next) {
@@ -1407,7 +1415,7 @@ static void join_adjacent_string_literals(JCC *vm, Token *tok) {
             i = i + t->ty->size - t->ty->base->size;
         }
 
-        *tok1 = *copy_token(tok1);
+        *tok1 = *copy_token(vm, tok1);
         tok1->ty = array_of(tok1->ty->base, len);
         tok1->str = buf;
         tok1->next = tok2;
