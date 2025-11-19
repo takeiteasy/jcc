@@ -341,6 +341,7 @@ typedef struct Token {
     File *file;       // Source location
     char *filename;   // Filename
     int line_no;      // Line number
+    int col_no;       // Column number (1-based)
     int line_delta;   // Line number
     bool at_bol;      // True if this token is at beginning of line
     bool has_space;   // True if this token follows a space character
@@ -832,6 +833,8 @@ typedef struct SourceMap {
     long long pc_offset;  // Offset in text segment
     File *file;           // Source file
     int line_no;          // Line number in source
+    int col_no;           // Column number (1-based)
+    int end_col_no;       // End column number (1-based)
 } SourceMap;
 
 /*!
@@ -1038,6 +1041,7 @@ struct JCC {
     int source_map_capacity;            // Allocated capacity
     File *last_debug_file;              // Last file during debug info emission
     int last_debug_line;                // Last line number during debug info emission
+    int last_debug_col;                 // Last column number during debug info emission
 
     // Debug symbols for expression evaluation
 #ifndef MAX_DEBUG_SYMBOLS
@@ -1455,6 +1459,16 @@ void cc_print_tokens(Token *tok);
 void cc_output_json(FILE *f, Obj *prog);
 
 /*!
+ @function cc_output_source_map_json
+ @abstract Output source map as JSON to a file for debugging tools.
+ @discussion Outputs source maps in JSON format, mapping bytecode PC offsets
+             to source locations with file, line, and column information.
+ @param vm The JCC instance with source map data.
+ @param f Output file stream.
+*/
+void cc_output_source_map_json(JCC *vm, FILE *f);
+
+/*!
  @function cc_save_bytecode
  @abstract Save compiled bytecode to a file for later execution.
  @discussion Serializes the text segment, data segment, and necessary
@@ -1539,7 +1553,7 @@ void cc_remove_watchpoint(JCC *vm, int index);
  @param out_line Pointer to receive the line number (can be NULL).
  @return 1 if location found, 0 if not found.
 */
-int cc_get_source_location(JCC *vm, long long *pc, File **out_file, int *out_line);
+int cc_get_source_location(JCC *vm, long long *pc, File **out_file, int *out_line, int *out_col);
 
 /*!
  @function cc_find_pc_for_source

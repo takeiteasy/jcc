@@ -90,8 +90,10 @@ static void emit_debug_info(JCC *vm, Token *tok) {
         return;
     }
 
-    // Only emit if line changed
-    if (tok->file == vm->last_debug_file && tok->line_no == vm->last_debug_line) {
+    // Only emit if line or column changed
+    if (tok->file == vm->last_debug_file &&
+        tok->line_no == vm->last_debug_line &&
+        tok->col_no == vm->last_debug_col) {
         return;
     }
 
@@ -109,10 +111,14 @@ static void emit_debug_info(JCC *vm, Token *tok) {
     vm->source_map[vm->source_map_count].pc_offset = vm->text_ptr - vm->text_seg;
     vm->source_map[vm->source_map_count].file = tok->file;
     vm->source_map[vm->source_map_count].line_no = tok->line_no;
+    vm->source_map[vm->source_map_count].col_no = tok->col_no;
+    // Calculate end column using token length
+    vm->source_map[vm->source_map_count].end_col_no = tok->col_no + display_width(vm, tok->loc, tok->len);
     vm->source_map_count++;
 
     vm->last_debug_file = tok->file;
     vm->last_debug_line = tok->line_no;
+    vm->last_debug_col = tok->col_no;
 }
 
 static void gen_stmt(JCC *vm, Node *node);

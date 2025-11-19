@@ -274,9 +274,10 @@ static void print_help(void) {
 static void debugger_print_source_location(JCC *vm) {
     File *file = NULL;
     int line_no = 0;
+    int col_no = 0;
 
-    if (cc_get_source_location(vm, vm->pc, &file, &line_no)) {
-        printf("At %s:%d\n", file->name ? file->name : "<unknown>", line_no);
+    if (cc_get_source_location(vm, vm->pc, &file, &line_no, &col_no)) {
+        printf("At %s:%d:%d\n", file->name ? file->name : "<unknown>", line_no, col_no);
 
         // Try to show source line if file contents available
         if (file->contents && line_no > 0) {
@@ -447,7 +448,7 @@ void cc_debug_repl(JCC *vm) {
                     // If it's a small number, treat as line number in current file
                     if (num < 10000) {
                         File *current_file = NULL;
-                        cc_get_source_location(vm, vm->pc, &current_file, NULL);
+                        cc_get_source_location(vm, vm->pc, &current_file, NULL, NULL);
                         bp_pc = cc_find_pc_for_source(vm, current_file, num);
                         if (!bp_pc) {
                             printf("Error: Could not find code for line %lld\n", num);
@@ -673,7 +674,7 @@ int debugger_run(JCC *vm, int argc, char **argv) {
 // Source Mapping Functions (for source-level debugging)
 // ============================================================================
 
-int cc_get_source_location(JCC *vm, long long *pc, File **out_file, int *out_line) {
+int cc_get_source_location(JCC *vm, long long *pc, File **out_file, int *out_line, int *out_col) {
     if (!(vm->flags & JCC_ENABLE_DEBUGGER) || !vm->source_map || vm->source_map_count == 0) {
         return 0;
     }
@@ -706,6 +707,9 @@ int cc_get_source_location(JCC *vm, long long *pc, File **out_file, int *out_lin
     }
     if (out_line) {
         *out_line = vm->source_map[best_idx].line_no;
+    }
+    if (out_col) {
+        *out_col = vm->source_map[best_idx].col_no;
     }
 
     return 1;
@@ -1146,7 +1150,7 @@ int debugger_check_watchpoint(JCC *vm, void *addr, int size, int access_type) {
         // Get source location if available
         File *file = NULL;
         int line_no = 0;
-        cc_get_source_location(vm, vm->pc, &file, &line_no);
+        cc_get_source_location(vm, vm->pc, &file, &line_no, NULL);
 
         // Print watchpoint info
         printf("\n========== WATCHPOINT TRIGGERED ==========\n");

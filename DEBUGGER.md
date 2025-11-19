@@ -8,7 +8,7 @@ When enabled, the debugger provides a powerful GDB-like interface for controllin
 
 ## Features
 
-- **Source-Level Debugging**: The debugger maps bytecode instructions to their original source code locations. When you step through the code, it displays the current file, line number, and the corresponding source line, providing a seamless debugging experience.
+- **Source-Level Debugging**: The debugger maps bytecode instructions to their original source code locations with precise column tracking. When you step through the code, it displays the current file, line number, column number, and the corresponding source line, providing a seamless debugging experience. Column numbers are UTF-8 aware for correct positioning in multi-byte character source files.
 - **Advanced Breakpoints**: Set breakpoints using multiple formats:
     - By line number in the current file (`break 42`).
     - By file and line number (`break test.c:42`).
@@ -63,7 +63,7 @@ Breakpoint #0 set at test_debugger_enhanced.c:20
 
 (jcc-dbg) continue            # Run to breakpoint
 Breakpoint #0 hit at test_debugger_enhanced.c:20
-At test_debugger_enhanced.c:20
+At test_debugger_enhanced.c:20:5
     20:     int x = 10;
 0xc33400018 (offset 24): LEA -4
 
@@ -74,7 +74,7 @@ Watchpoint #0: watch x
 Watchpoint #0 hit: write to x at 0x7ffeea28d3f8
 Old value: 0
 New value: 10
-At test_debugger_enhanced.c:21
+At test_debugger_enhanced.c:21:5
     21:     int y = factorial(4);
 
 (jcc-dbg) stack 3             # Check the stack
@@ -84,6 +84,53 @@ At test_debugger_enhanced.c:21
 
 (jcc-dbg) continue            # Run to completion
 ```
+
+## Source Map API
+
+JCC provides a programmatic API for accessing source location information, which is useful for building custom debugging tools or IDE integrations.
+
+### Getting Source Location
+
+```c
+// Get source location for a given PC address
+File *file = NULL;
+int line_no = 0;
+int col_no = 0;
+
+if (cc_get_source_location(&vm, vm.pc, &file, &line_no, &col_no)) {
+    printf("At %s:%d:%d\n", file->name, line_no, col_no);
+}
+```
+
+### Exporting Source Maps
+
+Source maps can be exported to JSON format for use with external tools:
+
+```c
+// Export source map to JSON
+FILE *f = fopen("sourcemap.json", "w");
+cc_output_source_map_json(&vm, f);
+fclose(f);
+```
+
+The JSON output includes:
+- **pc**: Bytecode offset
+- **file**: Source file name
+- **line**: Line number (1-based)
+- **col**: Starting column number (1-based, UTF-8 aware)
+- **end_col**: Ending column number (1-based)
+
+Example output:
+```json
+{
+  "version": 3,
+  "mappings": [
+    {"pc": 8, "file": "test.c", "line": 3, "col": 5, "end_col": 8},
+    {"pc": 16, "file": "test.c", "line": 4, "col": 9, "end_col": 14}
+  ]
+}
+```
+
 ### Bytecode File Format
 
 Binary format (little-endian):
