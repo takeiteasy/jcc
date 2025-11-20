@@ -195,6 +195,15 @@ void cc_init(JCC *vm, uint32_t flags) {
     // Initialize parser arena (1MB default block size)
     arena_init(&vm->parser_arena, 0);  // 0 = use default (1MB)
 
+    // Initialize error collection fields
+    vm->errors = NULL;
+    vm->errors_tail = NULL;
+    vm->error_count = 0;
+    vm->warning_count = 0;
+    vm->max_errors = 20;  // Default max errors before stopping
+    vm->collect_errors = false;  // Disabled by default (opt-in)
+    vm->warnings_as_errors = false;  // Disabled by default
+
     if (vm->flags & JCC_ENABLE_DEBUGGER) {
         debugger_init(vm);
     }

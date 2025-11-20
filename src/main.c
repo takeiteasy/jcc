@@ -157,6 +157,8 @@ int main(int argc, const char* argv[]) {
     int output_json = 0; // -j
     char *url_cache_dir = NULL; // --url-cache-dir
     int url_cache_clear = 0; // --url-cache-clear
+    int max_errors = 20; // --max-errors (default: 20)
+    int warnings_as_errors = 0; // --Werror
 
     if (argc <= 1)
         usage(argv[0], 1);
@@ -198,6 +200,8 @@ int main(int argc, const char* argv[]) {
         {"undef", required_argument, 0, 'U'},
         {"url-cache-dir", required_argument, 0, 1008},
         {"url-cache-clear", no_argument, 0, 1009},
+        {"max-errors", required_argument, 0, 1010},
+        {"Werror", no_argument, 0, 1011},
         {0, 0, 0, 0}
     };
 
@@ -318,6 +322,16 @@ int main(int argc, const char* argv[]) {
         case 1009:
             url_cache_clear = 1;
             break;
+        case 1010:
+            max_errors = atoi(optarg);
+            if (max_errors <= 0) {
+                fprintf(stderr, "error: --max-errors must be a positive integer\n");
+                usage(argv[0], 1);
+            }
+            break;
+        case 1011:
+            warnings_as_errors = 1;
+            break;
         case '?':
             if (optopt)
                 fprintf(stderr, "error: option -%c requires an argument\n", optopt);
@@ -393,6 +407,21 @@ int main(int argc, const char* argv[]) {
         clear_url_cache(&vm);
     }
 
+    // Enable error collection for better error reporting
+    vm.collect_errors = true;
+    vm.max_errors = max_errors;
+    vm.warnings_as_errors = warnings_as_errors;
+    jmp_buf err_buf;
+    vm.error_jmp_buf = &err_buf;
+
+    // Set up error handling with setjmp/longjmp
+    if (setjmp(err_buf) != 0) {
+        // Error occurred during compilation
+        cc_print_all_errors(&vm);
+        exit_code = 1;
+        goto BAIL;
+    }
+
     if (!skip_stdlib)
         cc_load_stdlib(&vm);
     for (int i = 0; i < inc_paths_count; i++)
@@ -412,7 +441,14 @@ int main(int argc, const char* argv[]) {
             goto BAIL;
         }
     }
-    
+
+    // Check for errors after preprocessing
+    if (cc_has_errors(&vm)) {
+        cc_print_all_errors(&vm);
+        exit_code = 1;
+        goto BAIL;
+    }
+
     // Compile any pragma macros that were extracted during preprocessing
     if (vm.pragma_macros) {
         compile_pragma_macros(&vm);
@@ -447,6 +483,13 @@ int main(int argc, const char* argv[]) {
             fprintf(stderr, "error: failed to parse %s\n", input_files[i]);
             goto BAIL;
         }
+    }
+
+    // Check for errors after parsing
+    if (cc_has_errors(&vm)) {
+        cc_print_all_errors(&vm);
+        exit_code = 1;
+        goto BAIL;
     }
 
     // For JSON output, we don't need to link (especially useful for header files without main())
@@ -496,6 +539,13 @@ int main(int argc, const char* argv[]) {
 
     // Compile the merged program
     cc_compile(&vm, merged_prog);
+
+    // Check for errors after code generation
+    if (cc_has_errors(&vm)) {
+        cc_print_all_errors(&vm);
+        exit_code = 1;
+        goto BAIL;
+    }
 
     if (out_file) {
         // Save bytecode to file and exit

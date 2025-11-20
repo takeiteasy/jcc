@@ -99,6 +99,14 @@ struct InitDesg {
     Obj *var;
 };
 
+// Error placeholder variable for recovery
+static Obj error_var_obj = {
+    .name = "<error>",
+    .ty = NULL,  // Will be set to ty_error during initialization
+    .is_local = false,
+};
+static Obj *error_var = &error_var_obj;
+
 static bool is_typename(JCC *vm, Token *tok);
 static Type *declspec(JCC *vm, Token **rest, Token *tok, VarAttr *attr);
 static Type *typename(JCC *vm, Token **rest, Token *tok);
@@ -349,6 +357,81 @@ static char *get_ident(JCC *vm, Token *tok) {
     if (tok->kind != TK_IDENT)
         error_tok(vm, tok, "expected an identifier");
     return strndup(tok->loc, tok->len);
+}
+
+// Error recovery helper: Skip to end of statement (semicolon or closing brace)
+static Token *skip_to_stmt_end(JCC *vm, Token *tok) {
+    int paren_depth = 0, brace_depth = 0;
+
+    while (tok->kind != TK_EOF) {
+        if (equal(tok, "(")) paren_depth++;
+        if (equal(tok, ")") && paren_depth > 0) paren_depth--;
+        if (equal(tok, "{")) brace_depth++;
+        if (equal(tok, "}")) {
+            if (brace_depth > 0) {
+                brace_depth--;
+            } else {
+                return tok; // Found unmatched closing brace
+            }
+        }
+
+        // Only treat semicolon as end if we're at same nesting level
+        if (paren_depth == 0 && brace_depth == 0 && equal(tok, ";"))
+            return tok->next;
+
+        tok = tok->next;
+    }
+    return tok;
+}
+
+// Error recovery helper: Skip to next synchronization point
+static Token *skip_to_sync_point(JCC *vm, Token *tok) {
+    int brace_depth = 0;
+
+    while (tok->kind != TK_EOF) {
+        // Track brace nesting to avoid skipping past function boundaries
+        if (equal(tok, "{")) brace_depth++;
+        if (equal(tok, "}")) {
+            if (brace_depth > 0) brace_depth--;
+            else return tok; // Found closing brace at same level
+        }
+
+        // Statement-level sync points
+        if (brace_depth == 0) {
+            if (equal(tok, ";")) return tok->next;  // After semicolon
+
+            // Statement keywords
+            if (equal(tok, "if") || equal(tok, "while") || equal(tok, "for") ||
+                equal(tok, "do") || equal(tok, "switch") || equal(tok, "return") ||
+                equal(tok, "break") || equal(tok, "continue") || equal(tok, "goto"))
+                return tok;
+
+            // Type keywords (declaration start)
+            if (is_typename(vm, tok)) return tok;
+        }
+
+        tok = tok->next;
+    }
+    return tok;
+}
+
+// Error recovery helper: Skip to next declarator boundary
+static Token *skip_to_decl_boundary(JCC *vm, Token *tok) {
+    int paren_depth = 0;
+
+    while (tok->kind != TK_EOF) {
+        if (equal(tok, "(")) paren_depth++;
+        if (equal(tok, ")") && paren_depth > 0) paren_depth--;
+
+        if (paren_depth == 0) {
+            if (equal(tok, ",")) return tok->next;  // Next declarator
+            if (equal(tok, ";")) return tok->next;  // End of declaration
+            if (equal(tok, "{")) return tok;        // Function body start
+        }
+
+        tok = tok->next;
+    }
+    return tok;
 }
 
 static Type *find_typedef(JCC *vm, Token *tok) {
@@ -1730,8 +1813,16 @@ static Node *stmt(JCC *vm, Token **rest, Token *tok) {
     }
 
     if (equal(tok, "case")) {
-        if (!vm->current_switch)
-            error_tok(vm, tok, "stray case");
+        if (!vm->current_switch) {
+            if (!error_tok_recover(vm, tok, "stray case")) {
+                *rest = tok->next;
+                return new_node(vm, ND_NULL_EXPR, tok);
+            }
+            // Skip to end of statement and return empty node
+            tok = skip_to_stmt_end(vm, tok);
+            *rest = tok;
+            return new_node(vm, ND_NULL_EXPR, tok);
+        }
 
         Node *node = new_node(vm, ND_CASE, tok);
         int begin = const_expr(vm, &tok, tok->next);
@@ -1757,8 +1848,16 @@ static Node *stmt(JCC *vm, Token **rest, Token *tok) {
     }
 
     if (equal(tok, "default")) {
-        if (!vm->current_switch)
-            error_tok(vm, tok, "stray default");
+        if (!vm->current_switch) {
+            if (!error_tok_recover(vm, tok, "stray default")) {
+                *rest = tok->next;
+                return new_node(vm, ND_NULL_EXPR, tok);
+            }
+            // Skip to end of statement and return empty node
+            tok = skip_to_stmt_end(vm, tok);
+            *rest = tok;
+            return new_node(vm, ND_NULL_EXPR, tok);
+        }
 
         Node *node = new_node(vm, ND_CASE, tok);
         tok = skip(vm, tok->next, ":");
@@ -1862,8 +1961,16 @@ static Node *stmt(JCC *vm, Token **rest, Token *tok) {
     }
 
     if (equal(tok, "break")) {
-        if (!vm->brk_label)
-            error_tok(vm, tok, "stray break");
+        if (!vm->brk_label) {
+            if (!error_tok_recover(vm, tok, "stray break")) {
+                *rest = tok->next;
+                return new_node(vm, ND_NULL_EXPR, tok);
+            }
+            // Skip to end of statement and return empty node
+            tok = skip_to_stmt_end(vm, tok);
+            *rest = tok;
+            return new_node(vm, ND_NULL_EXPR, tok);
+        }
         Node *node = new_node(vm, ND_GOTO, tok);
         node->unique_label = vm->brk_label;
         *rest = skip(vm, tok->next, ";");
@@ -1871,8 +1978,16 @@ static Node *stmt(JCC *vm, Token **rest, Token *tok) {
     }
 
     if (equal(tok, "continue")) {
-        if (!vm->cont_label)
-            error_tok(vm, tok, "stray continue");
+        if (!vm->cont_label) {
+            if (!error_tok_recover(vm, tok, "stray continue")) {
+                *rest = tok->next;
+                return new_node(vm, ND_NULL_EXPR, tok);
+            }
+            // Skip to end of statement and return empty node
+            tok = skip_to_stmt_end(vm, tok);
+            *rest = tok;
+            return new_node(vm, ND_NULL_EXPR, tok);
+        }
         Node *node = new_node(vm, ND_GOTO, tok);
         node->unique_label = vm->cont_label;
         *rest = skip(vm, tok->next, ";");
@@ -2473,12 +2588,30 @@ static Node *shift(JCC *vm, Token **rest, Token *tok) {
         Token *start = tok;
 
         if (equal(tok, "<<")) {
-            node = new_binary(vm, ND_SHL, node, add(vm, &tok, tok->next), start);
+            Node *rhs = add(vm, &tok, tok->next);
+            // Check for error types
+            add_type(vm, node);
+            add_type(vm, rhs);
+            if (is_error_type(node->ty) || is_error_type(rhs->ty)) {
+                node = new_binary(vm, ND_SHL, node, rhs, start);
+                node->ty = ty_error;
+                continue;
+            }
+            node = new_binary(vm, ND_SHL, node, rhs, start);
             continue;
         }
 
         if (equal(tok, ">>")) {
-            node = new_binary(vm, ND_SHR, node, add(vm, &tok, tok->next), start);
+            Node *rhs = add(vm, &tok, tok->next);
+            // Check for error types
+            add_type(vm, node);
+            add_type(vm, rhs);
+            if (is_error_type(node->ty) || is_error_type(rhs->ty)) {
+                node = new_binary(vm, ND_SHR, node, rhs, start);
+                node->ty = ty_error;
+                continue;
+            }
+            node = new_binary(vm, ND_SHR, node, rhs, start);
             continue;
         }
 
@@ -2495,6 +2628,13 @@ static Node *shift(JCC *vm, Token **rest, Token *tok) {
 static Node *new_add(JCC *vm, Node *lhs, Node *rhs, Token *tok) {
     add_type(vm, lhs);
     add_type(vm, rhs);
+
+    // Early exit for error types to prevent cascading errors
+    if (is_error_type(lhs->ty) || is_error_type(rhs->ty)) {
+        Node *node = new_binary(vm, ND_ADD, lhs, rhs, tok);
+        node->ty = ty_error;
+        return node;
+    }
 
     // num + num
     if (is_numeric(lhs->ty) && is_numeric(rhs->ty))
@@ -2525,6 +2665,13 @@ static Node *new_add(JCC *vm, Node *lhs, Node *rhs, Token *tok) {
 static Node *new_sub(JCC *vm, Node *lhs, Node *rhs, Token *tok) {
     add_type(vm, lhs);
     add_type(vm, rhs);
+
+    // Early exit for error types to prevent cascading errors
+    if (is_error_type(lhs->ty) || is_error_type(rhs->ty)) {
+        Node *node = new_binary(vm, ND_SUB, lhs, rhs, tok);
+        node->ty = ty_error;
+        return node;
+    }
 
     // num - num
     if (is_numeric(lhs->ty) && is_numeric(rhs->ty))
@@ -2589,17 +2736,44 @@ static Node *mul(JCC *vm, Token **rest, Token *tok) {
         Token *start = tok;
 
         if (equal(tok, "*")) {
-            node = new_binary(vm, ND_MUL, node, cast(vm, &tok, tok->next), start);
+            Node *rhs = cast(vm, &tok, tok->next);
+            // Check for error types
+            add_type(vm, node);
+            add_type(vm, rhs);
+            if (is_error_type(node->ty) || is_error_type(rhs->ty)) {
+                node = new_binary(vm, ND_MUL, node, rhs, start);
+                node->ty = ty_error;
+                continue;
+            }
+            node = new_binary(vm, ND_MUL, node, rhs, start);
             continue;
         }
 
         if (equal(tok, "/")) {
-            node = new_binary(vm, ND_DIV, node, cast(vm, &tok, tok->next), start);
+            Node *rhs = cast(vm, &tok, tok->next);
+            // Check for error types
+            add_type(vm, node);
+            add_type(vm, rhs);
+            if (is_error_type(node->ty) || is_error_type(rhs->ty)) {
+                node = new_binary(vm, ND_DIV, node, rhs, start);
+                node->ty = ty_error;
+                continue;
+            }
+            node = new_binary(vm, ND_DIV, node, rhs, start);
             continue;
         }
 
         if (equal(tok, "%")) {
-            node = new_binary(vm, ND_MOD, node, cast(vm, &tok, tok->next), start);
+            Node *rhs = cast(vm, &tok, tok->next);
+            // Check for error types
+            add_type(vm, node);
+            add_type(vm, rhs);
+            if (is_error_type(node->ty) || is_error_type(rhs->ty)) {
+                node = new_binary(vm, ND_MOD, node, rhs, start);
+                node->ty = ty_error;
+                continue;
+            }
+            node = new_binary(vm, ND_MOD, node, rhs, start);
             continue;
         }
 
@@ -2947,15 +3121,37 @@ static Member *get_struct_member(Type *ty, Token *tok) {
 // This function takes care of anonymous structs.
 static Node *struct_ref(JCC *vm, Node *node, Token *tok) {
     add_type(vm, node);
-    if (node->ty->kind != TY_STRUCT && node->ty->kind != TY_UNION)
+
+    // If the base expression has error type, propagate it
+    if (node->ty && is_error_type(node->ty)) {
+        Node *err_node = new_node(vm, ND_MEMBER, tok);
+        err_node->ty = ty_error;
+        return err_node;
+    }
+
+    if (node->ty->kind != TY_STRUCT && node->ty->kind != TY_UNION) {
+        if (vm->collect_errors && error_tok_recover(vm, node->tok,
+                                                     "not a struct nor a union")) {
+            Node *err_node = new_node(vm, ND_MEMBER, tok);
+            err_node->ty = ty_error;
+            return err_node;
+        }
         error_tok(vm, node->tok, "not a struct nor a union");
+    }
 
     Type *ty = node->ty;
 
     for (;;) {
         Member *mem = get_struct_member(ty, tok);
-        if (!mem)
+        if (!mem) {
+            if (vm->collect_errors && error_tok_recover(vm, tok, "no such member '%.*s'",
+                                                         tok->len, tok->loc)) {
+                Node *err_node = new_node(vm, ND_MEMBER, tok);
+                err_node->ty = ty_error;
+                return err_node;
+            }
             error_tok(vm, tok, "no such member");
+        }
         node = new_unary(vm, ND_MEMBER, node, tok);
         node->member = mem;
         if (mem->name)
@@ -3322,6 +3518,16 @@ static Node *primary(JCC *vm, Token **rest, Token *tok) {
 
         if (equal(tok->next, "("))
             error_tok(vm, tok, "implicit declaration of a function");
+
+        // Try error recovery if enabled
+        if (vm->collect_errors && error_tok_recover(vm, tok, "undefined variable '%.*s'",
+                                                     tok->len, tok->loc)) {
+            // Return error placeholder node instead of aborting
+            Node *node = new_var_node(vm, error_var, tok);
+            node->ty = ty_error;
+            return node;
+        }
+
         error_tok(vm, tok, "undefined variable");
     }
 
@@ -3575,6 +3781,9 @@ static void declare_builtin_functions(JCC *vm) {
 
 // program = (typedef | function-definition | global-variable)*
 Obj *parse(JCC *vm, Token *tok) {
+    // Initialize error recovery placeholder
+    error_var->ty = ty_error;
+
     // Initialize global scope
     enter_scope(vm);
 
