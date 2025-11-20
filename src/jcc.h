@@ -370,6 +370,7 @@ typedef enum {
     TY_VLA      = 13, // variable-length array
     TY_STRUCT   = 14,
     TY_UNION    = 15,
+    TY_ERROR    = 16, // error type for recovery
 } TypeKind;
 
 typedef struct Node Node;
@@ -903,6 +904,25 @@ typedef struct Breakpoint {
 } Breakpoint;
 
 /*!
+ @struct CompileError
+ @abstract Represents a compilation error or warning collected during compilation.
+ @field next Pointer to the next error in the linked list.
+ @field message Formatted error message string.
+ @field filename Source file name where the error occurred.
+ @field line_no Line number in the source file.
+ @field col_no Column number in the source file.
+ @field severity 0 for error, 1 for warning.
+*/
+typedef struct CompileError {
+    struct CompileError *next;  // Next error in linked list
+    char *message;              // Formatted error message
+    char *filename;             // Source file name
+    int line_no;                // Line number
+    int col_no;                 // Column number
+    int severity;               // 0 = error, 1 = warning
+} CompileError;
+
+/*!
  @struct ArenaBlock
  @abstract Represents a single memory block in an arena allocator.
  @field base Pointer to the start of the memory block (from mmap/VirtualAlloc).
@@ -1156,6 +1176,15 @@ struct JCC {
     // Error handling (setjmp/longjmp for exception-like behavior)
     jmp_buf *error_jmp_buf;            // Jump buffer for error handling (NULL = use exit())
     char *error_message;               // Last error message (when using longjmp)
+
+    // Error collection (for reporting multiple errors)
+    CompileError *errors;              // Linked list of collected errors
+    CompileError *errors_tail;         // Tail pointer for O(1) append
+    int error_count;                   // Number of errors collected
+    int warning_count;                 // Number of warnings collected
+    int max_errors;                    // Maximum errors before stopping (default: 20)
+    bool collect_errors;               // Enable error collection mode
+    bool warnings_as_errors;           // Treat warnings as errors (--Werror)
 };
 
 /*!
@@ -1179,6 +1208,45 @@ void cc_init(JCC *vm, uint32_t flags);
  @param vm The JCC instance to destroy.
 */
 void cc_destroy(JCC *vm);
+
+/*!
+ @function cc_get_error_count
+ @abstract Get the number of errors collected during compilation.
+ @param vm The JCC instance.
+ @result The number of errors collected.
+*/
+int cc_get_error_count(JCC *vm);
+
+/*!
+ @function cc_get_warning_count
+ @abstract Get the number of warnings collected during compilation.
+ @param vm The JCC instance.
+ @result The number of warnings collected.
+*/
+int cc_get_warning_count(JCC *vm);
+
+/*!
+ @function cc_has_errors
+ @abstract Check if any errors have been collected.
+ @param vm The JCC instance.
+ @result True if errors exist, false otherwise.
+*/
+bool cc_has_errors(JCC *vm);
+
+/*!
+ @function cc_clear_errors
+ @abstract Clear all collected errors and warnings.
+ @discussion Useful for reusing a VM instance across multiple compilations.
+ @param vm The JCC instance.
+*/
+void cc_clear_errors(JCC *vm);
+
+/*!
+ @function cc_print_all_errors
+ @abstract Print all collected errors and warnings to stderr.
+ @param vm The JCC instance.
+*/
+void cc_print_all_errors(JCC *vm);
 
 /*!
  @function cc_print_stack_report

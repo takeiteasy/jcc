@@ -53,8 +53,9 @@ Token *preprocess(JCC *vm, Token *tok);
 //
 
 noreturn void error(char *fmt, ...) __attribute__((format(printf, 1, 2)));
-noreturn void error_at(JCC *vm, char *loc, char *fmt, ...) __attribute__((format(printf, 3, 4)));
-noreturn void error_tok(JCC *vm, Token *tok, char *fmt, ...) __attribute__((format(printf, 3, 4)));
+void error_at(JCC *vm, char *loc, char *fmt, ...) __attribute__((format(printf, 3, 4)));
+void error_tok(JCC *vm, Token *tok, char *fmt, ...) __attribute__((format(printf, 3, 4)));
+bool error_tok_recover(JCC *vm, Token *tok, char *fmt, ...) __attribute__((format(printf, 3, 4)));
 void warn_tok(JCC *vm, Token *tok, char *fmt, ...) __attribute__((format(printf, 3, 4)));
 bool equal(Token *tok, char *op);
 Token *skip(JCC *vm, Token *tok, char *op);
@@ -108,9 +109,12 @@ extern Type *ty_float;
 extern Type *ty_double;
 extern Type *ty_ldouble;
 
+extern Type *ty_error;
+
 bool is_integer(Type *ty);
 bool is_flonum(Type *ty);
 bool is_numeric(Type *ty);
+bool is_error_type(Type *ty);
 bool is_compatible(Type *t1, Type *t2);
 Type *copy_type(Type *ty);
 Type *pointer_to(Type *base);

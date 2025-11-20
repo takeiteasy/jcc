@@ -41,6 +41,9 @@ Type *ty_float = &(Type){TY_FLOAT, 4, 4};
 Type *ty_double = &(Type){TY_DOUBLE, 8, 8};
 Type *ty_ldouble = &(Type){TY_LDOUBLE, 16, 16};
 
+static Type ty_error_obj = {TY_ERROR, 0, 1};
+Type *ty_error = &ty_error_obj;
+
 static Type *new_type(TypeKind kind, int size, int align) {
     Type *ty = calloc(1, sizeof(Type));
     ty->kind = kind;
@@ -50,18 +53,25 @@ static Type *new_type(TypeKind kind, int size, int align) {
 }
 
 bool is_integer(Type *ty) {
+    if (!ty) return false;
     TypeKind k = ty->kind;
     return k == TY_BOOL || k == TY_CHAR || k == TY_SHORT ||
     k == TY_INT  || k == TY_LONG || k == TY_ENUM;
 }
 
 bool is_flonum(Type *ty) {
+    if (!ty) return false;
     return ty->kind == TY_FLOAT || ty->kind == TY_DOUBLE ||
     ty->kind == TY_LDOUBLE;
 }
 
 bool is_numeric(Type *ty) {
+    if (!ty) return false;
     return is_integer(ty) || is_flonum(ty);
+}
+
+bool is_error_type(Type *ty) {
+    return ty && ty->kind == TY_ERROR;
 }
 
 bool is_compatible(Type *t1, Type *t2) {
@@ -163,9 +173,13 @@ Type *union_type(void) {
 // Integer promotion: Convert types smaller than int to int (C99 6.3.1.1)
 // char, short, and bit-fields promote to int if all values fit, else unsigned int
 static Type *integer_promotion(Type *ty) {
+    // Don't promote error types or NULL
+    if (!ty || ty->kind == TY_ERROR)
+        return ty;
+
     if (!is_integer(ty))
         return ty;
-    
+
     // Types smaller than int promote to int
     if (ty->size < 4) {
         // If it's unsigned and all values don't fit in int, promote to unsigned int
@@ -174,7 +188,7 @@ static Type *integer_promotion(Type *ty) {
         // In our case, unsigned short max (65535) fits in int, so always promote to int
         return ty_int;
     }
-    
+
     return ty;
 }
 
@@ -193,6 +207,10 @@ static int get_integer_rank(Type *ty) {
 
 // Usual arithmetic conversions (C99 6.3.1.8)
 static Type *get_common_type(Type *ty1, Type *ty2) {
+    // Handle error types - propagate error
+    if (!ty1 || !ty2 || ty1->kind == TY_ERROR || ty2->kind == TY_ERROR)
+        return ty_error;
+
     // Handle pointer arithmetic
     if (ty1->base)
         return pointer_to(ty1->base);
@@ -260,6 +278,9 @@ static Type *get_common_type(Type *ty1, Type *ty2) {
 // This operation is called the "usual arithmetic conversion".
 static void usual_arith_conv(JCC *vm, Node **lhs, Node **rhs) {
     Type *ty = get_common_type((*lhs)->ty, (*rhs)->ty);
+    // Skip casting if we have error types - they propagate automatically
+    if (ty->kind == TY_ERROR)
+        return;
     *lhs = new_cast(vm, *lhs, ty);
     *rhs = new_cast(vm, *rhs, ty);
 }
@@ -280,6 +301,14 @@ void add_type(JCC *vm, Node *node) {
         add_type(vm, n);
     for (Node *n2 = node->args; n2; n2 = n2->next)
         add_type(vm, n2);
+
+    // Propagate error type from operands - prevents cascading errors
+    if ((node->lhs && node->lhs->ty && is_error_type(node->lhs->ty)) ||
+        (node->rhs && node->rhs->ty && is_error_type(node->rhs->ty)) ||
+        (node->cond && node->cond->ty && is_error_type(node->cond->ty))) {
+        node->ty = ty_error;
+        return;
+    }
 
     switch (node->kind) {
         case ND_NUM:
@@ -303,16 +332,28 @@ void add_type(JCC *vm, Node *node) {
             return;
         }
         case ND_ASSIGN:
-            if (node->lhs->ty->kind == TY_ARRAY)
+            if (node->lhs->ty->kind == TY_ARRAY) {
+                if (vm->collect_errors && error_tok_recover(vm, node->lhs->tok,
+                                                             "not an lvalue")) {
+                    node->ty = ty_error;
+                    return;
+                }
                 error_tok(vm, node->lhs->tok, "not an lvalue");
+            }
             // Check for const-correctness
             // Allow initialization (when initializing_var is set and matches)
             bool is_initialization = false;
             if (node->lhs->kind == ND_VAR && node->lhs->var == vm->initializing_var)
                 is_initialization = true;
-            
-            if (node->lhs->ty->is_const && !is_initialization)
+
+            if (node->lhs->ty->is_const && !is_initialization) {
+                if (vm->collect_errors && error_tok_recover(vm, node->lhs->tok,
+                                                             "cannot assign to const-qualified variable")) {
+                    node->ty = ty_error;
+                    return;
+                }
                 error_tok(vm, node->lhs->tok, "cannot assign to const-qualified variable");
+            }
             if (node->lhs->ty->kind != TY_STRUCT && node->lhs->ty->kind != TY_UNION)
                 node->rhs = new_cast(vm, node->rhs, node->lhs->ty);
             node->ty = node->lhs->ty;
@@ -369,10 +410,22 @@ void add_type(JCC *vm, Node *node) {
             return;
         }
         case ND_DEREF:
-            if (!node->lhs->ty->base)
+            if (!node->lhs->ty->base) {
+                if (vm->collect_errors && error_tok_recover(vm, node->tok,
+                                                             "invalid pointer dereference")) {
+                    node->ty = ty_error;
+                    return;
+                }
                 error_tok(vm, node->tok, "invalid pointer dereference");
-            if (node->lhs->ty->base->kind == TY_VOID)
+            }
+            if (node->lhs->ty->base->kind == TY_VOID) {
+                if (vm->collect_errors && error_tok_recover(vm, node->tok,
+                                                             "dereferencing a void pointer")) {
+                    node->ty = ty_error;
+                    return;
+                }
                 error_tok(vm, node->tok, "dereferencing a void pointer");
+            }
 
             // Dereferencing preserves the const-ness of the pointee
             node->ty = node->lhs->ty->base;

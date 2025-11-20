@@ -48,8 +48,8 @@ static void verror_at(JCC *vm,
     while (*end && *end != '\n')
         end++;
 
-    // If error handling is enabled, save error to buffer
-    if (vm && vm->error_jmp_buf) {
+    // If error handling or error collection is enabled, save error to buffer
+    if (vm && (vm->error_jmp_buf || vm->collect_errors)) {
         // Build error message into a buffer
         char *msg = arena_alloc(&vm->parser_arena, 4096);  // Allocate space for error message
         if (!msg) {
@@ -57,24 +57,20 @@ static void verror_at(JCC *vm,
             exit(1);
         }
         memset(msg, 0, 4096);
-        
+
         // Format the error message
         int pos = snprintf(msg, 4096, "%s:%d: ", filename, line_no);
         pos += snprintf(msg + pos, 4096 - pos, "%.*s\n", (int)(end - line), line);
-        
+
         int indent = strlen(filename) + snprintf(NULL, 0, ":%d: ", line_no);
         int col_offset = display_width(vm, line, loc - line) + indent;
         pos += snprintf(msg + pos, 4096 - pos, "%*s^ ", col_offset, "");
-        
+
         va_list ap_copy;
         va_copy(ap_copy, ap);
         vsnprintf(msg + pos, 4096 - pos, fmt, ap_copy);
         va_end(ap_copy);
-        
-        // Free any previous error message
-        if (vm->error_message) {
-            free(vm->error_message);
-        }
+
         vm->error_message = msg;
         return;  // Don't print to stderr or exit
     }
@@ -98,12 +94,41 @@ void error_at(JCC *vm, char *loc, char *fmt, ...) {
         if (*p == '\n')
             line_no++;
 
+    // Calculate column number
+    int col_no = 1;
+    char *line_start = loc;
+    while (line_start > vm->current_file->contents && line_start[-1] != '\n') {
+        line_start--;
+        col_no++;
+    }
+
     va_list ap;
     va_start(ap, fmt);
     verror_at(vm, vm->current_file->name, vm->current_file->contents, line_no, loc, fmt, ap);
     va_end(ap);
-    
-    // Use longjmp if error handling is enabled
+
+    // Collect error if error collection is enabled
+    if (vm && vm->collect_errors && vm->error_message) {
+        CompileError *err = arena_alloc(&vm->parser_arena, sizeof(CompileError));
+        err->message = vm->error_message;
+        err->filename = vm->current_file->name;
+        err->line_no = line_no;
+        err->col_no = col_no;
+        err->severity = 0; // error
+        err->next = NULL;
+
+        // Append to list
+        if (!vm->errors) {
+            vm->errors = vm->errors_tail = err;
+        } else {
+            vm->errors_tail->next = err;
+            vm->errors_tail = err;
+        }
+        vm->error_count++;
+        vm->error_message = NULL; // Clear so it's not reused
+    }
+
+    // Always use longjmp/exit (Level 1: no parser recovery)
     if (vm && vm->error_jmp_buf) {
         longjmp(*vm->error_jmp_buf, 1);
     }
@@ -115,8 +140,76 @@ void error_tok(JCC *vm, Token *tok, char *fmt, ...) {
     va_start(ap, fmt);
     verror_at(vm, tok->file->name, tok->file->contents, tok->line_no, tok->loc, fmt, ap);
     va_end(ap);
-    
-    // Use longjmp if error handling is enabled
+
+    // Collect error if error collection is enabled
+    if (vm && vm->collect_errors && vm->error_message) {
+        CompileError *err = arena_alloc(&vm->parser_arena, sizeof(CompileError));
+        err->message = vm->error_message;
+        err->filename = tok->file->name;
+        err->line_no = tok->line_no;
+        err->col_no = tok->col_no;
+        err->severity = 0; // error
+        err->next = NULL;
+
+        // Append to list
+        if (!vm->errors) {
+            vm->errors = vm->errors_tail = err;
+        } else {
+            vm->errors_tail->next = err;
+            vm->errors_tail = err;
+        }
+        vm->error_count++;
+        vm->error_message = NULL; // Clear so it's not reused
+    }
+
+    // Always use longjmp/exit (Level 1: no parser recovery)
+    if (vm && vm->error_jmp_buf) {
+        longjmp(*vm->error_jmp_buf, 1);
+    }
+    exit(1);
+}
+
+// Error reporting with recovery support (Level 2)
+// Returns true if parsing should continue with recovery, false if max errors hit
+bool error_tok_recover(JCC *vm, Token *tok, char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    verror_at(vm, tok->file->name, tok->file->contents, tok->line_no, tok->loc, fmt, ap);
+    va_end(ap);
+
+    // Collect error if error collection is enabled
+    if (vm && vm->collect_errors && vm->error_message) {
+        CompileError *err = arena_alloc(&vm->parser_arena, sizeof(CompileError));
+        err->message = vm->error_message;
+        err->filename = tok->file->name;
+        err->line_no = tok->line_no;
+        err->col_no = tok->col_no;
+        err->severity = 0; // error
+        err->next = NULL;
+
+        // Append to list
+        if (!vm->errors) {
+            vm->errors = vm->errors_tail = err;
+        } else {
+            vm->errors_tail->next = err;
+            vm->errors_tail = err;
+        }
+        vm->error_count++;
+        vm->error_message = NULL; // Clear so it's not reused
+
+        // Check if we've hit max errors
+        if (vm->max_errors > 0 && vm->error_count >= vm->max_errors) {
+            // Too many errors, bail out
+            if (vm->error_jmp_buf) {
+                longjmp(*vm->error_jmp_buf, 1);
+            }
+            return false;
+        }
+
+        return true;  // Continue with recovery
+    }
+
+    // If error collection not enabled, use old behavior
     if (vm && vm->error_jmp_buf) {
         longjmp(*vm->error_jmp_buf, 1);
     }
@@ -128,6 +221,56 @@ void warn_tok(JCC *vm, Token *tok, char *fmt, ...) {
     va_start(ap, fmt);
     verror_at(vm, tok->file->name, tok->file->contents, tok->line_no, tok->loc, fmt, ap);
     va_end(ap);
+
+    // If warnings are treated as errors, call error_tok instead
+    if (vm && vm->warnings_as_errors) {
+        if (vm->error_message) {
+            CompileError *err = arena_alloc(&vm->parser_arena, sizeof(CompileError));
+            err->message = vm->error_message;
+            err->filename = tok->file->name;
+            err->line_no = tok->line_no;
+            err->col_no = tok->col_no;
+            err->severity = 0; // error (not warning)
+            err->next = NULL;
+
+            // Append to list
+            if (!vm->errors) {
+                vm->errors = vm->errors_tail = err;
+            } else {
+                vm->errors_tail->next = err;
+                vm->errors_tail = err;
+            }
+            vm->error_count++;  // Count as error
+            vm->error_message = NULL;
+        }
+
+        // Use longjmp like error_tok
+        if (vm->error_jmp_buf) {
+            longjmp(*vm->error_jmp_buf, 1);
+        }
+        exit(1);
+    }
+
+    // Collect warning if error collection is enabled
+    if (vm && vm->collect_errors && vm->error_message) {
+        CompileError *err = arena_alloc(&vm->parser_arena, sizeof(CompileError));
+        err->message = vm->error_message;
+        err->filename = tok->file->name;
+        err->line_no = tok->line_no;
+        err->col_no = tok->col_no;
+        err->severity = 1; // warning
+        err->next = NULL;
+
+        // Append to list
+        if (!vm->errors) {
+            vm->errors = vm->errors_tail = err;
+        } else {
+            vm->errors_tail->next = err;
+            vm->errors_tail = err;
+        }
+        vm->warning_count++;
+        vm->error_message = NULL; // Clear so it's not reused
+    }
 }
 
 // Consumes the current token if it matches `op`.
@@ -957,6 +1100,65 @@ void cc_output_preprocessed(FILE *f, Token *tok) {
         
         at_bol = 0;
     }
-    
+
     fprintf(f, "\n");
+}
+
+// Error collection helper functions
+
+int cc_get_error_count(JCC *vm) {
+    return vm ? vm->error_count : 0;
+}
+
+int cc_get_warning_count(JCC *vm) {
+    return vm ? vm->warning_count : 0;
+}
+
+bool cc_has_errors(JCC *vm) {
+    return vm && vm->error_count > 0;
+}
+
+void cc_clear_errors(JCC *vm) {
+    if (!vm) return;
+
+    vm->errors = NULL;
+    vm->errors_tail = NULL;
+    vm->error_count = 0;
+    vm->warning_count = 0;
+    vm->error_message = NULL;
+}
+
+void cc_print_all_errors(JCC *vm) {
+    if (!vm || !vm->errors) return;
+
+    // Print all collected errors and warnings
+    CompileError *err = vm->errors;
+    int error_num = 0;
+    int warning_num = 0;
+
+    while (err) {
+        fprintf(stderr, "%s", err->message);
+        if (err->severity == 0) {
+            error_num++;
+        } else {
+            warning_num++;
+        }
+        err = err->next;
+    }
+
+    // Print summary
+    if (error_num > 0 || warning_num > 0) {
+        fprintf(stderr, "\n");
+        if (error_num > 0 && warning_num > 0) {
+            fprintf(stderr, "%d error%s and %d warning%s generated.\n",
+                    error_num, error_num == 1 ? "" : "s",
+                    warning_num, warning_num == 1 ? "" : "s");
+        } else if (error_num > 0) {
+            fprintf(stderr, "%d error%s generated.\n",
+                    error_num, error_num == 1 ? "" : "s");
+        } else {
+            fprintf(stderr, "%d warning%s generated.\n",
+                    warning_num, warning_num == 1 ? "" : "s");
+        }
+    }
 }
