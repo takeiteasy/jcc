@@ -1120,6 +1120,8 @@ struct JCC {
 
     StringArray include_paths;
     StringArray system_include_paths;  // System header search paths for <...>
+    HashMap include_cache;             // Cache for search_include_paths
+    StringArray file_buffers;          // Track allocated file buffers for cleanup
 
     // URL include cache (only used when JCC_HAS_CURL is enabled)
     char *url_cache_dir;               // Directory for caching downloaded headers
@@ -1467,6 +1469,7 @@ Node *cc_parse_stmt(JCC *vm, Token **rest, Token *tok);
  @return AST node representing the parsed compound statement.
 */
 Node *cc_parse_compound_stmt(JCC *vm, Token **rest, Token *tok);
+void cc_init_parser(JCC *vm);
 
 /*!
  @function cc_link_progs

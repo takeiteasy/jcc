@@ -19,6 +19,19 @@ extern int vm_eval(JCC *vm);
 // Forward declarations
 static int debugger_eval_condition(JCC *vm, const char *condition_str);
 
+static int is_valid_vm_address(JCC *vm, void *addr) {
+    long long ptr = (long long)addr;
+    // Text segment
+    if (ptr >= (long long)vm->text_seg && ptr < (long long)vm->text_ptr) return 1;
+    // Data segment
+    if (ptr >= (long long)vm->data_seg && ptr < (long long)vm->data_ptr) return 1;
+    // Heap segment
+    if (ptr >= (long long)vm->heap_seg && ptr < (long long)vm->heap_ptr) return 1;
+    // Stack segment (assuming stack grows up from stack_seg)
+    if (ptr >= (long long)vm->stack_seg && ptr < (long long)(vm->stack_seg + vm->poolsize)) return 1;
+    return 0;
+}
+
 void debugger_init(JCC *vm) {
     vm->flags |= JCC_ENABLE_DEBUGGER;  // Make sure it's enabled
     vm->num_breakpoints = 0;
@@ -179,7 +192,8 @@ void debugger_print_stack(JCC *vm, int count) {
     printf("\n=== Stack (top %d entries) ===\n", count);
 
     long long *sp = vm->sp;
-    for (int i = 0; i < count && sp < vm->stack_seg; i++) {
+    for (int i = 0; i < count; i++) {
+        if (!is_valid_vm_address(vm, sp)) break;
         printf("  sp[%2d] = 0x%016llx  (%lld)\n", i, *sp, *sp);
         sp++;
     }
@@ -505,8 +519,12 @@ void cc_debug_repl(JCC *vm) {
         else if (strcmp(cmd, "memory") == 0 || strcmp(cmd, "m") == 0) {
             long long addr;
             if (sscanf(line, "%*s %llx", &addr) == 1) {
-                printf("Memory at 0x%llx: 0x%016llx (%lld)\n",
-                       addr, *(long long*)addr, *(long long*)addr);
+                if (is_valid_vm_address(vm, (void*)addr)) {
+                    printf("Memory at 0x%llx: 0x%016llx (%lld)\n",
+                           addr, *(long long*)addr, *(long long*)addr);
+                } else {
+                    printf("Error: Invalid memory address 0x%llx\n", addr);
+                }
             } else {
                 printf("Usage: memory <hex_address>\n");
             }
@@ -519,7 +537,11 @@ void cc_debug_repl(JCC *vm) {
                 if (expr[0] == '0' && expr[1] == 'x') {
                     long long addr;
                     if (sscanf(expr, "%llx", &addr) == 1) {
-                        cc_add_watchpoint(vm, (void*)addr, 8, WATCH_WRITE | WATCH_CHANGE, expr);
+                        if (is_valid_vm_address(vm, (void*)addr)) {
+                            cc_add_watchpoint(vm, (void*)addr, 8, WATCH_WRITE | WATCH_CHANGE, expr);
+                        } else {
+                            printf("Error: Invalid memory address 0x%llx\n", addr);
+                        }
                     }
                 } else {
                     // Try to look up as variable name
@@ -528,8 +550,12 @@ void cc_debug_repl(JCC *vm) {
                         void *addr = sym->is_local ?
                             (void*)(vm->bp + sym->offset) :
                             (void*)(vm->data_seg + sym->offset);
-                        int size = sym->ty ? sym->ty->size : 8;
-                        cc_add_watchpoint(vm, addr, size, WATCH_WRITE | WATCH_CHANGE, expr);
+                        if (is_valid_vm_address(vm, addr)) {
+                            int size = sym->ty ? sym->ty->size : 8;
+                            cc_add_watchpoint(vm, addr, size, WATCH_WRITE | WATCH_CHANGE, expr);
+                        } else {
+                            printf("Error: Invalid address for variable '%s'\n", expr);
+                        }
                     } else {
                         printf("Error: Variable '%s' not found (symbol table not yet implemented)\n", expr);
                         printf("Use hex address instead: watch 0x<address>\n");
@@ -545,7 +571,11 @@ void cc_debug_repl(JCC *vm) {
             if (sscanf(line, "%*s %127s", expr) == 1) {
                 long long addr;
                 if (sscanf(expr, "%llx", &addr) == 1) {
-                    cc_add_watchpoint(vm, (void*)addr, 8, WATCH_READ, expr);
+                    if (is_valid_vm_address(vm, (void*)addr)) {
+                        cc_add_watchpoint(vm, (void*)addr, 8, WATCH_READ, expr);
+                    } else {
+                        printf("Error: Invalid memory address 0x%llx\n", addr);
+                    }
                 } else {
                     printf("Error: Symbol lookup not yet implemented, use hex address\n");
                     printf("Usage: rwatch 0x<address>\n");
@@ -560,7 +590,11 @@ void cc_debug_repl(JCC *vm) {
             if (sscanf(line, "%*s %127s", expr) == 1) {
                 long long addr;
                 if (sscanf(expr, "%llx", &addr) == 1) {
-                    cc_add_watchpoint(vm, (void*)addr, 8, WATCH_READ | WATCH_WRITE, expr);
+                    if (is_valid_vm_address(vm, (void*)addr)) {
+                        cc_add_watchpoint(vm, (void*)addr, 8, WATCH_READ | WATCH_WRITE, expr);
+                    } else {
+                        printf("Error: Invalid memory address 0x%llx\n", addr);
+                    }
                 } else {
                     printf("Error: Symbol lookup not yet implemented, use hex address\n");
                     printf("Usage: awatch 0x<address>\n");

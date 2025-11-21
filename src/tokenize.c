@@ -880,7 +880,7 @@ Token *tokenize(JCC *vm, File *file) {
 }
 
 // Returns the contents of a given file.
-static char *read_file(char *path) {
+static char *read_file(JCC *vm, char *path) {
     FILE *fp;
 
     if (strcmp(path, "-") == 0) {
@@ -914,6 +914,10 @@ static char *read_file(char *path) {
         fputc('\n', out);
     fputc('\0', out);
     fclose(out);
+
+    // Register buffer for cleanup
+    strarray_push(&vm->file_buffers, buf);
+
     return buf;
 }
 
@@ -1016,7 +1020,7 @@ static void convert_universal_chars(JCC *vm, char *p) {
 }
 
 Token *tokenize_file(JCC *vm, char *path) {
-    char *p = read_file(path);
+    char *p = read_file(vm, path);
     if (!p)
         return NULL;
 
