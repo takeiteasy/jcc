@@ -338,13 +338,12 @@ static Obj *new_gvar(JCC *vm, char *name, Type *ty) {
     return var;
 }
 
-static char *new_unique_name(void) {
-    static int id = 0;
-    return format(".L..%d", id++);
+static char *new_unique_name(JCC *vm) {
+    return format(".L..%d", vm->unique_name_counter++);
 }
 
 static Obj *new_anon_gvar(JCC *vm, Type *ty) {
-    return new_gvar(vm, new_unique_name(), ty);
+    return new_gvar(vm, new_unique_name(vm), ty);
 }
 
 static Obj *new_string_literal(JCC *vm, char *p, Type *ty) {
@@ -1803,7 +1802,7 @@ static Node *stmt(JCC *vm, Token **rest, Token *tok) {
         vm->current_switch = node;
 
         char *brk = vm->brk_label;
-        vm->brk_label = node->brk_label = new_unique_name();
+        vm->brk_label = node->brk_label = new_unique_name(vm);
 
         node->then = stmt(vm, rest, tok);
 
@@ -1838,7 +1837,7 @@ static Node *stmt(JCC *vm, Token **rest, Token *tok) {
         }
 
         tok = skip(vm, tok, ":");
-        node->label = new_unique_name();
+        node->label = new_unique_name(vm);
         node->lhs = stmt(vm, rest, tok);
         node->begin = begin;
         node->end = end;
@@ -1861,7 +1860,7 @@ static Node *stmt(JCC *vm, Token **rest, Token *tok) {
 
         Node *node = new_node(vm, ND_CASE, tok);
         tok = skip(vm, tok->next, ":");
-        node->label = new_unique_name();
+        node->label = new_unique_name(vm);
         node->lhs = stmt(vm, rest, tok);
         vm->current_switch->default_case = node;
         return node;
@@ -1875,8 +1874,8 @@ static Node *stmt(JCC *vm, Token **rest, Token *tok) {
 
         char *brk = vm->brk_label;
         char *cont = vm->cont_label;
-        vm->brk_label = node->brk_label = new_unique_name();
-        vm->cont_label = node->cont_label = new_unique_name();
+        vm->brk_label = node->brk_label = new_unique_name(vm);
+        vm->cont_label = node->cont_label = new_unique_name(vm);
 
         if (is_typename(vm, tok)) {
             Type *basety = declspec(vm, &tok, tok, NULL);
@@ -1909,8 +1908,8 @@ static Node *stmt(JCC *vm, Token **rest, Token *tok) {
 
         char *brk = vm->brk_label;
         char *cont = vm->cont_label;
-        vm->brk_label = node->brk_label = new_unique_name();
-        vm->cont_label = node->cont_label = new_unique_name();
+        vm->brk_label = node->brk_label = new_unique_name(vm);
+        vm->cont_label = node->cont_label = new_unique_name(vm);
 
         node->then = stmt(vm, rest, tok);
 
@@ -1924,8 +1923,8 @@ static Node *stmt(JCC *vm, Token **rest, Token *tok) {
 
         char *brk = vm->brk_label;
         char *cont = vm->cont_label;
-        vm->brk_label = node->brk_label = new_unique_name();
-        vm->cont_label = node->cont_label = new_unique_name();
+        vm->brk_label = node->brk_label = new_unique_name(vm);
+        vm->cont_label = node->cont_label = new_unique_name(vm);
 
         node->then = stmt(vm, &tok, tok->next);
 
@@ -1997,7 +1996,7 @@ static Node *stmt(JCC *vm, Token **rest, Token *tok) {
     if (tok->kind == TK_IDENT && equal(tok->next, ":")) {
         Node *node = new_node(vm, ND_LABEL, tok);
         node->label = strndup(tok->loc, tok->len);
-        node->unique_label = new_unique_name();
+        node->unique_label = new_unique_name(vm);
         node->lhs = stmt(vm, rest, tok->next->next);
         node->goto_next = vm->labels;
         vm->labels = node;
@@ -2355,8 +2354,8 @@ static Node *to_assign(JCC *vm, Node *binary) {
                   tok);
 
         Node *loop = new_node(vm, ND_DO, tok);
-        loop->brk_label = new_unique_name();
-        loop->cont_label = new_unique_name();
+        loop->brk_label = new_unique_name(vm);
+        loop->cont_label = new_unique_name(vm);
 
         Node *body = new_binary(vm, ND_ASSIGN,
                                 new_var_node(vm, new, tok),
