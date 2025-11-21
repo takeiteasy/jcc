@@ -1185,6 +1185,11 @@ struct JCC {
     int max_errors;                    // Maximum errors before stopping (default: 20)
     bool collect_errors;               // Enable error collection mode
     bool warnings_as_errors;           // Treat warnings as errors (--Werror)
+
+    // Per-instance state (moved from static globals for thread-safety/multi-VM support)
+    int unique_name_counter;           // Counter for new_unique_name() (was static in parse.c)
+    int counter_macro_value;           // __COUNTER__ macro value (was static in preprocess.c)
+    struct JCC *pragma_parent_vm;      // Parent VM during pragma execution (was static in pragma.c)
 };
 
 /*!

@@ -24,7 +24,10 @@
 
 // Global context: current parent VM for pragma macro execution
 // This is set before calling a pragma macro and cleared after.
-// Since pragma macro calls are synchronous and don't nest, this is safe.
+// NOTE: This global is required because __jcc_get_vm() is an FFI function
+// that doesn't receive the VM context. For thread-safety, this would need
+// to become thread-local storage (e.g., __thread on GCC/Clang).
+// The JCC.pragma_parent_vm field mirrors this for debugging/introspection.
 static JCC *current_pragma_parent_vm = NULL;
 
 // Builtin function to get the current VM context (like stdin/stdout)
@@ -351,7 +354,9 @@ Node *execute_pragma_macro(JCC *vm, PragmaMacro *pm, Node **args, int arg_count)
     macro_vm->debug_vm = 0;
 
     // Set the parent VM context so __jcc_get_vm() can access it
+    // Store in both global (for FFI) and instance field (for debugging/future TLS)
     current_pragma_parent_vm = vm;
+    macro_vm->pragma_parent_vm = vm;
 
     // Set up for function call
     // pm->compiled_fn is an offset, need to add text_seg base
@@ -379,6 +384,7 @@ Node *execute_pragma_macro(JCC *vm, PragmaMacro *pm, Node **args, int arg_count)
 
     // Clear the parent VM context
     current_pragma_parent_vm = NULL;
+    macro_vm->pragma_parent_vm = NULL;
 
     // Restore VM state (in case we call again)
     macro_vm->pc = (long long*)saved_pc;

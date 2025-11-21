@@ -1189,8 +1189,7 @@ static Token *line_macro(JCC *vm, Token *tmpl) {
 
 // __COUNTER__ is expanded to serial values starting from 0.
 static Token *counter_macro(JCC *vm, Token *tmpl) {
-    static int i = 0;
-    return new_num_token(vm, i++, tmpl);
+    return new_num_token(vm, vm->counter_macro_value++, tmpl);
 }
 
 // __TIMESTAMP__ is expanded to a string describing the last
