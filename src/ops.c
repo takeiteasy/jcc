@@ -2492,22 +2492,25 @@ int op_SCOPEIN_fn(JCC *vm) {
         printf("SCOPEIN: entering scope %d (bp=0x%llx)\n", scope_id, (long long)vm->bp);
     }
 
-    // Iterate through all metadata entries and activate those matching this scope
-    for (int i = 0; i < vm->stack_var_meta.capacity; i++) {
-        if (vm->stack_var_meta.buckets[i].key != NULL) {
-            StackVarMeta *meta = (StackVarMeta *)vm->stack_var_meta.buckets[i].val;
-            if (meta && meta->scope_id == scope_id) {
+    // NEW: Iterate only over variables in this scope using the scope list
+    if (scope_id < vm->scope_vars_capacity) {
+        ScopeVarNode *node = vm->scope_vars[scope_id].head;
+        while (node) {
+            StackVarMeta *meta = node->meta;
+            if (meta) {
                 meta->is_alive = 1;
                 meta->bp = (long long)vm->bp;
                 if (vm->debug_vm) {
                     printf("  Activated variable '%s' at bp%+lld\n", meta->name, meta->offset);
                 }
             }
+            node = node->next;
         }
     }
 
     return 0;
 }
+
 
 int op_SCOPEOUT_fn(JCC *vm) {
     // Mark scope exit - deactivate variables and detect dangling pointers
@@ -2523,19 +2526,22 @@ int op_SCOPEOUT_fn(JCC *vm) {
         printf("SCOPEOUT: exiting scope %d (bp=0x%llx)\n", scope_id, (long long)vm->bp);
     }
 
-    // Iterate through all metadata entries and deactivate those matching this scope
-    for (int i = 0; i < vm->stack_var_meta.capacity; i++) {
-        if (vm->stack_var_meta.buckets[i].key != NULL) {
-            StackVarMeta *meta = (StackVarMeta *)vm->stack_var_meta.buckets[i].val;
-            if (meta && meta->scope_id == scope_id && meta->bp == (long long)vm->bp) {
+    // NEW: Iterate only over variables in this scope using the scope list
+    if (scope_id < vm->scope_vars_capacity) {
+        ScopeVarNode *node = vm->scope_vars[scope_id].head;
+        while (node) {
+            StackVarMeta *meta = node->meta;
+            if (meta && meta->bp == (long long)vm->bp) {
                 meta->is_alive = 0;
                 if (vm->debug_vm) {
                     printf("  Deactivated variable '%s' at bp%+lld (reads=%lld, writes=%lld)\n",
                             meta->name, meta->offset, meta->read_count, meta->write_count);
                 }
             }
+            node = node->next;
         }
     }
+
 
     // Check for dangling pointers (pointers to variables in this scope)
     if (vm->flags & JCC_DANGLING_DETECT) {

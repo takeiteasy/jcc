@@ -333,13 +333,13 @@ static Macro *find_macro(JCC *vm, Token *tok) {
     return hashmap_get2(&vm->macros, tok->loc, tok->len);
 }
 
-static Macro *add_macro(JCC *vm, char *name, bool is_objlike, Token *body) {
+static Macro *add_macro(JCC *vm, char *name, int name_len, bool is_objlike, Token *body) {
     Macro *m = arena_alloc(&vm->parser_arena, sizeof(Macro));
     memset(m, 0, sizeof(Macro));
     m->name = name;
     m->is_objlike = is_objlike;
     m->body = body;
-    hashmap_put(&vm->macros, name, m);
+    hashmap_put2(&vm->macros, name, name_len, m);
     return m;
 }
 
@@ -388,12 +388,12 @@ static void read_macro_definition(JCC *vm, Token **rest, Token *tok) {
         char *va_args_name = NULL;
         MacroParam *params = read_macro_params(vm, &tok, tok->next, &va_args_name);
 
-        Macro *m = add_macro(vm, name, false, copy_line(vm, rest, tok));
+        Macro *m = add_macro(vm, name, tok->len, false, copy_line(vm, rest, tok));
         m->params = params;
         m->va_args_name = va_args_name;
     } else {
         // Object-like macro
-        add_macro(vm, name, true, copy_line(vm, rest, tok));
+        add_macro(vm, name, tok->len, true, copy_line(vm, rest, tok));
     }
 }
 
@@ -476,7 +476,7 @@ static MacroArg *find_arg(MacroArg *args, Token *tok) {
 }
 
 // Concatenates all tokens in `tok` and returns a new string.
-static char *join_tokens(JCC *vm, Token *tok, Token *end) {
+static char *join_tokens(JCC *vm, Token *tok, Token *end, int *out_len) {
     // Compute the length of the resulting token.
     int len = 1;
     for (Token *t = tok; t != end && t->kind != TK_EOF; t = t->next) {
@@ -497,6 +497,8 @@ static char *join_tokens(JCC *vm, Token *tok, Token *end) {
         pos += t->len;
     }
     buf[pos] = '\0';
+    if (out_len)
+        *out_len = pos;
     return buf;
 }
 
@@ -506,7 +508,7 @@ static Token *stringize(JCC *vm, Token *hash, Token *arg) {
     // Create a new string token. We need to set some value to its
     // source location for error reporting function, so we use a macro
     // name token as a template.
-    char *s = join_tokens(vm, arg, NULL);
+    char *s = join_tokens(vm, arg, NULL, NULL);
     return new_str_token(vm, s, hash);
 }
 
@@ -702,11 +704,11 @@ static bool file_exists(char *path) {
     return !stat(path, &st);
 }
 
-char *search_include_paths(JCC *vm, char *filename, bool is_system) {
+char *search_include_paths(JCC *vm, char *filename, int filename_len, bool is_system) {
     if (filename[0] == '/')
         return filename;
 
-    char *cached = hashmap_get(&vm->include_cache, filename);
+    char *cached = hashmap_get2(&vm->include_cache, filename, filename_len);
     if (cached)
         return cached;
 
@@ -719,7 +721,7 @@ char *search_include_paths(JCC *vm, char *filename, bool is_system) {
         char *path = format("%s/%s", paths->data[i], filename);
         if (!file_exists(path))
             continue;
-        hashmap_put(&vm->include_cache, filename, path);
+        hashmap_put2(&vm->include_cache, filename, filename_len, path);
         vm->include_next_idx = i + 1;
         return path;
     }
@@ -736,7 +738,7 @@ static char *search_include_next(JCC *vm, char *filename) {
 }
 
 // Read an #include argument.
-static char *read_include_filename(JCC *vm, Token **rest, Token *tok, bool *is_dquote) {
+static char *read_include_filename(JCC *vm, Token **rest, Token *tok, bool *is_dquote, int *out_len) {
     // Pattern 1: #include "foo.h"
     if (tok->kind == TK_STR) {
         // A double-quoted filename for #include is a special kind of
@@ -746,6 +748,7 @@ static char *read_include_filename(JCC *vm, Token **rest, Token *tok, bool *is_d
         // So we don't want to use token->str.
         *is_dquote = true;
         *rest = skip_line(vm, tok->next);
+        if (out_len) *out_len = tok->len - 2;
         return strndup(tok->loc + 1, tok->len - 2);
     }
 
@@ -762,7 +765,7 @@ static char *read_include_filename(JCC *vm, Token **rest, Token *tok, bool *is_d
 
         *is_dquote = false;
         *rest = skip_line(vm, tok->next);
-        return join_tokens(vm, start->next, tok);
+        return join_tokens(vm, start->next, tok, out_len);
     }
 
     // Pattern 3: #include FOO
@@ -770,7 +773,7 @@ static char *read_include_filename(JCC *vm, Token **rest, Token *tok, bool *is_d
     // a single string token or a sequence of "<" ... ">".
     if (tok->kind == TK_IDENT) {
         Token *tok2 = preprocess2(vm, copy_line(vm, rest, tok));
-        return read_include_filename(vm, &tok2, tok2, is_dquote);
+        return read_include_filename(vm, &tok2, tok2, is_dquote, out_len);
     }
 
     error_tok(vm, tok, "expected a filename");
@@ -1006,7 +1009,8 @@ static Token *preprocess2(JCC *vm, Token *tok) {
 
         if (equal(tok, "include")) {
             bool is_dquote;
-            char *filename = read_include_filename(vm, &tok, tok->next, &is_dquote);
+            int filename_len;
+            char *filename = read_include_filename(vm, &tok, tok->next, &is_dquote, &filename_len);
 
             // Check for URL includes (supported with both <...> and "...")
             if (is_url(filename)) {
@@ -1032,14 +1036,15 @@ static Token *preprocess2(JCC *vm, Token *tok) {
                 }
             }
 
-            char *path = search_include_paths(vm, filename, !is_dquote);
+            char *path = search_include_paths(vm, filename, filename_len, !is_dquote);
             tok = include_file(vm, tok, path ? path : filename, start->next->next);
             continue;
         }
 
         if (equal(tok, "include_next")) {
             bool ignore;
-            char *filename = read_include_filename(vm, &tok, tok->next, &ignore);
+            int filename_len;
+            char *filename = read_include_filename(vm, &tok, tok->next, &ignore, &filename_len);
             char *path = search_include_next(vm, filename);
             tok = include_file(vm, tok, path ? path : filename, start->next->next);
             continue;

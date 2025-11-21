@@ -260,10 +260,10 @@ Node *new_cast(JCC *vm, Node *expr, Type *ty) {
     return node;
 }
 
-static VarScope *push_scope(JCC *vm, char *name) {
+static VarScope *push_scope(JCC *vm, char *name, int name_len) {
     VarScope *sc = arena_alloc(&vm->parser_arena, sizeof(VarScope));
     memset(sc, 0, sizeof(VarScope));
-    hashmap_put(&vm->scope->vars, name, sc);
+    hashmap_put2(&vm->scope->vars, name, name_len, sc);
     return sc;
 }
 
@@ -311,26 +311,26 @@ static Initializer *new_initializer(JCC *vm, Type *ty, bool is_flexible) {
     return init;
 }
 
-static Obj *new_var(JCC *vm, char *name, Type *ty) {
+static Obj *new_var(JCC *vm, char *name, int name_len, Type *ty) {
     Obj *var = arena_alloc(&vm->parser_arena, sizeof(Obj));
     memset(var, 0, sizeof(Obj));
     var->name = name;
     var->ty = ty;
     var->align = ty->align;
-    push_scope(vm, name)->var = var;
+    push_scope(vm, name, name_len)->var = var;
     return var;
 }
 
-static Obj *new_lvar(JCC *vm, char *name, Type *ty) {
-    Obj *var = new_var(vm, name, ty);
+static Obj *new_lvar(JCC *vm, char *name, int name_len, Type *ty) {
+    Obj *var = new_var(vm, name, name_len, ty);
     var->is_local = true;
     var->next = vm->locals;
     vm->locals = var;
     return var;
 }
 
-static Obj *new_gvar(JCC *vm, char *name, Type *ty) {
-    Obj *var = new_var(vm, name, ty);
+static Obj *new_gvar(JCC *vm, char *name, int name_len, Type *ty) {
+    Obj *var = new_var(vm, name, name_len, ty);
     var->next = vm->globals;
     var->is_static = true;
     var->is_definition = true;
@@ -343,7 +343,8 @@ static char *new_unique_name(JCC *vm) {
 }
 
 static Obj *new_anon_gvar(JCC *vm, Type *ty) {
-    return new_gvar(vm, new_unique_name(vm), ty);
+    char *name = new_unique_name(vm);
+    return new_gvar(vm, name, strlen(name), ty);
 }
 
 static Obj *new_string_literal(JCC *vm, char *p, Type *ty) {
@@ -930,7 +931,7 @@ static Type *enum_specifier(JCC *vm, Token **rest, Token *tok) {
         if (equal(tok, "="))
             val = const_expr(vm, &tok, tok->next);
 
-        VarScope *sc = push_scope(vm, name);
+        VarScope *sc = push_scope(vm, name, tok->len);
         sc->enum_ty = ty;
         sc->enum_val = val;
 
@@ -992,7 +993,7 @@ static Node *compute_vla_size(JCC *vm, Type *ty, Token *tok) {
     else
         base_sz = new_num(vm, get_vm_size(ty->base), tok);  // Use VM-adjusted size
 
-    ty->vla_size = new_lvar(vm, "", ty_ulong);
+    ty->vla_size = new_lvar(vm, "", 0, ty_ulong);
     Node *expr = new_binary(vm, ND_ASSIGN, new_var_node(vm, ty->vla_size, tok),
                             new_binary(vm, ND_MUL, ty->vla_len, base_sz, tok),
                             tok);
@@ -1027,7 +1028,7 @@ static Node *declaration(JCC *vm, Token **rest, Token *tok, Type *basety, VarAtt
         if (attr && attr->is_static) {
             // static local variable
             Obj *var = new_anon_gvar(vm, ty);
-            push_scope(vm, get_ident(vm, ty->name))->var = var;
+            push_scope(vm, get_ident(vm, ty->name), ty->name->len)->var = var;
             if (equal(tok, "="))
                 gvar_initializer(vm, &tok, tok->next, var);
             continue;
@@ -1045,7 +1046,7 @@ static Node *declaration(JCC *vm, Token **rest, Token *tok, Type *basety, VarAtt
             // Variable length arrays (VLAs) are translated to alloca() calls.
             // For example, `int x[n+2]` is translated to `tmp = n + 2,
             // x = alloca(tmp)`.
-            Obj *var = new_lvar(vm, get_ident(vm, ty->name), ty);
+            Obj *var = new_lvar(vm, get_ident(vm, ty->name), ty->name->len, ty);
             Token *tok = ty->name;
             Node *expr = new_binary(vm, ND_ASSIGN, new_vla_ptr(vm, var, tok),
                                     new_alloca(vm, new_var_node(vm, ty->vla_size, tok)),
@@ -1055,7 +1056,7 @@ static Node *declaration(JCC *vm, Token **rest, Token *tok, Type *basety, VarAtt
             continue;
         }
 
-        Obj *var = new_lvar(vm, get_ident(vm, ty->name), ty);
+        Obj *var = new_lvar(vm, get_ident(vm, ty->name), ty->name->len, ty);
         if (attr && attr->align)
             var->align = attr->align;
 
@@ -2299,7 +2300,7 @@ static Node *to_assign(JCC *vm, Node *binary) {
 
     // Convert `A.x op= C` to `tmp = &A, (*tmp).x = (*tmp).x op C`.
     if (binary->lhs->kind == ND_MEMBER) {
-        Obj *var = new_lvar(vm, "", pointer_to(binary->lhs->lhs->ty));
+        Obj *var = new_lvar(vm, "", 0, pointer_to(binary->lhs->lhs->ty));
 
         Node *expr1 = new_binary(vm, ND_ASSIGN, new_var_node(vm, var, tok),
                                  new_unary(vm, ND_ADDR, binary->lhs->lhs, tok), tok);
@@ -2334,10 +2335,10 @@ static Node *to_assign(JCC *vm, Node *binary) {
         Node head = {};
         Node *cur = &head;
 
-        Obj *addr = new_lvar(vm, "", pointer_to(binary->lhs->ty));
-        Obj *val = new_lvar(vm, "", binary->rhs->ty);
-        Obj *old = new_lvar(vm, "", binary->lhs->ty);
-        Obj *new = new_lvar(vm, "", binary->lhs->ty);
+        Obj *addr = new_lvar(vm, "", 0, pointer_to(binary->lhs->ty));
+        Obj *val = new_lvar(vm, "", 0, binary->rhs->ty);
+        Obj *old = new_lvar(vm, "", 0, binary->lhs->ty);
+        Obj *new = new_lvar(vm, "", 0, binary->lhs->ty);
 
         cur = cur->next =
         new_unary(vm, ND_EXPR_STMT,
@@ -2384,7 +2385,7 @@ static Node *to_assign(JCC *vm, Node *binary) {
     }
 
     // Convert `A op= B` to ``tmp = &A, *tmp = *tmp op B`.
-    Obj *var = new_lvar(vm, "", pointer_to(binary->lhs->ty));
+    Obj *var = new_lvar(vm, "", 0, pointer_to(binary->lhs->ty));
 
     Node *expr1 = new_binary(vm, ND_ASSIGN, new_var_node(vm, var, tok),
                              new_unary(vm, ND_ADDR, binary->lhs, tok), tok);
@@ -2456,7 +2457,7 @@ static Node *conditional(JCC *vm, Token **rest, Token *tok) {
     if (equal(tok->next, ":")) {
         // [GNU] Compile `a ?: b` as `tmp = a, tmp ? tmp : b`.
         add_type(vm, cond);
-        Obj *var = new_lvar(vm, "", cond->ty);
+        Obj *var = new_lvar(vm, "", 0, cond->ty);
         Node *lhs = new_binary(vm, ND_ASSIGN, new_var_node(vm, var, tok), cond, tok);
         Node *rhs = new_node(vm, ND_COND, tok);
         rhs->cond = new_var_node(vm, var, tok);
@@ -3194,7 +3195,7 @@ static Node *postfix(JCC *vm, Token **rest, Token *tok) {
             return new_var_node(vm, var, start);
         }
 
-        Obj *var = new_lvar(vm, "", ty);
+        Obj *var = new_lvar(vm, "", 0, ty);
         Node *lhs = lvar_initializer(vm, rest, tok, var);
         Node *rhs = new_var_node(vm, var, tok);
         return new_binary(vm, ND_COMMA, lhs, rhs, start);
@@ -3298,7 +3299,7 @@ static Node *funcall(JCC *vm, Token **rest, Token *tok, Node *fn) {
     // If a function returns a struct, it is caller's responsibility
     // to allocate a space for the return value.
     if (node->ty->kind == TY_STRUCT || node->ty->kind == TY_UNION)
-        node->ret_buffer = new_lvar(vm, "", node->ty);
+        node->ret_buffer = new_lvar(vm, "", 0, node->ty);
     return node;
 }
 
@@ -3568,7 +3569,7 @@ static Token *parse_typedef(JCC *vm, Token *tok, Type *basety) {
         Type *ty = declarator(vm, &tok, tok, basety);
         if (!ty->name)
             error_tok(vm, ty->name_pos, "typedef name omitted");
-        push_scope(vm, get_ident(vm, ty->name))->type_def = ty;
+        push_scope(vm, get_ident(vm, ty->name), ty->name->len)->type_def = ty;
     }
     return tok;
 }
@@ -3578,7 +3579,7 @@ static void create_param_lvars(JCC *vm, Type *param) {
         create_param_lvars(vm, param->next);
         if (!param->name)
             error_tok(vm, param->name_pos, "parameter name omitted");
-        new_lvar(vm, get_ident(vm, param->name), param);
+        new_lvar(vm, get_ident(vm, param->name), param->name->len, param);
     }
 }
 
@@ -3603,12 +3604,12 @@ static void resolve_goto_labels(JCC *vm) {
     vm->gotos = vm->labels = NULL;
 }
 
-static Obj *find_func(JCC *vm, char *name) {
+static Obj *find_func(JCC *vm, char *name, int name_len) {
     Scope *sc = vm->scope;
     while (sc->next)
         sc = sc->next;
 
-    VarScope *sc2 = hashmap_get(&sc->vars, name);
+    VarScope *sc2 = hashmap_get2(&sc->vars, name, name_len);
     if (sc2 && sc2->var && sc2->var->is_function)
         return sc2->var;
     return NULL;
@@ -3620,7 +3621,7 @@ static void mark_live(JCC *vm, Obj *var) {
     var->is_live = true;
 
     for (int i = 0; i < var->refs.len; i++) {
-        Obj *fn = find_func(vm, var->refs.data[i]);
+        Obj *fn = find_func(vm, var->refs.data[i], strlen(var->refs.data[i]));
         if (fn)
             mark_live(vm, fn);
     }
@@ -3632,7 +3633,7 @@ static Token *function(JCC *vm, Token *tok, Type *basety, VarAttr *attr) {
         error_tok(vm, ty->name_pos, "function name omitted");
     char *name_str = get_ident(vm, ty->name);
 
-    Obj *fn = find_func(vm, name_str);
+    Obj *fn = find_func(vm, name_str, ty->name->len);
     if (fn) {
         // Redeclaration
         if (!fn->is_function)
@@ -3643,7 +3644,7 @@ static Token *function(JCC *vm, Token *tok, Type *basety, VarAttr *attr) {
             error_tok(vm, tok, "static declaration follows a non-static declaration");
         fn->is_definition = fn->is_definition || equal(tok, "{");
     } else {
-        fn = new_gvar(vm, name_str, ty);
+        fn = new_gvar(vm, name_str, ty->name->len, ty);
         fn->is_function = true;
         fn->is_definition = equal(tok, "{");
         fn->is_static = attr->is_static || (attr->is_inline && !attr->is_extern);
@@ -3671,19 +3672,19 @@ static Token *function(JCC *vm, Token *tok, Type *basety, VarAttr *attr) {
     fn->params = vm->locals;
 
     if (ty->is_variadic)
-        fn->va_area = new_lvar(vm, "__va_area__", array_of(ty_char, 136));
-    fn->alloca_bottom = new_lvar(vm, "__alloca_size__", pointer_to(ty_char));
+        fn->va_area = new_lvar(vm, "__va_area__", 11, array_of(ty_char, 136));
+    fn->alloca_bottom = new_lvar(vm, "__alloca_size__", 15, pointer_to(ty_char));
 
     tok = skip(vm, tok, "{");
 
     // [https://www.sigbus.info/n1570#6.4.2.2p1] "__func__" is
     // automatically defined as a local variable containing the
     // current function name.
-    push_scope(vm, "__func__")->var =
+    push_scope(vm, "__func__", 8)->var =
     new_string_literal(vm, fn->name, array_of(ty_char, strlen(fn->name) + 1));
 
     // [GNU] __FUNCTION__ is yet another name of __func__.
-    push_scope(vm, "__FUNCTION__")->var =
+    push_scope(vm, "__FUNCTION__", 12)->var =
     new_string_literal(vm, fn->name, array_of(ty_char, strlen(fn->name) + 1));
 
     fn->body = compound_stmt(vm, &tok, tok);
@@ -3705,7 +3706,7 @@ static Token *global_variable(JCC *vm, Token *tok, Type *basety, VarAttr *attr) 
         if (!ty->name)
             error_tok(vm, ty->name_pos, "variable name omitted");
 
-        Obj *var = new_gvar(vm, get_ident(vm, ty->name), ty);
+        Obj *var = new_gvar(vm, get_ident(vm, ty->name), ty->name->len, ty);
         var->is_definition = !attr->is_extern;
         var->is_static = attr->is_static;
         var->is_tls = attr->is_tls;
@@ -3763,21 +3764,21 @@ static void declare_builtin_functions(JCC *vm) {
     // alloca(size) -> void*
     Type *ty = func_type(pointer_to(ty_void));
     ty->params = copy_type(ty_int);
-    vm->builtin_alloca = new_gvar(vm, "alloca", ty);
+    vm->builtin_alloca = new_gvar(vm, "alloca", 6, ty);
     vm->builtin_alloca->is_definition = false;
 
     // setjmp(jmp_buf) -> int
     // jmp_buf is an array type, but we'll treat it as a pointer for now
     Type *setjmp_ty = func_type(ty_int);
     setjmp_ty->params = pointer_to(ty_long);  // jmp_buf is long long[5]
-    vm->builtin_setjmp = new_gvar(vm, "setjmp", setjmp_ty);
+    vm->builtin_setjmp = new_gvar(vm, "setjmp", 6, setjmp_ty);
     vm->builtin_setjmp->is_definition = false;
 
     // longjmp(jmp_buf, int) -> void (noreturn)
     Type *longjmp_ty = func_type(ty_void);
     longjmp_ty->params = pointer_to(ty_long);
     longjmp_ty->params->next = copy_type(ty_int);
-    vm->builtin_longjmp = new_gvar(vm, "longjmp", longjmp_ty);
+    vm->builtin_longjmp = new_gvar(vm, "longjmp", 7, longjmp_ty);
     vm->builtin_longjmp->is_definition = false;
 }
 

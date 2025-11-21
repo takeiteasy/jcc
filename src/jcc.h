@@ -811,6 +811,29 @@ typedef struct StackVarMeta {
 } StackVarMeta;
 
 /*!
+ @struct ScopeVarNode
+ @abstract Linked list node for tracking variables within a scope.
+ @field meta Pointer to the variable's metadata.
+ @field next Pointer to the next variable in the scope.
+ */
+typedef struct ScopeVarNode {
+    StackVarMeta *meta;
+    struct ScopeVarNode *next;
+} ScopeVarNode;
+
+/*!
+ @struct ScopeVarList
+ @abstract Linked list of variables belonging to a specific scope.
+ @field head Head of the linked list.
+ @field tail Tail for efficient O(1) append operations.
+ */
+typedef struct ScopeVarList {
+    ScopeVarNode *head;
+    ScopeVarNode *tail;
+} ScopeVarList;
+
+
+/*!
  @struct ProvenanceInfo
  @abstract Tracks pointer provenance (origin) for validation.
  @field origin_type Type of origin: 0=HEAP, 1=STACK, 2=GLOBAL.
@@ -1044,6 +1067,9 @@ struct JCC {
     int current_scope_id;               // Incremented for each scope entry
     int current_function_scope_id;      // Scope ID of current function being generated
     long long stack_high_water;         // Maximum stack usage tracking
+    ScopeVarList *scope_vars;           // Array of per-scope variable lists
+    int scope_vars_capacity;            // Capacity of scope_vars array
+
 
     // Debugger state (enable via JCC_ENABLE_DEBUGGER flag)
     Breakpoint breakpoints[MAX_BREAKPOINTS]; // Breakpoint table
