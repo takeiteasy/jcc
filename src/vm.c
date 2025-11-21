@@ -190,6 +190,8 @@ void cc_init(JCC *vm, uint32_t flags) {
     vm->current_scope_id = 0;
     vm->current_function_scope_id = 0;
     vm->stack_high_water = 0;
+    vm->scope_vars = NULL;
+    vm->scope_vars_capacity = 0;
 
     // Initialize stack canary (will be set to random or fixed value based on flag)
     // The flag JCC_RANDOM_CANARIES will trigger regeneration in main.c
@@ -302,6 +304,20 @@ void cc_destroy(JCC *vm) {
         }
         free(vm->stack_var_meta.buckets);
     }
+
+    // Free scope variable lists
+    if (vm->scope_vars) {
+        for (int i = 0; i < vm->scope_vars_capacity; i++) {
+            ScopeVarNode *node = vm->scope_vars[i].head;
+            while (node) {
+                ScopeVarNode *next = node->next;
+                free(node);
+                node = next;
+            }
+        }
+        free(vm->scope_vars);
+    }
+
 
     // Free alloc_map HashMap (integer keys, no values to free - headers are in heap_seg)
     if (vm->alloc_map.buckets)

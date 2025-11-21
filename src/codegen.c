@@ -1456,7 +1456,43 @@ static void add_debug_symbol(JCC *vm, const char *name, long long offset, Type *
     vm->num_debug_symbols++;
 }
 
+// Add variable to scope's linked list for efficient iteration
+static void add_var_to_scope(JCC *vm, int scope_id, StackVarMeta *meta) {
+    // Ensure scope_vars array is large enough
+    if (scope_id >= vm->scope_vars_capacity) {
+        int new_capacity = scope_id + 16;  // Grow in chunks
+        vm->scope_vars = realloc(vm->scope_vars, new_capacity * sizeof(ScopeVarList));
+        if (!vm->scope_vars) {
+            error("Failed to allocate scope_vars array");
+        }
+        // Zero-initialize new entries
+        for (int i = vm->scope_vars_capacity; i < new_capacity; i++) {
+            vm->scope_vars[i].head = NULL;
+            vm->scope_vars[i].tail = NULL;
+        }
+        vm->scope_vars_capacity = new_capacity;
+    }
+
+    // Create new node
+    ScopeVarNode *node = malloc(sizeof(ScopeVarNode));
+    if (!node) {
+        error("Failed to allocate ScopeVarNode");
+    }
+    node->meta = meta;
+    node->next = NULL;
+
+    // Append to scope's list (O(1) with tail pointer)
+    ScopeVarList *list = &vm->scope_vars[scope_id];
+    if (list->tail) {
+        list->tail->next = node;
+        list->tail = node;
+    } else {
+        list->head = list->tail = node;
+    }
+}
+
 // Add stack variable metadata for instrumentation
+
 static void add_stack_var_meta(JCC *vm, const char *name, long long offset, Type *ty, int scope_id) {
     if (!(vm->flags & JCC_STACK_INSTR)) {
         return;
@@ -1483,7 +1519,11 @@ static void add_stack_var_meta(JCC *vm, const char *name, long long offset, Type
     snprintf(key, sizeof(key), "%lld", offset);
     // Heap-allocate key since HashMap stores pointer (consistent with other HashMap usage)
     hashmap_put(&vm->stack_var_meta, strdup(key), meta);
+    
+    // Add to scope's variable list for efficient iteration
+    add_var_to_scope(vm, scope_id, meta);
 }
+
 
 // Generate code for a function
 // Made non-static for K macro compilation
