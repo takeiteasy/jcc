@@ -936,6 +936,8 @@ void gen_expr(JCC *vm, Node *node) {
             
             // Collect arguments in array for proper left-to-right evaluation
             Node **arg_array = calloc(nargs, sizeof(Node*));
+            if (!arg_array)
+                error("out of memory");
             int i = 0;
             for (Node *arg = node->args; arg; arg = arg->next) {
                 arg_array[i++] = arg;
@@ -1462,9 +1464,8 @@ static void add_stack_var_meta(JCC *vm, const char *name, long long offset, Type
 
     // Create metadata structure
     StackVarMeta *meta = calloc(1, sizeof(StackVarMeta));
-    if (!meta) {
-        error("failed to allocate stack variable metadata");
-    }
+    if (!meta)
+        error("out of memory");
 
     meta->name = (char*)name;
     meta->bp = 0;  // Will be set at runtime

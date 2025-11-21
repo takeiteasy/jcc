@@ -116,6 +116,7 @@ void cc_init(JCC *vm, uint32_t flags) {
     vm->return_buffer = NULL;  // Will be set to data segment location
 
     init_macros(vm);
+    cc_init_parser(vm);
 
     // Initialize init_state HashMap for uninitialized variable detection
     vm->init_state.capacity = 0;  // Will be allocated on first use by hashmap_put
@@ -156,7 +157,18 @@ void cc_init(JCC *vm, uint32_t flags) {
     vm->url_to_path.capacity = 0;
     vm->url_to_path.buckets = NULL;
     vm->url_to_path.used = 0;
+    vm->url_to_path.used = 0;
     vm->url_cache_dir = NULL;  // Will be initialized on first URL include
+
+    // Initialize include_cache HashMap
+    vm->include_cache.capacity = 0;
+    vm->include_cache.buckets = NULL;
+    vm->include_cache.used = 0;
+
+    // Initialize file_buffers StringArray
+    vm->file_buffers.data = NULL;
+    vm->file_buffers.len = 0;
+    vm->file_buffers.capacity = 0;
 
     // Initialize sorted allocation array for O(log n) pointer validation
     vm->sorted_allocs.addresses = NULL;
@@ -212,6 +224,7 @@ void cc_init(JCC *vm, uint32_t flags) {
 void cc_destroy(JCC *vm) {
     if (!vm)
         return;
+    
     if (vm->text_seg)
         free(vm->text_seg);
     if (vm->data_seg)
@@ -343,6 +356,63 @@ void cc_destroy(JCC *vm) {
     if (vm->error_message) {
         free(vm->error_message);
         vm->error_message = NULL;
+    }
+
+    // Free include paths
+    if (vm->include_paths.data) {
+        for (int i = 0; i < vm->include_paths.len; i++)
+            free(vm->include_paths.data[i]);
+        free(vm->include_paths.data);
+    }
+
+    // Free system include paths
+    if (vm->system_include_paths.data) {
+        for (int i = 0; i < vm->system_include_paths.len; i++)
+            free(vm->system_include_paths.data[i]);
+        free(vm->system_include_paths.data);
+    }
+
+    // Free input files array
+    if (vm->input_files)
+        free(vm->input_files);
+
+    // Free URL cache directory
+    if (vm->url_cache_dir)
+        free(vm->url_cache_dir);
+
+    // Free include_cache HashMap
+    if (vm->include_cache.buckets) {
+        for (int i = 0; i < vm->include_cache.capacity; i++) {
+            HashEntry *entry = &vm->include_cache.buckets[i];
+            if (entry->key && entry->key != (void *)-1 && entry->keylen != -1) {
+                // Key is filename (not owned here usually, but let's check usage)
+                // Value is path (malloc'd string)
+                if (entry->val) free(entry->val);
+            }
+        }
+        free(vm->include_cache.buckets);
+    }
+
+    // Free file buffers
+    if (vm->file_buffers.data) {
+        for (int i = 0; i < vm->file_buffers.len; i++)
+            free(vm->file_buffers.data[i]);
+        free(vm->file_buffers.data);
+    }
+
+    // Free URL to path map
+    if (vm->url_to_path.buckets) {
+        // Keys are cache paths (owned by file_buffers or similar?), Values are filenames (owned by tokens/files)
+        // We just free the buckets
+        free(vm->url_to_path.buckets);
+    }
+
+    // Free watchpoint expressions
+    for (int i = 0; i < MAX_WATCHPOINTS; i++) {
+        if (vm->watchpoints[i].expr) {
+            free(vm->watchpoints[i].expr);
+            vm->watchpoints[i].expr = NULL;
+        }
     }
 
     // Destroy parser arena (frees all tokens, AST nodes, preprocessor state)

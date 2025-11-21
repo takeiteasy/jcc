@@ -159,7 +159,7 @@ static Token *function(JCC *vm, Token *tok, Type *basety, VarAttr *attr);
 static Token *global_variable(JCC *vm, Token *tok, Type *basety, VarAttr *attr);
 
 static int align_to(int n, int align) {
-    return (n + align - 1) / align * align;
+    return (int)(((long long)n + align - 1) / align * align);
 }
 
 static int align_down(int n, int align) {
@@ -355,7 +355,10 @@ static Obj *new_string_literal(JCC *vm, char *p, Type *ty) {
 static char *get_ident(JCC *vm, Token *tok) {
     if (tok->kind != TK_IDENT)
         error_tok(vm, tok, "expected an identifier");
-    return strndup(tok->loc, tok->len);
+    char *s = arena_alloc(&vm->parser_arena, tok->len + 1);
+    memcpy(s, tok->loc, tok->len);
+    s[tok->len] = '\0';
+    return s;
 }
 
 // Error recovery helper: Skip to end of statement (semicolon or closing brace)
@@ -934,7 +937,7 @@ static Type *enum_specifier(JCC *vm, Token **rest, Token *tok) {
         // Store enum constant in Type structure for code emission
         struct EnumConstant *ec = arena_alloc(&vm->parser_arena, sizeof(struct EnumConstant));
         memset(ec, 0, sizeof(struct EnumConstant));
-        ec->name = strdup(name);
+        ec->name = name;
         ec->value = val;
         ec->next = NULL;
 
@@ -3847,4 +3850,8 @@ Node *cc_parse_stmt(JCC *vm, Token **rest, Token *tok) {
 
 Node *cc_parse_compound_stmt(JCC *vm, Token **rest, Token *tok) {
     return compound_stmt(vm, rest, tok);
+}
+
+void cc_init_parser(JCC *vm) {
+    error_var->ty = ty_error;
 }

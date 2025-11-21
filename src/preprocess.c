@@ -46,6 +46,8 @@
 #include "jcc.h"
 #include "./internal.h"
 
+#define MAX_PP_NESTING 1000
+
 typedef struct MacroParam MacroParam;
 struct MacroParam {
     MacroParam *next;
@@ -164,12 +166,15 @@ static Token *append(JCC *vm, Token *tok1, Token *tok2) {
     return head.next;
 }
 
-static Token *skip_cond_incl2(Token *tok) {
+static Token *skip_cond_incl2(JCC *vm, Token *tok, int depth) {
+    if (depth > MAX_PP_NESTING)
+        error_tok(vm, tok, "too many nested conditional includes");
+
     while (tok->kind != TK_EOF) {
         if (is_hash(tok) &&
             (equal(tok->next, "if") || equal(tok->next, "ifdef") ||
              equal(tok->next, "ifndef"))) {
-            tok = skip_cond_incl2(tok->next->next);
+            tok = skip_cond_incl2(vm, tok->next->next, depth + 1);
             continue;
         }
         if (is_hash(tok) && equal(tok->next, "endif"))
@@ -181,12 +186,12 @@ static Token *skip_cond_incl2(Token *tok) {
 
 // Skip until next `#else`, `#elif` or `#endif`.
 // Nested `#if` and `#endif` are skipped.
-static Token *skip_cond_incl(Token *tok) {
+static Token *skip_cond_incl(JCC *vm, Token *tok) {
     while (tok->kind != TK_EOF) {
         if (is_hash(tok) &&
             (equal(tok->next, "if") || equal(tok->next, "ifdef") ||
              equal(tok->next, "ifndef"))) {
-            tok = skip_cond_incl2(tok->next->next);
+            tok = skip_cond_incl2(vm, tok->next->next, 0);
             continue;
         }
 
@@ -701,8 +706,7 @@ char *search_include_paths(JCC *vm, char *filename, bool is_system) {
     if (filename[0] == '/')
         return filename;
 
-    static HashMap cache;
-    char *cached = hashmap_get(&cache, filename);
+    char *cached = hashmap_get(&vm->include_cache, filename);
     if (cached)
         return cached;
 
@@ -715,7 +719,7 @@ char *search_include_paths(JCC *vm, char *filename, bool is_system) {
         char *path = format("%s/%s", paths->data[i], filename);
         if (!file_exists(path))
             continue;
-        hashmap_put(&cache, filename, path);
+        hashmap_put(&vm->include_cache, filename, path);
         vm->include_next_idx = i + 1;
         return path;
     }
@@ -779,7 +783,7 @@ static char *read_include_filename(JCC *vm, Token **rest, Token *tok, bool *is_d
 //   #define FOO_H
 //   ...
 //   #endif
-static char *detect_include_guard(Token *tok) {
+static char *detect_include_guard(JCC *vm, Token *tok) {
     // Detect the first two lines.
     if (!is_hash(tok) || !equal(tok->next, "ifndef"))
         return NULL;
@@ -805,7 +809,7 @@ static char *detect_include_guard(Token *tok) {
             return macro;
 
         if (equal(tok, "if") || equal(tok, "ifdef") || equal(tok, "ifndef"))
-            tok = skip_cond_incl(tok->next);
+            tok = skip_cond_incl(vm, tok->next);
         else
             tok = tok->next;
     }
@@ -862,7 +866,7 @@ static Token *include_file(JCC *vm, Token *tok, char *path, Token *filename_tok)
     basename = basename ? basename + 1 : path;
     register_stdlib_for_header(vm, basename);
 
-    guard_name = detect_include_guard(tok2);
+    guard_name = detect_include_guard(vm, tok2);
     if (guard_name)
         hashmap_put(&include_guards, path, guard_name);
 
@@ -1059,7 +1063,7 @@ static Token *preprocess2(JCC *vm, Token *tok) {
             long val = eval_const_expr(vm, &tok, tok);
             push_cond_incl(vm, start, val);
             if (!val)
-                tok = skip_cond_incl(tok);
+                tok = skip_cond_incl(vm, tok);
             continue;
         }
 
@@ -1068,7 +1072,7 @@ static Token *preprocess2(JCC *vm, Token *tok) {
             push_cond_incl(vm, tok, defined);
             tok = skip_line(vm, tok->next->next);
             if (!defined)
-                tok = skip_cond_incl(tok);
+                tok = skip_cond_incl(vm, tok);
             continue;
         }
 
@@ -1077,7 +1081,7 @@ static Token *preprocess2(JCC *vm, Token *tok) {
             push_cond_incl(vm, tok, !defined);
             tok = skip_line(vm, tok->next->next);
             if (defined)
-                tok = skip_cond_incl(tok);
+                tok = skip_cond_incl(vm, tok);
             continue;
         }
 
@@ -1089,7 +1093,7 @@ static Token *preprocess2(JCC *vm, Token *tok) {
             if (!vm->cond_incl->included && eval_const_expr(vm, &tok, tok))
                 vm->cond_incl->included = true;
             else
-                tok = skip_cond_incl(tok);
+                tok = skip_cond_incl(vm, tok);
             continue;
         }
 
@@ -1100,7 +1104,7 @@ static Token *preprocess2(JCC *vm, Token *tok) {
             tok = skip_line(vm, tok->next);
 
             if (vm->cond_incl->included)
-                tok = skip_cond_incl(tok);
+                tok = skip_cond_incl(vm, tok);
             continue;
         }
 

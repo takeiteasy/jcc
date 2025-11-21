@@ -32,12 +32,32 @@ while IFS= read -r file; do
     [ -n "$file" ] && test_files+=("$file")
 done < <(find "$tests_dir" -name "test_*.c" -maxdepth 1 | sort)
 
+# Parse arguments
+use_leaks=0
+jcc_args=()
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --leaks)
+            use_leaks=1
+            shift
+            ;;
+        *)
+            jcc_args+=("$1")
+            shift
+            ;;
+    esac
+done
+
 if [ ${#test_files[@]} -eq 0 ]; then
     echo "No test files found in $tests_dir"
     exit 1
 fi
 
 echo "Running JCC tests..."
+if [ $use_leaks -eq 1 ]; then
+    echo "Memory leak detection enabled (using 'leaks')"
+fi
 echo "======================="
 echo ""
 
@@ -47,8 +67,24 @@ for test_file in "${test_files[@]}"; do
     total=$((total + 1))
     
     # Run the test and capture exit code
-    "$jcc" -I./include "$test_file" >/dev/null 2>&1
-    exit_code=$?
+    if [ $use_leaks -eq 1 ]; then
+        # Run with leaks detection
+        # Capture output to check for leaks
+        output=$(leaks -atExit -- "$jcc" -I./include "${jcc_args[@]}" "$test_file" 2>&1)
+        exit_code=$?
+        
+        # Check if leaks were detected (leaks usually prints "0 leaks" if clean)
+        if echo "$output" | grep -q "0 leaks"; then
+            is_leaking=0
+        else
+            is_leaking=1
+        fi
+    else
+        # Normal run
+        "$jcc" -I./include "${jcc_args[@]}" "$test_file" >/dev/null 2>&1
+        exit_code=$?
+        is_leaking=0
+    fi
 
     # Crash detection:
     # Only check for specific crash signals, not all exit codes > 128
@@ -58,6 +94,12 @@ for test_file in "${test_files[@]}"; do
         crashed=$((crashed + 1))
         crashed_tests+=("$test_name (exit code: $exit_code)")
         echo "💥 $test_name (CRASHED: exit code $exit_code)"
+    elif [ $is_leaking -eq 1 ]; then
+        failed=$((failed + 1))
+        failed_tests+=("$test_name (MEMORY LEAK)")
+        echo "💧 $test_name (MEMORY LEAK)"
+        # Print first few lines of leak report
+        echo "$output" | grep "Leak:" | head -n 3 | sed 's/^/  /'
     elif [ $exit_code -ne 0 ]; then
         # Non-zero exit code indicates successful test execution
         # JCC tests return their result as exit code (e.g., 42, 30, etc.)
