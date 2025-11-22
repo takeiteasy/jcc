@@ -1,7 +1,6 @@
-# jcc
+# This project has moved
 
-> [!WARNING]
-> Work in progress, see [TODO](#todo)
+[https://git.sr.ht/~takeiteasy/jcc](https://git.sr.ht/~takeiteasy/jcc)
 
 `JCC` is a ~~C89~~/~~C99~~/C11* JIT C Compiler. The preprocessor/lexer/parser is taken from [chibicc](http://https://github.com/rui314/chibicc) and the VM was built off [c4](https://github.com/rswier/c4) and [write-a-C-interpreter](https://github.com/lotabout/write-a-C-interpreter).
 
