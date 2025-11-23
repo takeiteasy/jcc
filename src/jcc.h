@@ -652,12 +652,52 @@ typedef struct CondIncl {
  @abstract Represents a parser block scope. Two kinds of block scopes are
            used: one for variables/typedefs and another for tags.
 */
+/*!
+ @struct VarScopeNode
+ @abstract Linked list node for variable/typedef scope entries.
+ @field var Pointer to variable object (if variable).
+ @field type_def Pointer to typedef type (if typedef).
+ @field enum_ty Pointer to enum type (if enum constant).
+ @field enum_val Enum constant value.
+ @field name Variable or typedef name.
+ @field name_len Length of name.
+ @field next Pointer to next node in list.
+
+ @discussion The first 4 fields match VarScope layout for safe casting.
+*/
+typedef struct VarScopeNode {
+    // VarScope fields (must come first for casting)
+    Obj *var;
+    Type *type_def;
+    Type *enum_ty;
+    int enum_val;
+    // Additional fields for linked list
+    char *name;
+    int name_len;
+    struct VarScopeNode *next;
+} VarScopeNode;
+
+/*!
+ @struct TagScopeNode
+ @abstract Linked list node for struct/union/enum tag scope entries.
+ @field name Tag name.
+ @field name_len Length of name.
+ @field ty Pointer to tagged type.
+ @field next Pointer to next node in list.
+*/
+typedef struct TagScopeNode {
+    char *name;
+    int name_len;
+    Type *ty;
+    struct TagScopeNode *next;
+} TagScopeNode;
+
 typedef struct Scope {
     struct Scope *next;
     // C has two block scopes; one is for variables/typedefs and
     // the other is for struct/union/enum tags.
-    HashMap vars;
-    HashMap tags;
+    VarScopeNode *vars;  // Linked list of variables/typedefs (not HashMap)
+    TagScopeNode *tags;  // Linked list of tags (not HashMap)
 } Scope;
 
 /*!
@@ -740,6 +780,7 @@ typedef struct AllocHeader {
     long long canary;       // Front canary (if heap canaries enabled)
     int freed;              // 1 if freed (for UAF detection)
     int generation;         // Generation counter (incremented on free)
+    int creation_generation; // Generation when pointer was created (for temporal safety)
     long long alloc_pc;     // PC at allocation site (for leak detection)
     int type_kind;          // Type of allocation (TypeKind enum, for type checking)
 } AllocHeader;
@@ -1037,12 +1078,11 @@ struct JCC {
     AllocRecord *alloc_list;   // List of active allocations (for leak detection)
     HashMap init_state;        // Track initialization state of stack variables (for uninitialized detection)
     HashMap stack_ptrs;        // Track stack pointers for dangling detection (ptr -> {bp, offset, size})
-    HashMap provenance;        // Track pointer provenance (ptr -> {origin_type, base, size})
+    HashMap provenance;        // Track pointer provenance for stack/global (ptr -> {origin_type, base, size})
     HashMap stack_var_meta;    // Unified stack variable metadata (bp+offset -> StackVarMeta)
-    HashMap alloc_map;         // Maps base addresses to AllocHeaders (for fast pointer validation)
-    HashMap ptr_tags;          // Maps pointers to their creation generation tags (for temporal safety)
+    // Note: alloc_map and ptr_tags removed - now using sorted_allocs for heap tracking
 
-    // Sorted allocation array for O(log n) range queries (CHKP/CHKT performance)
+    // Sorted allocation array for O(log n) range queries (CHKP/CHKT performance and heap provenance)
     struct {
         void **addresses;      // Sorted array of base addresses
         AllocHeader **headers; // Parallel array of headers

@@ -180,18 +180,27 @@ static void leave_scope(JCC *vm) {
 // Find a variable by name.
 static VarScope *find_var(JCC *vm, Token *tok) {
     for (Scope *sc = vm->scope; sc; sc = sc->next) {
-        VarScope *sc2 = hashmap_get2(&sc->vars, tok->loc, tok->len);
-        if (sc2)
-            return sc2;
+        // Linear search through linked list (typically 1-10 entries per scope)
+        for (VarScopeNode *node = sc->vars; node; node = node->next) {
+            if (node->name_len == tok->len &&
+                strncmp(node->name, tok->loc, tok->len) == 0) {
+                // Return pointer to VarScope fields within the node
+                return (VarScope *)node;
+            }
+        }
     }
     return NULL;
 }
 
 static Type *find_tag(JCC *vm, Token *tok) {
     for (Scope *sc = vm->scope; sc; sc = sc->next) {
-        Type *ty = hashmap_get2(&sc->tags, tok->loc, tok->len);
-        if (ty)
-            return ty;
+        // Linear search through linked list (typically 1-10 entries per scope)
+        for (TagScopeNode *node = sc->tags; node; node = node->next) {
+            if (node->name_len == tok->len &&
+                strncmp(node->name, tok->loc, tok->len) == 0) {
+                return node->ty;
+            }
+        }
     }
     return NULL;
 }
@@ -261,10 +270,15 @@ Node *new_cast(JCC *vm, Node *expr, Type *ty) {
 }
 
 static VarScope *push_scope(JCC *vm, char *name, int name_len) {
-    VarScope *sc = arena_alloc(&vm->parser_arena, sizeof(VarScope));
-    memset(sc, 0, sizeof(VarScope));
-    hashmap_put2(&vm->scope->vars, name, name_len, sc);
-    return sc;
+    VarScopeNode *node = arena_alloc(&vm->parser_arena, sizeof(VarScopeNode));
+    memset(node, 0, sizeof(VarScopeNode));
+    node->name = name;
+    node->name_len = name_len;
+    // Insert at head of linked list
+    node->next = vm->scope->vars;
+    vm->scope->vars = node;
+    // Return pointer to VarScope fields within the node
+    return (VarScope *)node;
 }
 
 static Initializer *new_initializer(JCC *vm, Type *ty, bool is_flexible) {
@@ -447,7 +461,13 @@ static Type *find_typedef(JCC *vm, Token *tok) {
 }
 
 static void push_tag_scope(JCC *vm, Token *tok, Type *ty) {
-    hashmap_put2(&vm->scope->tags, tok->loc, tok->len, ty);
+    TagScopeNode *node = arena_alloc(&vm->parser_arena, sizeof(TagScopeNode));
+    node->name = tok->loc;
+    node->name_len = tok->len;
+    node->ty = ty;
+    // Insert at head of linked list
+    node->next = vm->scope->tags;
+    vm->scope->tags = node;
 }
 
 // declspec = ("void" | "_Bool" | "char" | "short" | "int" | "long"
@@ -3018,7 +3038,15 @@ static Type *struct_union_decl(JCC *vm, Token **rest, Token *tok) {
     if (tag) {
         // If this is a redefinition, overwrite a previous type.
         // Otherwise, register the struct type.
-        Type *ty2 = hashmap_get2(&vm->scope->tags, tag->loc, tag->len);
+        // Linear search in current scope only
+        Type *ty2 = NULL;
+        for (TagScopeNode *node = vm->scope->tags; node; node = node->next) {
+            if (node->name_len == tag->len &&
+                strncmp(node->name, tag->loc, tag->len) == 0) {
+                ty2 = node->ty;
+                break;
+            }
+        }
         if (ty2) {
             *ty2 = *ty;
             return ty2;
@@ -3609,9 +3637,16 @@ static Obj *find_func(JCC *vm, char *name, int name_len) {
     while (sc->next)
         sc = sc->next;
 
-    VarScope *sc2 = hashmap_get2(&sc->vars, name, name_len);
-    if (sc2 && sc2->var && sc2->var->is_function)
-        return sc2->var;
+    // Linear search through linked list
+    for (VarScopeNode *node = sc->vars; node; node = node->next) {
+        if (node->name_len == name_len &&
+            strncmp(node->name, name, name_len) == 0) {
+            VarScope *sc2 = (VarScope *)node;
+            if (sc2->var && sc2->var->is_function)
+                return sc2->var;
+            return NULL;
+        }
+    }
     return NULL;
 }
 
