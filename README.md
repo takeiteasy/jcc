@@ -22,6 +22,58 @@ The debugger is a GDB-like interface for controlling program flow and inspecting
 
 There are lots of memory safety features available. See [SAFETY.md](./SAFETY.md) for more details.
 
+#### Safety Levels
+
+JCC provides preset safety levels that automatically enable appropriate combinations of safety features. These make it easy to choose the right balance between safety and performance without needing to remember individual flags.
+
+**Level 0: None** (`-0` or `--safety=none`)
+- No safety checks
+- Maximum performance
+- Use when safety has been validated or performance is critical
+
+**Level 1: Basic** (`-1` or `--safety=basic`)
+- Essential low-overhead checks (~5-10% overhead)
+- Enables: Stack/heap canaries, memory leak detection, overflow checks, format string checks, VM heap
+- Recommended for: Production code with minimal performance impact
+- Detects: Stack/heap overflows, memory leaks, integer overflow, format string bugs
+
+**Level 2: Standard** (`-2` or `--safety=standard`)
+- Comprehensive development safety (~20-40% overhead)
+- Enables: All of Level 1 + pointer sanitizer, uninitialized detection, memory poisoning
+- Recommended for: Development and testing (default recommended level)
+- Detects: All of Level 1 + use-after-free, bounds violations, type confusion, uninitialized variables
+
+**Level 3: Maximum** (`-3` or `--safety=max`)
+- All safety features for deep debugging (~60-100%+ overhead)
+- Enables: All safety features including CFI, temporal tagging, dangling pointers, alignment checks, provenance tracking
+- Recommended for: Debugging hard-to-find memory bugs
+- Detects: Everything possible
+
+**Usage Examples:**
+```bash
+# No safety checks (maximum performance)
+./jcc -0 program.c
+
+# Basic safety (recommended for production)
+./jcc -1 program.c
+./jcc --safety=basic program.c
+
+# Standard safety (recommended for development)
+./jcc -2 program.c
+./jcc --safety=standard program.c
+
+# Maximum safety (for debugging)
+./jcc -3 program.c
+./jcc --safety=max program.c
+
+# Combine preset with additional flags (additive)
+./jcc -2 --memory-tagging program.c  # Standard + temporal tagging
+```
+
+#### Individual Safety Flags
+
+All individual safety flags can be used standalone or combined with safety levels. When combined, the preset level provides a baseline and individual flags enable additional features.
+
 - `--stack-canaries` **Stack overflow protection**
 - `--heap-canaries` **Heap overflow protection**
 - `--random-canaries` **Random stack canaries (prevents predictable bypass)**

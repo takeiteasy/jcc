@@ -39,7 +39,12 @@ static void usage(const char *argv0, int exit_code) {
     printf("\t-o/--out <file>     Dump bytecode to <file> (no execution)\n");
     printf("\t-v/--verbose        Enable debug logging\n");
     printf("\t-g/--debug          Enable interactive debugger\n");
-    printf("\nMemory Safety Options:\n");
+    printf("\nSafety Levels (preset flag combinations):\n");
+    printf("\t-0/--safety=none     No safety checks (maximum performance)\n");
+    printf("\t-1/--safety=basic    Essential low-overhead checks (~5-10%% overhead)\n");
+    printf("\t-2/--safety=standard Comprehensive development safety (~20-40%% overhead)\n");
+    printf("\t-3/--safety=max      All safety features for deep debugging (~60-100%%+ overhead)\n");
+    printf("\nMemory Safety Options (can be combined with safety levels):\n");
     printf("\t-b/--bounds-checks           Runtime array bounds checking\n");
     printf("\t-f/--uaf-detection           Use-after-free detection\n");
     printf("\t-t/--type-checks             Runtime type checking on pointer dereferences\n");
@@ -174,6 +179,7 @@ int main(int argc, const char* argv[]) {
         {"no-stdlib", no_argument, 0, 'S'},
         {"json", no_argument, 0, 'j'},
         {"debug", no_argument, 0, 'g'},
+        {"safety", required_argument, 0, 1012},
         {"bounds-checks", no_argument, 0, 'b'},
         {"uaf-detection", no_argument, 0, 'f'},
         {"type-checks", no_argument, 0, 't'},
@@ -205,13 +211,44 @@ int main(int argc, const char* argv[]) {
         {0, 0, 0, 0}
     };
 
-    const char *optstring = "haI:D:U:o:vgbftzOskpliPEXSjFTVC";
+    const char *optstring = "0123haI:D:U:o:vgbftzOskpliPEXSjFTVC";
     int opt;
     opterr = 0; // we'll handle errors explicitly
     while ((opt = getopt_long(argc, (char * const *)argv, optstring, long_options, NULL)) != -1) {
         switch (opt) {
         case 'h':
             usage(argv[0], 0);
+            break;
+        case '0':
+            // Safety level 0: None - explicitly clear all safety flags
+            flags = 0;
+            break;
+        case '1':
+            // Safety level 1: Basic - essential low-overhead checks
+            flags |= JCC_SAFETY_BASIC;
+            break;
+        case '2':
+            // Safety level 2: Standard - comprehensive development safety
+            flags |= JCC_SAFETY_STANDARD;
+            break;
+        case '3':
+            // Safety level 3: Maximum - all safety features
+            flags |= JCC_SAFETY_MAX;
+            break;
+        case 1012:
+            // --safety=<level> flag
+            if (strcmp(optarg, "none") == 0 || strcmp(optarg, "0") == 0) {
+                flags = 0;
+            } else if (strcmp(optarg, "basic") == 0 || strcmp(optarg, "1") == 0) {
+                flags |= JCC_SAFETY_BASIC;
+            } else if (strcmp(optarg, "standard") == 0 || strcmp(optarg, "2") == 0) {
+                flags |= JCC_SAFETY_STANDARD;
+            } else if (strcmp(optarg, "max") == 0 || strcmp(optarg, "3") == 0) {
+                flags |= JCC_SAFETY_MAX;
+            } else {
+                fprintf(stderr, "error: invalid safety level '%s' (use none/basic/standard/max or 0/1/2/3)\n", optarg);
+                usage(argv[0], 1);
+            }
             break;
         case 'o':
             if (out_file) { fprintf(stderr, "error: only one -o/--out allowed\n"); usage(argv[0], 1); }
