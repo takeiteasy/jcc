@@ -1089,9 +1089,6 @@ int op_MALC_fn(JCC *vm) {
 
         vm->ax = (long long)(header + 1);  // Return pointer after header
 
-        // Add to alloc_map for fast pointer validation
-        hashmap_put_int(&vm->alloc_map, vm->ax, header);
-
         // Add to sorted array for O(log n) pointer validation
         insert_sorted_allocation(vm, (void *)vm->ax, header);
 
@@ -1100,10 +1097,9 @@ int op_MALC_fn(JCC *vm) {
             memset((void *)vm->ax, 0xCD, header->size);
         }
 
-        // If memory tagging enabled, record pointer creation generation
+        // If memory tagging enabled, record creation generation in header
         if (vm->flags & JCC_MEMORY_TAGGING) {
-            // Store pointer -> generation mapping
-            hashmap_put_int(&vm->ptr_tags, vm->ax, (void *)(long long)header->generation);
+            header->creation_generation = header->generation;
 
             if (vm->debug_vm) {
                 printf("MALC: tagged reused pointer 0x%llx with generation %d\n",
@@ -1160,9 +1156,6 @@ int op_MALC_fn(JCC *vm) {
         vm->heap_ptr += total_size;
         vm->ax = (long long)(header + 1);  // Return pointer after header
 
-        // Add to alloc_map for fast pointer validation
-        hashmap_put_int(&vm->alloc_map, vm->ax, header);
-
         // Add to sorted array for O(log n) pointer validation
         insert_sorted_allocation(vm, (void *)vm->ax, header);
 
@@ -1191,32 +1184,12 @@ malc_done:
         }
     }
 
-    // If provenance tracking enabled, mark heap allocation
-    if (vm->flags & JCC_PROVENANCE_TRACK && vm->ax != 0) {
-        AllocHeader *header = (AllocHeader *)((char *)vm->ax - sizeof(AllocHeader));
+    // Heap provenance is now inferred from sorted_allocs (no longer stored separately)
 
-        // Create ProvenanceInfo for heap allocation
-        ProvenanceInfo *info = malloc(sizeof(ProvenanceInfo));
-        if (info) {
-            info->origin_type = 0;  // 0 = HEAP
-            info->base = vm->ax;
-            info->size = header->requested_size;  // Use requested size, not rounded
-
-            // Store in HashMap
-            // Use integer key API to avoid snprintf/strdup overhead
-            hashmap_put_int(&vm->provenance, vm->ax, info);
-        }
-    }
-
-    // If memory tagging enabled, record pointer creation generation
+    // If memory tagging enabled, record creation generation in header
     if (vm->flags & JCC_MEMORY_TAGGING && vm->ax != 0) {
         AllocHeader *header = (AllocHeader *)((char *)vm->ax - sizeof(AllocHeader));
-
-        // Store pointer -> generation mapping
-        // NOTE: We store generation+1 because generation 0 would be (void*)0 (NULL),
-        // which the HashMap can't distinguish from "key not found"
-        // Cast generation to void* (HashMap stores void* values)
-        hashmap_put_int(&vm->ptr_tags, vm->ax, (void *)(long long)(header->generation + 1));
+        header->creation_generation = header->generation;
 
         if (vm->debug_vm) {
             printf("MALC: tagged pointer 0x%llx with generation %d\n",
@@ -1331,8 +1304,7 @@ int op_MFRE_fn(JCC *vm) {
 
     if (quarantine) {
         // Keep memory quarantined:
-        // - Do NOT remove from alloc_map (needed for CHKP validation)
-        // - Do NOT remove ptr_tags (needed for generation comparison)
+        // - Keep in sorted_allocs (needed for CHKP validation and generation comparison)
         // - Do NOT add to free list (prevents reuse)
         if (vm->debug_vm) {
             const char *reason = vm->flags & JCC_UAF_DETECTION ? "UAF detection" : "memory tagging";
@@ -1340,17 +1312,9 @@ int op_MFRE_fn(JCC *vm) {
                     size, ptr, reason, header->generation);
         }
     } else {
-        // Normal free: remove tracking and allow reuse
-        // Remove from alloc_map (no longer tracking this allocation)
-        hashmap_delete_int(&vm->alloc_map, ptr);
-
-        // Remove from sorted array
+        // Normal free: remove from sorted array and allow reuse
         remove_sorted_allocation(vm, (void *)ptr);
 
-        // Remove from ptr_tags if present
-        if (vm->ptr_tags.capacity > 0) {
-            hashmap_delete_int(&vm->ptr_tags, ptr);
-        }
         // Normal free: add this block to appropriate segregated list for reuse
         // We reuse the memory for the FreeBlock structure
         FreeBlock *block = (FreeBlock *)header;
@@ -1469,7 +1433,6 @@ int op_REALC_fn(JCC *vm) {
 
                 vm->heap_ptr += total_size;
                 vm->ax = (long long)(header + 1);
-                hashmap_put_int(&vm->alloc_map, vm->ax, header);
 
                 if (vm->flags & JCC_MEMORY_POISONING) {
                     memset((void *)vm->ax, 0xCD, size);
@@ -1483,7 +1446,6 @@ int op_REALC_fn(JCC *vm) {
         if (header->magic == 0xDEADBEEF && !header->freed) {
             header->freed = 1;
             header->generation++;
-            hashmap_delete_int(&vm->alloc_map, old_ptr);
             if (vm->flags & JCC_MEMORY_POISONING) {
                 memset((void *)old_ptr, 0xDD, header->size);
             }
@@ -1536,14 +1498,12 @@ int op_REALC_fn(JCC *vm) {
                 // Free old pointer
                 old_header->freed = 1;
                 old_header->generation++;
-                hashmap_delete_int(&vm->alloc_map, old_ptr);
 
                 if (vm->flags & JCC_MEMORY_POISONING) {
                     memset((void *)old_ptr, 0xDD, old_header->size);
                 }
 
-                // Register new pointer
-                hashmap_put_int(&vm->alloc_map, new_ptr, new_header);
+                // New pointer already tracked in sorted_allocs
                 vm->ax = new_ptr;
 
                 if (vm->debug_vm) {
@@ -1600,8 +1560,7 @@ int op_CALC_fn(JCC *vm) {
                 // Zero the memory (calloc's defining characteristic)
                 memset((void *)vm->ax, 0, size);
 
-                // Register allocation
-                hashmap_put_int(&vm->alloc_map, vm->ax, header);
+                // Allocation already tracked in sorted_allocs
 
                 if (vm->debug_vm) {
                     printf("CALC: allocated %zu bytes (%lld x %lld) at 0x%llx (zeroed)\n",
@@ -2087,44 +2046,37 @@ int op_CHKP_fn(JCC *vm) {
 
     // Check temporal memory tagging (generation mismatch)
     if (vm->flags & JCC_MEMORY_TAGGING && ptr >= (long long)vm->heap_seg && ptr < (long long)vm->heap_end) {
-        // Check if this memory is currently allocated
-        void *header_val = hashmap_get_int(&vm->alloc_map, ptr);
+        // Find allocation using binary search
+        int alloc_index = find_containing_allocation(vm, (void *)ptr);
 
-        if (header_val) {
-            AllocHeader *header = (AllocHeader *)header_val;
+        if (alloc_index >= 0) {
+            AllocHeader *header = vm->sorted_allocs.headers[alloc_index];
 
             // Validate header magic
             if (header && header->magic == 0xDEADBEEF) {
-                // Look up the pointer's creation generation tag
-                void *tag_val = hashmap_get_int(&vm->ptr_tags, ptr);
+                // Check if creation generation differs from current generation
+                // This indicates use-after-free where memory was freed and reallocated
+                int creation_generation = header->creation_generation;
 
-                if (tag_val) {
-                    // Pointer has a tag - check if it matches current generation
-                    // NOTE: We stored generation+1, so subtract 1 to get actual generation
-                    int creation_generation = (int)(long long)tag_val - 1;
-
-                    if (creation_generation != header->generation) {
-                        printf("\n========== TEMPORAL SAFETY VIOLATION ==========\n");
-                        printf("Pointer references memory from a different allocation generation\n");
-                        printf("Address:            0x%llx\n", ptr);
-                        printf("Pointer tag:        %d (creation generation)\n", creation_generation);
-                        printf("Current generation: %d (memory was freed and reallocated)\n", header->generation);
-                        printf("Size:               %zu bytes\n", header->size);
-                        printf("Allocated at PC offset: %lld\n", header->alloc_pc);
-                        printf("Current PC:         0x%llx (offset: %lld)\n",
-                                (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
-                        printf("This indicates use-after-free where memory was freed and reallocated\n");
-                        printf("================================================\n");
-                        return -1;
-                    }
-
-                    if (vm->debug_vm) {
-                        printf("CHKP: temporal tag valid - ptr 0x%llx, generation %d matches\n",
-                                ptr, creation_generation);
-                    }
+                if (creation_generation != header->generation) {
+                    printf("\n========== TEMPORAL SAFETY VIOLATION ==========\n");
+                    printf("Pointer references memory from a different allocation generation\n");
+                    printf("Address:            0x%llx\n", ptr);
+                    printf("Pointer tag:        %d (creation generation)\n", creation_generation);
+                    printf("Current generation: %d (memory was freed and reallocated)\n", header->generation);
+                    printf("Size:               %zu bytes\n", header->size);
+                    printf("Allocated at PC offset: %lld\n", header->alloc_pc);
+                    printf("Current PC:         0x%llx (offset: %lld)\n",
+                            (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                    printf("This indicates use-after-free where memory was freed and reallocated\n");
+                    printf("================================================\n");
+                    return -1;
                 }
-                // Note: If no tag exists, it could be a derived pointer (offset from malloc'd address)
-                // We don't flag this as an error since legitimate pointer arithmetic is common
+
+                if (vm->debug_vm) {
+                    printf("CHKP: temporal tag valid - ptr 0x%llx, generation %d matches\n",
+                            ptr, creation_generation);
+                }
             }
         }
     }
@@ -2418,8 +2370,32 @@ int op_CHKPA_fn(JCC *vm) {
         return 0;
     }
 
-    // Look up provenance information for this pointer
-    // Use integer key API to avoid snprintf overhead
+    // First check if this is a heap pointer using sorted_allocs
+    if (ptr >= (long long)vm->heap_seg && ptr < (long long)vm->heap_end) {
+        int alloc_index = find_containing_allocation(vm, (void *)ptr);
+        if (alloc_index >= 0) {
+            AllocHeader *header = vm->sorted_allocs.headers[alloc_index];
+            long long base = (long long)vm->sorted_allocs.addresses[alloc_index];
+            long long end = base + (long long)header->requested_size;
+
+            if (ptr < base || ptr > end) {
+                printf("\n========== INVALID POINTER ARITHMETIC ==========\n");
+                printf("Pointer arithmetic result outside object bounds\n");
+                printf("Origin:        HEAP\n");
+                printf("Object base:   0x%llx\n", base);
+                printf("Object size:   %zu bytes\n", header->requested_size);
+                printf("Result ptr:    0x%llx\n", ptr);
+                printf("Offset:        %lld bytes from base\n", ptr - base);
+                printf("Current PC:    0x%llx (offset: %lld)\n",
+                        (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                printf("===============================================\n");
+                return -1;
+            }
+            return 0;  // Heap pointer validated
+        }
+    }
+
+    // Not a heap pointer - check provenance HashMap for stack/global pointers
     void *val = hashmap_get_int(&vm->provenance, ptr);
 
     if (val) {
@@ -2442,7 +2418,7 @@ int op_CHKPA_fn(JCC *vm) {
             return -1;
         }
     }
-    
+
     // If no provenance info, we can't validate (might be a computed pointer)
     return 0;
 }

@@ -1170,7 +1170,7 @@ static Token *preprocess2(JCC *vm, Token *tok) {
 
 void define_macro(JCC *vm, char *name, char *buf) {
     Token *tok = tokenize(vm, new_file(vm, "<built-in>", 1, buf));
-    add_macro(vm, name, true, tok);
+    add_macro(vm, name, strlen(name), true, tok);
 }
 
 void undef_macro(JCC *vm, char *name) {
@@ -1178,7 +1178,7 @@ void undef_macro(JCC *vm, char *name) {
 }
 
 static Macro *add_builtin(JCC *vm, char *name, macro_handler_fn *fn) {
-    Macro *m = add_macro(vm, name, true, NULL);
+    Macro *m = add_macro(vm, name, strlen(name), true, NULL);
     m->handler = fn;
     return m;
 }

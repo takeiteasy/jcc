@@ -138,15 +138,7 @@ void cc_init(JCC *vm, uint32_t flags) {
     vm->stack_var_meta.buckets = NULL;
     vm->stack_var_meta.used = 0;
 
-    // Initialize alloc_map HashMap for fast heap pointer validation
-    vm->alloc_map.capacity = 0;
-    vm->alloc_map.buckets = NULL;
-    vm->alloc_map.used = 0;
-
-    // Initialize ptr_tags HashMap for temporal memory tagging
-    vm->ptr_tags.capacity = 0;
-    vm->ptr_tags.buckets = NULL;
-    vm->ptr_tags.used = 0;
+    // Note: alloc_map and ptr_tags removed - now using sorted_allocs for heap tracking
 
     // Initialize included_headers HashMap for header-based stdlib loading
     vm->included_headers.capacity = 0;
@@ -319,13 +311,7 @@ void cc_destroy(JCC *vm) {
     }
 
 
-    // Free alloc_map HashMap (integer keys, no values to free - headers are in heap_seg)
-    if (vm->alloc_map.buckets)
-        free(vm->alloc_map.buckets);
-
-    // Free ptr_tags HashMap (integer keys, values are casted integers - no heap allocation)
-    if (vm->ptr_tags.buckets)
-        free(vm->ptr_tags.buckets);
+    // Note: alloc_map and ptr_tags removed - now using sorted_allocs for heap tracking
 
     // Free included_headers HashMap (string literal keys - not allocated, values are casted integers - no heap allocation)
     if (vm->included_headers.buckets)
