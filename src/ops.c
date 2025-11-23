@@ -590,6 +590,14 @@ int op_JNZ_fn(JCC *vm) {
     return 0;
 }
 
+int op_JMPT_fn(JCC *vm) {
+    // Jump table: ax contains index, *pc contains jump table base address
+    long long *jump_table = (long long *)*vm->pc;
+    long long target = jump_table[vm->ax];
+    vm->pc = (long long *)target;
+    return 0;
+}
+
 int op_ENT_fn(JCC *vm) {
     // Enter function: create new stack frame
     *--vm->sp = (long long)vm->bp;  // Save old base pointer
