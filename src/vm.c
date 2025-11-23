@@ -67,7 +67,7 @@ static int eval1(JCC *vm) {
     // Debug printing
     if (vm->debug_vm) {
         printf("%lld> %.5s", vm->cycle,
-                &"LEA  ,IMM  ,JMP  ,CALL ,CALI ,JZ   ,JNZ  ,ENT  ,ADJ  ,LEV  ,LI   ,LC   ,LS   ,LW   ,SI   ,SC   ,SS   ,SW   ,PUSH ,"
+                &"LEA  ,IMM  ,JMP  ,CALL ,CALI ,JZ   ,JNZ  ,JMPT ,ENT  ,ADJ  ,LEV  ,LI   ,LC   ,LS   ,LW   ,SI   ,SC   ,SS   ,SW   ,PUSH ,"
                 "OR   ,XOR  ,AND  ,EQ   ,NE   ,LT   ,GT   ,LE   ,GE   ,SHL  ,SHR  ,ADD  ,SUB  ,MUL  ,DIV  ,MOD  ,"
                 "MALC ,MFRE ,MCPY ,"
                 "SX1  ,SX2  ,SX4  ,ZX1  ,ZX2  ,ZX4  ,"
@@ -75,7 +75,7 @@ static int eval1(JCC *vm) {
                 "CALLF,CHKB ,CHKP ,CHKT ,CHKI ,MARKI,MARKA,CHKA ,CHKPA,MARKP,"
                 "SCPIN,SCPOT,CHKL ,MARKR,MARKW,"
                 "SETJP,LONJP"[op * 6]);
-        if (op <= ADJ || op == CHKB || op == CHKT || op == CHKI || op == MARKI || op == MARKA || op == CHKA || op == MARKP || op == SCOPEIN || op == SCOPEOUT || op == CHKL || op == MARKR || op == MARKW)
+        if (op <= ADJ || op == JMPT || op == CHKB || op == CHKT || op == CHKI || op == MARKI || op == MARKA || op == CHKA || op == MARKP || op == SCOPEIN || op == SCOPEOUT || op == CHKL || op == MARKR || op == MARKW)
             printf(" %lld\n", *vm->pc);
         else
             printf("\n");

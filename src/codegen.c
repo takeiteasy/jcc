@@ -1123,6 +1123,230 @@ static void emit_vla_cleanup(JCC *vm) {
     emit(vm, ADD);  // ax = *sp++ + ax = saved_value + 0
 }
 
+// Check if a switch statement is dense enough to benefit from a jump table
+// A switch is "dense" if the jump table would be space-efficient
+static bool is_dense_switch(Node *node, long *out_min, long *out_max, int *out_count) {
+    if (!node->case_next) {
+        return false;
+    }
+
+    long min = LLONG_MAX;
+    long max = LLONG_MIN;
+    int count = 0;
+
+    // Find min, max, and count of all case values
+    for (Node *c = node->case_next; c; c = c->case_next) {
+        for (long val = c->begin; val <= c->end; val++) {
+            if (val < min) min = val;
+            if (val > max) max = val;
+            count++;
+        }
+    }
+
+    if (out_min) *out_min = min;
+    if (out_max) *out_max = max;
+    if (out_count) *out_count = count;
+
+    // Dense if table size is reasonable and density >= 40%
+    long table_size = max - min + 1;
+
+    return table_size <= 1024 &&           // Don't create huge tables
+           count >= 3 &&                   // Need at least 3 cases to benefit
+           (count * 100 / table_size) >= 40;  // At least 40% density
+}
+
+// Generate optimized dense switch using jump table
+static void gen_dense_switch(JCC *vm, Node *node, long min_case, long max_case) {
+    long table_size = max_case - min_case + 1;
+
+    // 1. Evaluate condition ONCE
+    gen_expr(vm, node->cond);
+    // ax now contains condition value
+
+    // 2. Normalize: ax = ax - min_case
+    if (min_case != 0) {
+        emit(vm, PUSH);              // Save condition on stack
+        emit_with_arg(vm, IMM, min_case);
+        emit(vm, SUB);               // ax = condition - min_case
+    }
+    // ax now contains normalized index (0-based)
+
+    // 3. Bounds check: if (ax < 0 || ax >= table_size) goto default
+    // We'll duplicate the normalized index for each check
+
+    // Check if normalized_index < 0
+    emit(vm, PUSH);  // Stack: [normalized_index]
+    emit_with_arg(vm, IMM, 0);
+    emit(vm, LT);  // ax = (normalized_index < 0), Stack: []
+    emit(vm, JNZ);
+    long long *below_zero_jump = ++vm->text_ptr;
+
+    // Re-evaluate and normalize to get index back
+    gen_expr(vm, node->cond);
+    if (min_case != 0) {
+        emit(vm, PUSH);
+        emit_with_arg(vm, IMM, min_case);
+        emit(vm, SUB);
+    }
+
+    // Check if normalized_index >= table_size
+    emit(vm, PUSH);  // Stack: [normalized_index]
+    emit_with_arg(vm, IMM, table_size);
+    emit(vm, GE);  // ax = (normalized_index >= table_size), Stack: []
+    emit(vm, JNZ);
+    long long *above_max_jump = ++vm->text_ptr;
+
+    // Re-evaluate and normalize one more time for JMPT
+    gen_expr(vm, node->cond);
+    if (min_case != 0) {
+        emit(vm, PUSH);
+        emit_with_arg(vm, IMM, min_case);
+        emit(vm, SUB);
+    }
+
+    // 4. Table lookup: use JMPT with index in ax
+    emit(vm, JMPT);
+    long long *table_addr_slot = ++vm->text_ptr;  // Reserve slot for table address
+
+    // 5. Emit jump table (reserve space)
+    long long *jump_table_start = vm->text_ptr + 1;
+    *table_addr_slot = (long long)jump_table_start;
+
+    // Allocate and initialize jump table
+    // Initialize all entries to point to default case (will be patched later)
+    long long *jump_table = malloc(table_size * sizeof(long long));
+    if (!jump_table) {
+        error_tok(vm, node->tok, "failed to allocate jump table");
+    }
+
+    // Initialize all entries to 0 (will be filled with case addresses)
+    for (long i = 0; i < table_size; i++) {
+        jump_table[i] = 0;
+    }
+
+    // Emit placeholders in text segment
+    for (long i = 0; i < table_size; i++) {
+        emit(vm, 0);  // Placeholder, will patch later
+    }
+
+    // 6. Generate case bodies and fill jump table
+    // The case_next list is in reverse source order, so collect and reverse
+    #define MAX_CASES_FOR_DENSE 256
+    Node *case_list[MAX_CASES_FOR_DENSE];
+    int case_count = 0;
+    for (Node *c = node->case_next; c; c = c->case_next) {
+        if (case_count >= MAX_CASES_FOR_DENSE) {
+            error_tok(vm, node->tok, "too many cases for dense switch");
+        }
+        case_list[case_count++] = c;
+    }
+
+    // Generate case bodies in reverse order (to get source order for fallthrough)
+    for (int i = case_count - 1; i >= 0; i--) {
+        Node *c = case_list[i];
+        long long *case_start = vm->text_ptr + 1;
+
+        // Fill jump table for this case's range
+        for (long val = c->begin; val <= c->end; val++) {
+            long idx = val - min_case;
+            if (idx >= 0 && idx < table_size) {
+                jump_table[idx] = (long long)case_start;
+            }
+        }
+
+        gen_stmt(vm, c->lhs);  // Generate case body
+    }
+
+    // 7. Default case (bounds check failed or holes in table)
+    long long *default_start = vm->text_ptr + 1;
+    *below_zero_jump = (long long)default_start;
+    *above_max_jump = (long long)default_start;
+
+    // Fill any unfilled table entries with default address
+    for (long i = 0; i < table_size; i++) {
+        if (jump_table[i] == 0) {
+            jump_table[i] = (long long)default_start;
+        }
+    }
+
+    // 8. Patch jump table in text segment
+    memcpy(jump_table_start, jump_table, table_size * sizeof(long long));
+    free(jump_table);
+
+    if (node->default_case) {
+        gen_stmt(vm, node->default_case->lhs);
+    }
+    // Falls through to break label
+}
+
+// Generate sparse switch using linear search (original implementation)
+// For sparse switches, the overhead of saving/loading isn't worth it for few cases
+static void gen_sparse_switch(JCC *vm, Node *node) {
+    #define MAX_CASES 256
+    struct {
+        Node *case_node;
+        long long *jump_addr;
+    } case_table[MAX_CASES];
+    int num_entries = 0;
+
+    // Generate comparison chain
+    for (Node *c = node->case_next; c; c = c->case_next) {
+        for (long val = c->begin; val <= c->end; val++) {
+            // Evaluate switch condition
+            gen_expr(vm, node->cond);
+
+            // Compare with case value
+            emit(vm, PUSH);
+            emit_with_arg(vm, IMM, val);
+            emit(vm, EQ);
+
+            // Jump if equal - reserve space for jump address
+            emit(vm, JNZ);
+            if (num_entries >= MAX_CASES) {
+                error_tok(vm, node->tok, "too many case labels");
+            }
+            case_table[num_entries].case_node = c;
+            case_table[num_entries].jump_addr = ++vm->text_ptr;  // Point to jump address slot
+            num_entries++;
+        }
+    }
+
+    // No match - jump to default or end
+    emit(vm, JMP);
+    long long *no_match_addr = ++vm->text_ptr;
+
+    // Generate all case bodies and record their start addresses
+    long long case_body_starts[MAX_CASES];
+    int case_idx = 0;
+    for (Node *c = node->case_next; c; c = c->case_next) {
+        // Record where this case body starts (as actual address)
+        case_body_starts[case_idx] = (long long)(vm->text_ptr + 1);
+        case_idx++;
+        gen_stmt(vm, c->lhs);
+    }
+
+    // Patch all case jumps
+    for (int i = 0; i < num_entries; i++) {
+        // Find which case this entry belongs to
+        int idx = 0;
+        for (Node *c = node->case_next; c; c = c->case_next) {
+            if (c == case_table[i].case_node) {
+                *case_table[i].jump_addr = case_body_starts[idx];
+                break;
+            }
+            idx++;
+        }
+    }
+
+    // Generate default case or just end
+    if (node->default_case) {
+        *no_match_addr = (long long)(vm->text_ptr + 1);
+        gen_stmt(vm, node->default_case->lhs);
+    } else {
+        *no_match_addr = (long long)(vm->text_ptr + 1);
+    }
+}
+
 // Generate code for a statement
 static void gen_stmt(JCC *vm, Node *node) {
     if (!node) {
@@ -1316,79 +1540,25 @@ static void gen_stmt(JCC *vm, Node *node) {
         }
 
         case ND_SWITCH: {
-            // Switch statement: compare condition value against each case
-            // Simple strategy: re-evaluate condition for each case (inefficient but correct)
-            
-            #define MAX_CASES 256
-            struct {
-                Node *case_node;
-                long long *jump_addr;
-            } case_table[MAX_CASES];
-            int num_entries = 0;
-            
-            // Generate comparison chain
-            for (Node *c = node->case_next; c; c = c->case_next) {
-                for (long val = c->begin; val <= c->end; val++) {
-                    // Evaluate switch condition
-                    gen_expr(vm, node->cond);
-                    
-                    // Compare with case value
-                    emit(vm, PUSH);
-                    emit_with_arg(vm, IMM, val);
-                    emit(vm, EQ);
-                    
-                    // Jump if equal - reserve space for jump address
-                    emit(vm, JNZ);
-                    if (num_entries >= MAX_CASES) {
-                        error_tok(vm, node->tok, "too many case labels");
-                    }
-                    case_table[num_entries].case_node = c;
-                    case_table[num_entries].jump_addr = ++vm->text_ptr;  // Point to jump address slot
-                    num_entries++;
-                }
-            }
-            
-            // No match - jump to default or end
-            emit(vm, JMP);
-            long long *no_match_addr = ++vm->text_ptr;
-            
-            // Generate all case bodies and record their start addresses
-            // Store actual addresses, not pointers to addresses
-            long long case_body_starts[MAX_CASES];
-            int case_idx = 0;
-            for (Node *c = node->case_next; c; c = c->case_next) {
-                // Record where this case body starts (as actual address)
-                case_body_starts[case_idx] = (long long)(vm->text_ptr + 1);
-                case_idx++;
-                gen_stmt(vm, c->lhs);
-            }
-            
-            // Patch all case jumps
-            for (int i = 0; i < num_entries; i++) {
-                // Find which case this entry belongs to
-                int idx = 0;
-                for (Node *c = node->case_next; c; c = c->case_next) {
-                    if (c == case_table[i].case_node) {
-                        *case_table[i].jump_addr = case_body_starts[idx];
-                        break;
-                    }
-                    idx++;
-                }
-            }
-            
-            // Generate default case or just end
-            if (node->default_case) {
-                *no_match_addr = (long long)(vm->text_ptr + 1);
-                gen_stmt(vm, node->default_case->lhs);
+            // Switch statement: use jump table optimization for dense switches,
+            // optimized linear search for sparse switches
+
+            long min_case, max_case;
+            int num_cases;
+
+            if (is_dense_switch(node, &min_case, &max_case, &num_cases)) {
+                // Dense switch: use jump table for O(1) lookup
+                gen_dense_switch(vm, node, min_case, max_case);
             } else {
-                *no_match_addr = (long long)(vm->text_ptr + 1);
+                // Sparse switch: use optimized linear search (evaluate condition once)
+                gen_sparse_switch(vm, node);
             }
-            
+
             // Break target: jump here to break out of switch
             if (node->brk_label) {
                 make_label(vm, node, NULL, node->brk_label);
             }
-            
+
             return;
         }
         

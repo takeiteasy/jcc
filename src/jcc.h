@@ -59,6 +59,7 @@ extern "C" {
     X(CALLI) \
     X(JZ) \
     X(JNZ) \
+    X(JMPT) \
     X(ENT) \
     X(ADJ) \
     X(LEV) \
