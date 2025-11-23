@@ -2,7 +2,120 @@
 
 JCC includes a suite of powerful memory safety features designed to detect common C programming errors at runtime. These features can be enabled individually or together to provide comprehensive protection against bugs like buffer overflows, use-after-free, and type confusion.
 
-## Memory safety features
+## Safety Levels (Quick Start)
+
+JCC provides preset safety levels that make it easy to choose the right combination of features without needing to understand every individual flag. Each level builds on the previous one, adding more comprehensive checks with increasing performance overhead.
+
+### Level 0: None (`-0` or `--safety=none`)
+**Purpose:** Maximum performance, zero safety overhead
+**Overhead:** 0%
+**Use when:** You've thoroughly tested your code and need maximum speed, or when running in a trusted/controlled environment
+
+```bash
+./jcc -0 program.c
+./jcc --safety=none program.c
+```
+
+**Enabled features:** None
+
+---
+
+### Level 1: Basic (`-1` or `--safety=basic`)
+**Purpose:** Essential "smoke alarm" checks with minimal overhead
+**Overhead:** ~5-10%
+**Use when:** Running production code where you want essential safety without significant performance impact
+
+```bash
+./jcc -1 program.c
+./jcc --safety=basic program.c
+```
+
+**Enabled features:**
+- Stack canaries (stack overflow protection)
+- Heap canaries (heap overflow protection)
+- Memory leak detection
+- Integer overflow checks
+- Format string validation
+- VM heap mode (required for heap safety features)
+
+**Detects:** Stack buffer overflows, heap buffer overflows, memory leaks, integer overflow/underflow, format string bugs
+
+---
+
+### Level 2: Standard (`-2` or `--safety=standard`) — **Recommended Default**
+**Purpose:** Comprehensive development and testing safety
+**Overhead:** ~20-40%
+**Use when:** Developing, testing, or running code where safety is more important than raw performance
+
+```bash
+./jcc -2 program.c
+./jcc --safety=standard program.c
+```
+
+**Enabled features:**
+- **All Level 1 features** plus:
+- Pointer sanitizer (bounds checks, use-after-free detection, type checks)
+- Uninitialized variable detection
+- Memory poisoning (0xCD for allocated, 0xDD for freed memory)
+
+**Detects:** Everything in Level 1 plus use-after-free, out-of-bounds array access, type confusion, uninitialized variable reads, double-free
+
+---
+
+### Level 3: Maximum (`-3` or `--safety=max`)
+**Purpose:** Paranoid mode for debugging hard-to-find bugs
+**Overhead:** ~60-100%+
+**Use when:** Debugging mysterious crashes, memory corruption, or security-critical code
+
+```bash
+./jcc -3 program.c
+./jcc --safety=max program.c
+```
+
+**Enabled features:**
+- **All safety features** including:
+  - Control flow integrity (CFI) with shadow stack
+  - Temporal memory tagging (generation-based UAF detection)
+  - Dangling pointer detection (use-after-return)
+  - Alignment checks
+  - Provenance tracking (pointer origin validation)
+  - Invalid pointer arithmetic detection
+  - Stack variable instrumentation with runtime errors
+  - Random canaries (unpredictable stack protection)
+
+**Detects:** Everything possible - every memory safety bug JCC can catch
+
+---
+
+### Combining Safety Levels with Individual Flags
+
+Safety levels are **additive** - you can combine a preset level with individual flags to customize your safety profile:
+
+```bash
+# Level 2 + temporal tagging (not in Level 2 by default)
+./jcc -2 --memory-tagging program.c
+
+# Level 1 + control flow integrity
+./jcc -1 --control-flow-integrity program.c
+
+# Level 3 is already maximum, so additional flags are redundant
+./jcc -3 program.c  # Already includes everything
+```
+
+### Quick Reference
+
+| Level | Flags | Overhead | Best For |
+|-------|-------|----------|----------|
+| 0 (none) | - | 0% | Production (validated code) |
+| 1 (basic) | `-1` or `--safety=basic` | ~5-10% | Production (with safety net) |
+| 2 (standard) | `-2` or `--safety=standard` | ~20-40% | Development & Testing |
+| 3 (max) | `-3` or `--safety=max` | ~60-100%+ | Debugging & Security Analysis |
+
+---
+
+## Individual Memory Safety Features
+
+All features listed below can be enabled individually or through the safety level presets above. This section provides detailed information about what each feature does and how it works.
 
 - `--stack-canaries` **Stack overflow protection**
   - Places canary values (0xDEADBEEFCAFEBABE) on the stack between saved base pointer and local variables

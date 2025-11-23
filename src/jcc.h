@@ -194,6 +194,14 @@ typedef enum {
     JCC_POINTER_SANITIZER  = (JCC_BOUNDS_CHECKS | JCC_UAF_DETECTION | JCC_TYPE_CHECKS),
     JCC_ALL_SAFETY         = 0x000FFFFF,  // All safety features (bits 0-19)
 
+    // Preset safety levels (use with -S0/-S1/-S2/-S3 or --safety=none/basic/standard/max)
+    JCC_SAFETY_BASIC       = (JCC_STACK_CANARIES | JCC_HEAP_CANARIES | JCC_MEMORY_LEAK_DETECT |
+                              JCC_OVERFLOW_CHECKS | JCC_FORMAT_STR_CHECKS | JCC_VM_HEAP),
+    JCC_SAFETY_STANDARD    = (JCC_POINTER_SANITIZER | JCC_STACK_CANARIES | JCC_HEAP_CANARIES |
+                              JCC_MEMORY_LEAK_DETECT | JCC_OVERFLOW_CHECKS | JCC_UNINIT_DETECTION |
+                              JCC_FORMAT_STR_CHECKS | JCC_MEMORY_POISONING | JCC_VM_HEAP),
+    JCC_SAFETY_MAX         = (JCC_ALL_SAFETY | JCC_RANDOM_CANARIES | JCC_STACK_INSTR_ERRORS),
+
     // VM heap is auto-enabled when any of these flags are set
     JCC_VM_HEAP_TRIGGERS   = (JCC_VM_HEAP | JCC_HEAP_CANARIES | JCC_MEMORY_LEAK_DETECT |
                               JCC_UAF_DETECTION | JCC_POINTER_SANITIZER | JCC_BOUNDS_CHECKS |
