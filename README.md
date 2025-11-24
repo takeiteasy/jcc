@@ -112,7 +112,7 @@ JCC supports including header files directly from URLs, enabling remote header d
 
 **Key Features:**
 - Include headers from `http://` or `https://` URLs
-- Automatic caching in `~/.jcc_cache/` for offline access
+- Automatic caching in platform temp directory for offline access
 - HTTPS certificate verification for security
 - Manual cache control (persistent until cleared)
 
@@ -141,7 +141,10 @@ make JCC_HAS_CURL=1
 
 **Cache Management:**
 ```bash
-# Downloaded headers are cached in ~/.jcc_cache/
+# Downloaded headers are cached in system temp directory
+# Default locations:
+#   Linux/macOS: $TMPDIR/jcc_cache or /tmp/jcc_cache
+#   Windows: %TEMP%/jcc_cache
 # Cache persists across runs for offline access
 
 # Clear cache
@@ -450,7 +453,7 @@ make JCC_HAS_CURL=1
 
 With libcurl enabled:
 - Include header files directly from HTTP/HTTPS URLs
-- Automatic caching in `~/.jcc_cache/` directory
+- Automatic caching in platform temp directory
 - HTTPS certificate verification for secure downloads
 - See [URL Header Imports](#url-header-imports) section for detailed usage
 

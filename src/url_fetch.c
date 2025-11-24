@@ -41,16 +41,24 @@ bool is_url(const char *filename) {
 
 void init_url_cache(JCC *vm) {
     if (!vm->url_cache_dir) {
-        // Set default cache directory
-        char *home = getenv("HOME");
-        if (!home)
-            home = getenv("USERPROFILE"); // Windows fallback
+        // Set default cache directory to platform-specific temp path
+        char *temp_dir = NULL;
 
-        if (home) {
-            vm->url_cache_dir = format("%s/.jcc_cache", home);
-        } else {
-            vm->url_cache_dir = "/tmp/.jcc_cache";
-        }
+        #ifdef _WIN32
+        // Windows: use TEMP or TMP environment variable
+        temp_dir = getenv("TEMP");
+        if (!temp_dir)
+            temp_dir = getenv("TMP");
+        if (!temp_dir)
+            temp_dir = "C:\\Temp";
+        #else
+        // Unix-like (Linux/macOS): use TMPDIR environment variable or /tmp
+        temp_dir = getenv("TMPDIR");
+        if (!temp_dir)
+            temp_dir = "/tmp";
+        #endif
+
+        vm->url_cache_dir = format("%s/jcc_cache", temp_dir);
     }
 
     // Create cache directory if it doesn't exist
