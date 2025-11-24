@@ -8,6 +8,8 @@ The goal of this project is correctness and safety. This is just a toy, and won'
 
 `JCC` is not just a JIT compiler. It also extends the C preprocessor with new features, see [Pragma Macros](#pragma-macros) for more details. I have lots of other ideas for more `#pragma` extensions too.
 
+**Status**: All C11 language features are supported (minus `<threads.h>` and `_Thread_local`, see [Thread Support](#threading-and-atomics-support)). There is also partial C23 support (mostly parser/preprocessor features).
+
 See [here](https://takeiteasy.github.io/jcc) for some basic documentation on the API.
 
 ## Features
@@ -299,8 +301,10 @@ cc_destroy(&vm);
 - `#include` (with multiple search paths)
 - `#define` (object-like and function-like macros)
 - `#ifdef`, `#ifndef`, `#if`, `#elif`, `#else`, `#endif`
+- `#elifdef`, `#elifndef`
 - `#undef`
 - `#pragma once`
+- `#error`, `#warning`
 - Macro expansion and stringification
 - String literal concatenation (adjacent strings automatically combined)
 
@@ -315,7 +319,7 @@ cc_destroy(&vm);
 - Direct calls to native C standard library via `CALLF` opcode
 - Standard library functions supported (see [Standard Library Support](#standard-library-support))
 - Custom function registration via `cc_register_cfunc()` (fixed-arg) and `cc_register_variadic_cfunc()` (variadic)
-- **Optional libffi support** for true variadic foreign functions (`printf`, `scanf`, etc.)
+#- **Optional libffi support** for true variadic foreign functions (`printf`, `scanf`, etc.)
   - Build with `make JCC_HAS_FFI=1` to enable libffi support
   - Automatically uses platform-specific calling conventions via libffi
   - Falls back to macro-based dispatch if libffi is not available
@@ -327,53 +331,55 @@ cc_destroy(&vm);
 - Not executed in the VM (no-op by default)
 - Callback can emit custom bytecode or perform logging
 
-### GNU Extensions
+### C11, C23, and GNU Extensions
 
 - Statement expressions `({...})`
 - `typeof` operator (compile-time type inquiry for variables and expressions)
+- `typeof_unqual` - typeof that removes type qualifiers
 - `__attribute__((...))` for functions and variables (currently ignored, parsed only)
+- `[[...]]` - C23 attributes, like GNU attributes, are parsed but ignored
 - Labels as values `&&label` - Get the address of a label for computed goto
 - Computed goto `goto *expr;` - Jump to an address computed at runtime
 - Switch case ranges `case 1 ... 5:` - Match ranges of values in switch statements
 - Zero-length arrays `int arr[0];` - Flexible array member alternative
 - Universal character names `\uXXXX`, `\UXXXXXXXX` - Unicode escapes in strings
-
-### C11 Extensions
-
 - `_Generic` type-generic expressions (compile-time type selection)
 - `_Alignof` operator (query type/variable alignment)
 - `_Alignas` specifier (control variable alignment)
-- `_Static_assert` (compile-time assertions with custom error messages)
+- `static_asset` and `_Static_assert` (compile-time assertions with custom error messages)
 - `Bitfields` - Bit-level struct member access (e.g., `unsigned int flags : 3;`)
 - `Anonymous structs/unions` - Direct member access without intermediate name
+- Binary literals (0b10101010)
+- Digit seperates with single quotes (1'000'000)
 
 ### Threading + Atomics Support
 
 > Not supported (yet)
 
-JCC is single-threaded and does not implement any threading or atomic operations yet.
+JCC is single-threaded and does not implement any threading or atomic operations yet. Registering `pthread` as a dynamic library amd loading the functions may work but is untested.
 
 ## TODO
 
-### Clang + GNU Extensions
-
+### Language features
 - Blocks/closures (`^{}`) - Complex feature requiring variable capture and closure runtime
 - Nested functions - Requires static chain or trampolines for accessing parent scope
-
-### C23 Features (very limited support)
-- #elifdef and #elifndef directives for cleaner conditional compilation
-- #warning directive standardized
-- #embed directive for embedding binary data directly
+- `#embed` directive for embedding binary data directly
 - `__VA_OPT__` for better variadic macro handling
-- `[[deprecated]]` for marking deprecated code
-- `[[nodiscard]]` for warning about ignored return values
-- `[[maybe_unused]]` for suppressing unused warnings
-- `[[noreturn]]` and `[[_Noreturn]]` for non-returning functions
-- `[[unsequenced]], [[reproducible]]` for function properties
-- `[[fallthrough]]` for intentional switch fallthrough
-- Binary integer literals (0b prefix)
-- Digit separators with single quotes (e.g., 1’000’000)
-- Empty initializer lists {}
+
+### JCC features
+- Hot reloading for FFI functions + compiled functions
+- Support for pthread + internal thread support
+  - Thread safety features (race condition checks, etc)
+- Refactor VM from single accumulator (ax/fx) to multiple register
+- Optimisation pass for bytecode
+  - Peephole, code folding, dead code elimination, etc
+- Extend `#pragma macro`, support `#pragma derive`
+  - Rust like `derive` directive using pragma macros
+- Built in test suite `#pragma test(suite)`
+  - When in `test` mode, replace `main()` with a test runner (generated at compile time)
+  - Setup/teardown phase
+- UFCS (universal function call syntax)
+  - Extend parser to support `5.sqrt`
 
 ## Building
 

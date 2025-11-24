@@ -365,8 +365,8 @@ static bool is_keyword(Token *tok) {
             "default", "extern", "_Alignof", "_Alignas", "do", "signed",
             "unsigned", "const", "volatile", "auto", "register", "restrict",
             "__restrict", "__restrict__", "_Noreturn", "float", "double",
-            "typeof", "asm", "_Thread_local", "__thread", "_Atomic",
-            "__attribute__", "_Static_assert", "constexpr",
+            "typeof", "typeof_unqual", "asm", "_Thread_local", "__thread", "_Atomic",
+            "__attribute__", "_Static_assert", "static_assert", "constexpr",
         };
 
         for (int i = 0; i < sizeof(kw) / sizeof(*kw); i++)
@@ -556,7 +556,35 @@ static bool convert_pp_int(JCC *vm, Token *tok) {
         base = 8;
     }
 
-    int64_t val = strtoul(p, &p, base);
+    // C23: Remove digit separators (single quotes) before parsing
+    // e.g., 1'000'000 becomes 1000000
+    char cleaned[256];
+    int j = 0;
+    for (char *s = p; *s && j < 255; s++) {
+        if (*s == '\'') {
+            // Skip digit separator
+            continue;
+        }
+        // Stop at suffix or end
+        if (!isalnum(*s))
+            break;
+        cleaned[j++] = *s;
+    }
+    cleaned[j] = '\0';
+
+    int64_t val = strtoul(cleaned, &p, base);
+
+    // Adjust p to point to the position in original string after digits
+    // Count non-quote characters we consumed
+    p = tok->loc + (base == 16 ? 2 : (base == 2 ? 2 : 0));
+    for (int i = 0; i < j; ) {
+        if (*p == '\'') {
+            p++;  // Skip quote in original
+        } else {
+            p++;
+            i++;
+        }
+    }
 
     // Read U, L or LL suffixes.
     bool l = false;
@@ -752,7 +780,7 @@ Token *tokenize(JCC *vm, File *file) {
             for (;;) {
                 if (p[0] && p[1] && strchr("eEpP", p[0]) && strchr("+-", p[1]))
                     p += 2;
-                else if (isalnum(*p) || *p == '.')
+                else if (isalnum(*p) || *p == '.' || *p == '\'')  // C23: digit separators
                     p++;
                 else
                     break;

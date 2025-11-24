@@ -196,7 +196,8 @@ static Token *skip_cond_incl(JCC *vm, Token *tok) {
         }
 
         if (is_hash(tok) &&
-            (equal(tok->next, "elif") || equal(tok->next, "else") ||
+            (equal(tok->next, "elif") || equal(tok->next, "elifdef") ||
+             equal(tok->next, "elifndef") || equal(tok->next, "else") ||
              equal(tok->next, "endif")))
             break;
         tok = tok->next;
@@ -1102,6 +1103,34 @@ static Token *preprocess2(JCC *vm, Token *tok) {
             continue;
         }
 
+        if (equal(tok, "elifdef")) {
+            if (!vm->cond_incl || vm->cond_incl->ctx == IN_ELSE)
+                error_tok(vm, start, "stray #elifdef");
+            vm->cond_incl->ctx = IN_ELIF;
+
+            bool defined = find_macro(vm, tok->next);
+            tok = skip_line(vm, tok->next->next);
+            if (!vm->cond_incl->included && defined)
+                vm->cond_incl->included = true;
+            else
+                tok = skip_cond_incl(vm, tok);
+            continue;
+        }
+
+        if (equal(tok, "elifndef")) {
+            if (!vm->cond_incl || vm->cond_incl->ctx == IN_ELSE)
+                error_tok(vm, start, "stray #elifndef");
+            vm->cond_incl->ctx = IN_ELIF;
+
+            bool defined = find_macro(vm, tok->next);
+            tok = skip_line(vm, tok->next->next);
+            if (!vm->cond_incl->included && !defined)
+                vm->cond_incl->included = true;
+            else
+                tok = skip_cond_incl(vm, tok);
+            continue;
+        }
+
         if (equal(tok, "else")) {
             if (!vm->cond_incl || vm->cond_incl->ctx == IN_ELSE)
                 error_tok(vm, start, "stray #else");
@@ -1156,6 +1185,12 @@ static Token *preprocess2(JCC *vm, Token *tok) {
 
         if (equal(tok, "error"))
             error_tok(vm, tok, "error");
+
+        if (equal(tok, "warning")) {
+            warn_tok(vm, tok, "warning");
+            tok = skip_line(vm, tok->next);
+            continue;
+        }
 
         // `#`-only line is legal. It's called a null directive.
         if (tok->at_bol)
