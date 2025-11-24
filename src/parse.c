@@ -1040,10 +1040,28 @@ static Node *declaration(JCC *vm, Token **rest, Token *tok, Type *basety, VarAtt
             tok = skip(vm, tok, ",");
 
         Type *ty = declarator(vm, &tok, tok, basety);
-        if (ty->kind == TY_VOID)
+
+        if (ty->kind == TY_VOID) {
+            if (vm->collect_errors && error_tok_recover(vm, tok, "variable declared void")) {
+                // Skip to next declarator or end of declaration
+                tok = skip_to_decl_boundary(vm, tok);
+                if (equal(tok, ";")) break;
+                if (equal(tok, ",")) continue;
+                break;
+            }
             error_tok(vm, tok, "variable declared void");
-        if (!ty->name)
+        }
+
+        if (!ty->name) {
+            if (vm->collect_errors && error_tok_recover(vm, ty->name_pos, "variable name omitted")) {
+                // Skip to next declarator or end of declaration
+                tok = skip_to_decl_boundary(vm, tok);
+                if (equal(tok, ";")) break;
+                if (equal(tok, ",")) continue;
+                break;
+            }
             error_tok(vm, ty->name_pos, "variable name omitted");
+        }
 
         if (attr && attr->is_static) {
             // static local variable
@@ -1060,8 +1078,14 @@ static Node *declaration(JCC *vm, Token **rest, Token *tok, Type *basety, VarAtt
         cur = cur->next = new_unary(vm, ND_EXPR_STMT, compute_vla_size(vm, ty, tok), tok);
 
         if (ty->kind == TY_VLA) {
-            if (equal(tok, "="))
-                error_tok(vm, tok, "variable-sized object may not be initialized");
+            if (equal(tok, "=")) {
+                if (vm->collect_errors && error_tok_recover(vm, tok, "variable-sized object may not be initialized")) {
+                    // Skip the initializer
+                    assign(vm, &tok, tok->next);
+                } else {
+                    error_tok(vm, tok, "variable-sized object may not be initialized");
+                }
+            }
 
             // Variable length arrays (VLAs) are translated to alloca() calls.
             // For example, `int x[n+2]` is translated to `tmp = n + 2,
@@ -1091,10 +1115,22 @@ static Node *declaration(JCC *vm, Token **rest, Token *tok, Type *basety, VarAtt
             // Don't clear here - will be cleared by next init or at end of parsing
         }
 
-        if (var->ty->size < 0)
+        if (var->ty->size < 0) {
+            if (vm->collect_errors && error_tok_recover(vm, ty->name, "variable has incomplete type")) {
+                // Set a default size to allow parsing to continue
+                var->ty->size = 1;
+                continue;
+            }
             error_tok(vm, ty->name, "variable has incomplete type");
-        if (var->ty->kind == TY_VOID)
+        }
+
+        if (var->ty->kind == TY_VOID) {
+            if (vm->collect_errors && error_tok_recover(vm, ty->name, "variable declared void")) {
+                // Already reported earlier, just continue
+                continue;
+            }
             error_tok(vm, ty->name, "variable declared void");
+        }
     }
 
     Node *node = new_node(vm, ND_BLOCK, tok);
@@ -2489,7 +2525,20 @@ static Node *conditional(JCC *vm, Token **rest, Token *tok) {
     Node *node = new_node(vm, ND_COND, tok);
     node->cond = cond;
     node->then = expr(vm, &tok, tok->next);
-    tok = skip(vm, tok, ":");
+
+    // Try to recover if ':' is missing
+    if (!equal(tok, ":")) {
+        if (vm->collect_errors && error_tok_recover(vm, tok, "expected ':' in ternary operator")) {
+            // Use 'then' expression as 'else' placeholder
+            node->els = node->then;
+            *rest = tok;
+            return node;
+        }
+        tok = skip(vm, tok, ":");
+    } else {
+        tok = tok->next;
+    }
+
     node->els = conditional(vm, rest, tok);
     return node;
 }
@@ -2840,8 +2889,13 @@ static Node *unary(JCC *vm, Token **rest, Token *tok) {
     if (equal(tok, "&")) {
         Node *lhs = cast(vm, rest, tok->next);
         add_type(vm, lhs);
-        if (lhs->kind == ND_MEMBER && lhs->member->is_bitfield)
+        if (lhs->kind == ND_MEMBER && lhs->member->is_bitfield) {
+            if (vm->collect_errors && error_tok_recover(vm, tok, "cannot take address of bitfield")) {
+                // Return the member itself as an error placeholder
+                return lhs;
+            }
             error_tok(vm, tok, "cannot take address of bitfield");
+        }
         return new_unary(vm, ND_ADDR, lhs, tok);
     }
 
@@ -3241,7 +3295,19 @@ static Node *postfix(JCC *vm, Token **rest, Token *tok) {
             // x[y] is short for *(x+y)
             Token *start = tok;
             Node *idx = expr(vm, &tok, tok->next);
-            tok = skip(vm, tok, "]");
+
+            // Try to recover if ']' is missing
+            if (!equal(tok, "]")) {
+                if (vm->collect_errors && error_tok_recover(vm, tok, "expected ']'")) {
+                    // Use index 0 as placeholder and continue
+                    idx = new_num(vm, 0, tok);
+                } else {
+                    tok = skip(vm, tok, "]");
+                }
+            } else {
+                tok = tok->next;
+            }
+
             node = new_unary(vm, ND_DEREF, new_add(vm, node, idx, start), start);
             continue;
         }
@@ -3298,8 +3364,13 @@ static Node *funcall(JCC *vm, Token **rest, Token *tok, Node *fn) {
         Node *arg = assign(vm, &tok, tok);
         add_type(vm, arg);
 
-        if (!param_ty && !ty->is_variadic)
+        if (!param_ty && !ty->is_variadic) {
+            if (vm->collect_errors && error_tok_recover(vm, tok, "too many arguments")) {
+                // Continue parsing to find more errors, but don't add this arg
+                continue;
+            }
             error_tok(vm, tok, "too many arguments");
+        }
 
         if (param_ty) {
             if (param_ty->kind != TY_STRUCT && param_ty->kind != TY_UNION)
@@ -3314,8 +3385,20 @@ static Node *funcall(JCC *vm, Token **rest, Token *tok, Node *fn) {
         cur = cur->next = arg;
     }
 
-    if (param_ty)
-        error_tok(vm, tok, "too few arguments");
+    if (param_ty) {
+        if (vm->collect_errors && error_tok_recover(vm, tok, "too few arguments")) {
+            // Create placeholder arguments for missing parameters
+            while (param_ty) {
+                Node *placeholder = new_node(vm, ND_NUM, tok);
+                placeholder->ty = param_ty;
+                placeholder->val = 0;
+                cur = cur->next = placeholder;
+                param_ty = param_ty->next;
+            }
+        } else {
+            error_tok(vm, tok, "too few arguments");
+        }
+    }
 
     *rest = skip(vm, tok, ")");
 
@@ -3579,6 +3662,16 @@ static Node *primary(JCC *vm, Token **rest, Token *tok) {
 
         node->ty = tok->ty;
         *rest = tok->next;
+        return node;
+    }
+
+    // Try error recovery if enabled
+    if (vm->collect_errors && error_tok_recover(vm, tok, "expected an expression")) {
+        // Skip the invalid token and return error placeholder
+        *rest = tok->next;
+        Node *node = new_node(vm, ND_NUM, tok);
+        node->ty = ty_int;
+        node->val = 0;
         return node;
     }
 

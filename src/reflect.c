@@ -24,10 +24,14 @@ Type *ast_find_type(JCC *vm, const char *name) {
         return NULL;
 
     // Search through all scopes, starting from innermost
+    size_t name_len = strlen(name);
     for (Scope *sc = vm->scope; sc; sc = sc->next) {
-        Type *ty = hashmap_get2(&sc->tags, (char*)name, strlen(name));
-        if (ty)
-            return ty;
+        for (TagScopeNode *node = sc->tags; node; node = node->next) {
+            if (node->name_len == name_len &&
+                strncmp(node->name, name, name_len) == 0) {
+                return node->ty;
+            }
+        }
     }
 
     return NULL;
