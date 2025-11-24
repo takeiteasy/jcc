@@ -60,6 +60,7 @@ extern "C" {
     X(JZ) \
     X(JNZ) \
     X(JMPT) \
+    X(JMPI) \
     X(ENT) \
     X(ADJ) \
     X(LEV) \

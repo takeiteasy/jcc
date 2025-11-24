@@ -1,18 +1,16 @@
 # jcc
 
-> Work in progress, see [TODO](#todo)
+`JCC` is a **J**IT **C**11 **C**ompiler. The preprocessor/lexer/parser is built from [chibicc](http://https://github.com/rui314/chibicc) and the VM was built from [c4](https://github.com/rswier/c4) and [write-a-C-interpreter](https://github.com/lotabout/write-a-C-interpreter).
 
-`JCC` is a ~~C89~~/~~C99~~/C11* JIT C Compiler. The preprocessor/lexer/parser is taken from [chibicc](http://https://github.com/rui314/chibicc) and the VM was built off [c4](https://github.com/rswier/c4) and [write-a-C-interpreter](https://github.com/lotabout/write-a-C-interpreter).
-
-**\*** *Most* C11 features implemented.
-
-## Features
+## About
 
 The goal of this project is correctness and safety. This is just a toy, and won't be 🚀🔥 **BLAZING FAST** 🔥🚀. I wouldn't recommend using this for anything important or in any production code. I'm not an expert, so safety features may not be perfect and will have *minimal* to **significant** performance overhead (depending on which features are enabled).
 
 `JCC` is not just a JIT compiler. It also extends the C preprocessor with new features, see [Pragma Macros](#pragma-macros) for more details. I have lots of other ideas for more `#pragma` extensions too.
 
 See [here](https://takeiteasy.github.io/jcc) for some basic documentation on the API.
+
+## Features
 
 ### Debugger
 
@@ -248,9 +246,9 @@ cc_destroy(&vm);
 ### Control Flow
 
 - `if`/`else`
-- `for`, `while`, `do-while`
+- `for`/`while`/`do-while`
 - `switch`/`case`/`default`
-- `goto`/ labels
+- `goto label`/`goto *expr;`/`&&label`
 - `break`/`continue`
 
 ### Functions
@@ -268,9 +266,11 @@ cc_destroy(&vm);
 - Pointers (declaration, dereference `*`, address-of `&`, pointer arithmetic)
 - Arrays (fixed-size, initialization, multidimensional, indexing)
 - Array decay (in function parameters and expressions)
+- Zero-length arrays (`int arr[0];` GNU extension for flexible array members)
 - Strings (literals with data segment storage)
-- Structs (declaration, member access `.`, nested structs, initialization, flexible array members)
-- Unions (declaration, member access, initialization)
+- Structs (declaration, member access `.`, nested structs, initialization, flexible array members, anonymous structs/unions)
+- Bitfields (bit-level struct member access with `: width` syntax, signed/unsigned, read-modify-write operations)
+- Unions (declaration, member access, initialization, anonymous unions)
 - Enums (declaration, explicit values, in expressions and switches)
 - Variable-length arrays (VLA with runtime allocation via VM heap)
 
@@ -291,7 +291,6 @@ cc_destroy(&vm);
 - Forward declarations (incomplete types, self-referential structs)
 - Floating-point arithmetic (double precision with full operations)
 - Compound literals (scalars, arrays, structs)
-- Statement expressions (GNU extension: `({ ... })`)
 - Designated initializers (arrays and structs)
 - Cast expressions (explicit type conversions)
 
@@ -330,9 +329,14 @@ cc_destroy(&vm);
 
 ### GNU Extensions
 
-- `({ ... })` statement expressions
+- Statement expressions `({...})`
 - `typeof` operator (compile-time type inquiry for variables and expressions)
 - `__attribute__((...))` for functions and variables (currently ignored, parsed only)
+- Labels as values `&&label` - Get the address of a label for computed goto
+- Computed goto `goto *expr;` - Jump to an address computed at runtime
+- Switch case ranges `case 1 ... 5:` - Match ranges of values in switch statements
+- Zero-length arrays `int arr[0];` - Flexible array member alternative
+- Universal character names `\uXXXX`, `\UXXXXXXXX` - Unicode escapes in strings
 
 ### C11 Extensions
 
@@ -340,6 +344,8 @@ cc_destroy(&vm);
 - `_Alignof` operator (query type/variable alignment)
 - `_Alignas` specifier (control variable alignment)
 - `_Static_assert` (compile-time assertions with custom error messages)
+- `Bitfields` - Bit-level struct member access (e.g., `unsigned int flags : 3;`)
+- `Anonymous structs/unions` - Direct member access without intermediate name
 
 ### Threading + Atomics Support
 
@@ -349,19 +355,10 @@ JCC is single-threaded and does not implement any threading or atomic operations
 
 ## TODO
 
-### C11 Features
-
-- Anonymous structs/unions (Direct member access without intermediate name)
-- Bitfields - Bit-level struct member access
-
 ### Clang + GNU Extensions
 
-- Universal character names - `\uXXXX` escapes in strings
-- Blocks/closures - `^{}` (**important**)
-- Zero-length arrays - `int arr[0];` as flexible array alternative
-- Nested functions
-- Labels as values - `&&label` and `goto *ptr;`
-- Switch case ranges - `case 1 ... 5:`
+- Blocks/closures (`^{}`) - Complex feature requiring variable capture and closure runtime
+- Nested functions - Requires static chain or trampolines for accessing parent scope
 
 ### C23 Features (very limited support)
 - #elifdef and #elifndef directives for cleaner conditional compilation
@@ -369,26 +366,19 @@ JCC is single-threaded and does not implement any threading or atomic operations
 - #embed directive for embedding binary data directly
 - `__VA_OPT__` for better variadic macro handling
 - `[[deprecated]]` for marking deprecated code
-    - Also support GNU `__attribute__((deprecated))` (and other matching attributes if possible)
 - `[[nodiscard]]` for warning about ignored return values
 - `[[maybe_unused]]` for suppressing unused warnings
-- `[[noreturn]]` and `[[ _Noreturn]]` for non-returning functions
+- `[[noreturn]]` and `[[_Noreturn]]` for non-returning functions
 - `[[unsequenced]], [[reproducible]]` for function properties
 - `[[fallthrough]]` for intentional switch fallthrough
 - Binary integer literals (0b prefix)
 - Digit separators with single quotes (e.g., 1’000’000)
 - Empty initializer lists {}
 
-### Quality-of-Life Features
-
-- **Optimization passes** - Constant folding, dead code elimination
-- **Better error messages** - Line numbers in runtime errors
-- **Specify C versions** - `-std=c89`, `-std=c11` etc
-
 ## Building
 
 ```bash
-make            # Build jcc compiler
+make jcc        # Build jcc compiler
 make all        # Build everything (jcc, libjcc.dylib) and run tests
 
 # Optional: Build with libffi support for true variadic foreign functions
@@ -396,9 +386,6 @@ make JCC_HAS_FFI=1
 
 # Optional: Build with libcurl support for URL header imports
 make JCC_HAS_CURL=1
-
-# Optional: Build with both features
-make JCC_HAS_FFI=1 JCC_HAS_CURL=1
 ```
 
 This produces:
@@ -479,7 +466,7 @@ With libcurl enabled:
 All test files are located in the `tests/` directory. To run the complete test suite:
 
 ```bash
-./run_tests.fish
+./run_tests
 ```
 
 This will run all test files and report:

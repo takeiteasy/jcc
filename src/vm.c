@@ -67,7 +67,7 @@ static int eval1(JCC *vm) {
     // Debug printing
     if (vm->debug_vm) {
         printf("%lld> %.5s", vm->cycle,
-                &"LEA  ,IMM  ,JMP  ,CALL ,CALI ,JZ   ,JNZ  ,JMPT ,ENT  ,ADJ  ,LEV  ,LI   ,LC   ,LS   ,LW   ,SI   ,SC   ,SS   ,SW   ,PUSH ,"
+                &"LEA  ,IMM  ,JMP  ,CALL ,CALI ,JZ   ,JNZ  ,JMPT ,JMPI ,ENT  ,ADJ  ,LEV  ,LI   ,LC   ,LS   ,LW   ,SI   ,SC   ,SS   ,SW   ,PUSH ,"
                 "OR   ,XOR  ,AND  ,EQ   ,NE   ,LT   ,GT   ,LE   ,GE   ,SHL  ,SHR  ,ADD  ,SUB  ,MUL  ,DIV  ,MOD  ,"
                 "MALC ,MFRE ,MCPY ,"
                 "SX1  ,SX2  ,SX4  ,ZX1  ,ZX2  ,ZX4  ,"
