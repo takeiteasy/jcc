@@ -274,37 +274,6 @@ static int validate_free_block(JCC *vm, FreeBlock *block, const char *context) {
 
 // Coalesce adjacent free blocks to reduce fragmentation
 // This function merges contiguous free blocks in the free list
-// Helper function to remove a block from any segregated list
-static int remove_from_segregated_lists(JCC *vm, FreeBlock *target) {
-    // Search through all size class lists
-    for (int i = 0; i < NUM_SIZE_CLASSES - 1; i++) {
-        FreeBlock **prev = &vm->size_class_lists[i];
-        FreeBlock *curr = vm->size_class_lists[i];
-
-        while (curr) {
-            if (curr == target) {
-                *prev = curr->next;
-                return i;  // Return the size class it was found in
-            }
-            prev = &curr->next;
-            curr = curr->next;
-        }
-    }
-
-    // Search large list
-    FreeBlock **prev = &vm->large_list;
-    FreeBlock *curr = vm->large_list;
-    while (curr) {
-        if (curr == target) {
-            *prev = curr->next;
-            return NUM_SIZE_CLASSES - 1;  // Large class
-        }
-        prev = &curr->next;
-        curr = curr->next;
-    }
-
-    return -1;  // Not found
-}
 
 // Comparator for qsort: sort FreeBlocks by address
 static int compare_blocks_by_address(const void *a, const void *b) {
@@ -408,14 +377,6 @@ static void coalesce_free_blocks(JCC *vm) {
 // For O(log n) pointer validation in CHKP/CHKT opcodes
 
 // Comparator for qsort/bsearch: compare base addresses
-static int compare_alloc_by_address(const void *a, const void *b) {
-    void *addr_a = *(void **)a;
-    void *addr_b = *(void **)b;
-    if (addr_a < addr_b) return -1;
-    if (addr_a > addr_b) return 1;
-    return 0;
-}
-
 // Binary search to find allocation containing the given pointer
 // Returns the index in sorted_allocs if found, -1 otherwise
 static int find_containing_allocation(JCC *vm, void *ptr) {

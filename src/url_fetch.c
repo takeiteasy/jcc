@@ -39,31 +39,6 @@ bool is_url(const char *filename) {
            (strncmp(filename, "https://", 8) == 0);
 }
 
-static unsigned long hash_url(const char *url) {
-    unsigned long hash = 5381;
-    int c;
-    while ((c = *url++))
-        hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
-    return hash;
-}
-
-static char *get_url_cache_path(JCC *vm, const char *url) {
-    // Extract filename from URL if possible
-    const char *last_slash = strrchr(url, '/');
-    const char *filename = last_slash ? last_slash + 1 : "downloaded.h";
-
-    // If no extension or too long, use hash
-    const char *dot = strrchr(filename, '.');
-    if (!dot || strlen(filename) > 64) {
-        unsigned long hash = hash_url(url);
-        return format("%s/%lu.h", vm->url_cache_dir, hash);
-    }
-
-    // Use filename from URL with hash prefix to avoid collisions
-    unsigned long hash = hash_url(url);
-    return format("%s/%lu_%s", vm->url_cache_dir, hash, filename);
-}
-
 void init_url_cache(JCC *vm) {
     if (!vm->url_cache_dir) {
         // Set default cache directory
@@ -110,6 +85,31 @@ void clear_url_cache(JCC *vm) {
 }
 
 #ifdef JCC_HAS_CURL
+static unsigned long hash_url(const char *url) {
+    unsigned long hash = 5381;
+    int c;
+    while ((c = *url++))
+        hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+    return hash;
+}
+
+static char *get_url_cache_path(JCC *vm, const char *url) {
+    // Extract filename from URL if possible
+    const char *last_slash = strrchr(url, '/');
+    const char *filename = last_slash ? last_slash + 1 : "downloaded.h";
+
+    // If no extension or too long, use hash
+    const char *dot = strrchr(filename, '.');
+    if (!dot || strlen(filename) > 64) {
+        unsigned long hash = hash_url(url);
+        return format("%s/%lu.h", vm->url_cache_dir, hash);
+    }
+
+    // Use filename from URL with hash prefix to avoid collisions
+    unsigned long hash = hash_url(url);
+    return format("%s/%lu_%s", vm->url_cache_dir, hash, filename);
+}
+
 // Callback for curl to write data to file
 static size_t write_callback(void *ptr, size_t size, size_t nmemb, void *stream) {
     return fwrite(ptr, size, nmemb, (FILE *)stream);

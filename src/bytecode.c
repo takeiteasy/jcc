@@ -222,7 +222,6 @@ static int load_bytecode(JCC *vm, const char *data, size_t size) {
     }
 
     // Read flags (v2 only)
-    uint32_t flags = 0;
     if (version == 2) {
         READ_AND_INCR(flags, uint32_t);
         vm->flags = flags;

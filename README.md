@@ -6,13 +6,13 @@
 
 **\*** *Most* C11 features implemented.
 
+## Features
+
 The goal of this project is correctness and safety. This is just a toy, and won't be 🚀🔥 **BLAZING FAST** 🔥🚀. I wouldn't recommend using this for anything important or in any production code. I'm not an expert, so safety features may not be perfect and will have *minimal* to **significant** performance overhead (depending on which features are enabled).
 
 `JCC` is not just a JIT compiler. It also extends the C preprocessor with new features, see [Pragma Macros](#pragma-macros) for more details. I have lots of other ideas for more `#pragma` extensions too.
 
 See [here](https://takeiteasy.github.io/jcc) for some basic documentation on the API.
-
-## Features
 
 ### Debugger
 

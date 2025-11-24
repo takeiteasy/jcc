@@ -832,7 +832,7 @@ Token *tokenize(JCC *vm, File *file) {
             char *peek = p + 1;
             while (isspace(*peek) && *peek != '\n') peek++;
             if (strncmp(peek, "include", 7) == 0 &&
-                (peek[7] == '\0' || !isalnum(peek[7]) && peek[7] != '_')) {
+                (peek[7] == '\0' || (!isalnum(peek[7]) && peek[7] != '_'))) {
                 after_include_directive = true;
             }
         }
