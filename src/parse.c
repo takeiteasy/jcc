@@ -112,9 +112,11 @@ static Type *declspec(JCC *vm, Token **rest, Token *tok, VarAttr *attr);
 static Type *typename(JCC *vm, Token **rest, Token *tok);
 static Type *enum_specifier(JCC *vm, Token **rest, Token *tok);
 static Type *typeof_specifier(JCC *vm, Token **rest, Token *tok);
+static Type *typeof_unqual_specifier(JCC *vm, Token **rest, Token *tok);
 static Type *type_suffix(JCC *vm, Token **rest, Token *tok, Type *ty);
 static Type *declarator(JCC *vm, Token **rest, Token *tok, Type *ty);
 static Token *attribute_list(JCC *vm, Token *tok, Type *ty);
+static Token *c23_attribute_list(JCC *vm, Token *tok, Type *ty);
 static Node *declaration(JCC *vm, Token **rest, Token *tok, Type *basety, VarAttr *attr);
 static void array_initializer2(JCC *vm, Token **rest, Token *tok, Initializer *init, int i);
 static void struct_initializer2(JCC *vm, Token **rest, Token *tok, Initializer *init, Member *mem);
@@ -520,6 +522,11 @@ static Type *declspec(JCC *vm, Token **rest, Token *tok, VarAttr *attr) {
             tok = attribute_list(vm, tok, NULL);
             continue;
         }
+        // Handle C23 [[...]] attributes
+        if (equal(tok, "[") && equal(tok->next, "[")) {
+            tok = c23_attribute_list(vm, tok, NULL);
+            continue;
+        }
 
         // Handle storage class specifiers.
         if (equal(tok, "typedef") || equal(tok, "static") || equal(tok, "extern") ||
@@ -588,7 +595,7 @@ static Type *declspec(JCC *vm, Token **rest, Token *tok, VarAttr *attr) {
         // Handle user-defined types.
         Type *ty2 = find_typedef(vm, tok);
         if (equal(tok, "struct") || equal(tok, "union") || equal(tok, "enum") ||
-            equal(tok, "typeof") || ty2) {
+            equal(tok, "typeof") || equal(tok, "typeof_unqual") || ty2) {
             if (counter)
                 break;
 
@@ -600,6 +607,8 @@ static Type *declspec(JCC *vm, Token **rest, Token *tok, VarAttr *attr) {
                 ty = enum_specifier(vm, &tok, tok->next);
             } else if (equal(tok, "typeof")) {
                 ty = typeof_specifier(vm, &tok, tok->next);
+            } else if (equal(tok, "typeof_unqual")) {
+                ty = typeof_unqual_specifier(vm, &tok, tok->next);
             } else {
                 ty = ty2;
                 tok = tok->next;
@@ -821,6 +830,7 @@ static Type *pointers(JCC *vm, Token **rest, Token *tok, Type *ty) {
 static Type *declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
     // Handle __attribute__ before declarator
     tok = attribute_list(vm, tok, ty);
+    tok = c23_attribute_list(vm, tok, ty);
 
     ty = pointers(vm, &tok, tok, ty);
 
@@ -834,6 +844,7 @@ static Type *declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
 
         // Handle __attribute__ after declarator
         tok = attribute_list(vm, tok, ty);
+        tok = c23_attribute_list(vm, tok, ty);
         *rest = tok;
         return ty;
     }
@@ -850,6 +861,7 @@ static Type *declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
 
     // Handle __attribute__ after declarator
     tok = attribute_list(vm, tok, ty);
+    tok = c23_attribute_list(vm, tok, ty);
 
     ty->name = name;
     ty->name_pos = name_pos;
@@ -861,6 +873,7 @@ static Type *declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
 static Type *abstract_declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
     // Handle __attribute__ before abstract declarator
     tok = attribute_list(vm, tok, ty);
+    tok = c23_attribute_list(vm, tok, ty);
 
     ty = pointers(vm, &tok, tok, ty);
 
@@ -874,6 +887,7 @@ static Type *abstract_declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
 
         // Handle __attribute__ after abstract declarator
         tok = attribute_list(vm, tok, ty);
+        tok = c23_attribute_list(vm, tok, ty);
         *rest = tok;
         return ty;
     }
@@ -882,6 +896,7 @@ static Type *abstract_declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
 
     // Handle __attribute__ after abstract declarator
     tok = attribute_list(vm, tok, ty);
+    tok = c23_attribute_list(vm, tok, ty);
     *rest = tok;
 
     return ty;
@@ -990,6 +1005,17 @@ static Type *typeof_specifier(JCC *vm, Token **rest, Token *tok) {
         ty = node->ty;
     }
     *rest = skip(vm, tok, ")");
+    return ty;
+}
+
+// typeof_unqual - C23 version of typeof that removes qualifiers
+static Type *typeof_unqual_specifier(JCC *vm, Token **rest, Token *tok) {
+    Type *ty = typeof_specifier(vm, rest, tok);
+    // Copy the type to avoid mutating the original
+    ty = copy_type(ty);
+    // Remove all qualifiers (only is_const is tracked in Type struct)
+    ty->is_const = false;
+    // Note: volatile and restrict are parsed but not stored in Type
     return ty;
 }
 
@@ -1767,8 +1793,8 @@ static bool is_typename(JCC *vm, Token *tok) {
             "void", "_Bool", "char", "short", "int", "long", "struct", "union",
             "typedef", "enum", "static", "extern", "_Alignas", "signed", "unsigned",
             "const", "volatile", "auto", "register", "restrict", "__restrict",
-            "__restrict__", "_Noreturn", "float", "double", "typeof", "inline",
-            "_Thread_local", "__thread", "_Atomic", "constexpr",
+            "__restrict__", "_Noreturn", "float", "double", "typeof", "typeof_unqual",
+            "inline", "_Thread_local", "__thread", "_Atomic", "constexpr",
         };
 
         for (int i = 0; i < sizeof(kw) / sizeof(*kw); i++)
@@ -1810,7 +1836,7 @@ static Node *asm_stmt(JCC *vm, Token **rest, Token *tok) {
 //      | "{" compound-stmt
 //      | expr-stmt
 static Node *stmt(JCC *vm, Token **rest, Token *tok) {
-    if (equal(tok, "_Static_assert")) {
+    if (equal(tok, "_Static_assert") || equal(tok, "static_assert")) {
         tok = skip(vm, tok->next, "(");
         long long val = const_expr(vm, &tok, tok);
         tok = skip(vm, tok, ",");
@@ -3059,10 +3085,54 @@ static Token *attribute_list(JCC *vm, Token *tok, Type *ty) {
     return tok;
 }
 
+// c23-attribute = ("[[" attribute-list "]]")*
+// C23/C++11 style attributes - all are parsed and ignored
+static Token *c23_attribute_list(JCC *vm, Token *tok, Type *ty) {
+    while (equal(tok, "[") && equal(tok->next, "[")) {
+        tok = tok->next->next;  // Skip [[
+
+        bool first = true;
+
+        while (!equal(tok, "]")) {
+            if (!first)
+                tok = skip(vm, tok, ",");
+            first = false;
+
+            // Parse attribute name
+            if (tok->kind != TK_IDENT)
+                error_tok(vm, tok, "expected attribute name");
+
+            // All C23 attributes are parsed and discarded:
+            // deprecated, nodiscard, maybe_unused, noreturn, _Noreturn,
+            // fallthrough, unsequenced, reproducible, etc.
+            tok = tok->next;
+
+            // Optional attribute argument: [[deprecated("message")]]
+            if (equal(tok, "(")) {
+                int depth = 1;
+                tok = tok->next;
+                while (depth > 0) {
+                    if (equal(tok, "("))
+                        depth++;
+                    else if (equal(tok, ")"))
+                        depth--;
+                    tok = tok->next;
+                }
+            }
+        }
+
+        tok = skip(vm, tok, "]");
+        tok = skip(vm, tok, "]");
+    }
+
+    return tok;
+}
+
 // struct-union-decl = attribute? ident? ("{" struct-members)?
 static Type *struct_union_decl(JCC *vm, Token **rest, Token *tok) {
     Type *ty = struct_type();
     tok = attribute_list(vm, tok, ty);
+    tok = c23_attribute_list(vm, tok, ty);
 
     // Read a tag.
     Token *tag = NULL;
@@ -3087,7 +3157,8 @@ static Type *struct_union_decl(JCC *vm, Token **rest, Token *tok) {
 
     // Construct a struct object.
     struct_members(vm, &tok, tok, ty);
-    *rest = attribute_list(vm, tok, ty);
+    tok = attribute_list(vm, tok, ty);
+    *rest = c23_attribute_list(vm, tok, ty);
 
     if (tag) {
         // If this is a redefinition, overwrite a previous type.
@@ -3922,11 +3993,8 @@ Obj *parse(JCC *vm, Token *tok) {
     vm->globals = NULL;
 
     while (tok->kind != TK_EOF) {
-        VarAttr attr = {};
-        Type *basety = declspec(vm, &tok, tok, &attr);
-
-        // _Static_assert
-        if (equal(tok, "_Static_assert")) {
+        // _Static_assert or static_assert (C23) - check before declspec
+        if (equal(tok, "_Static_assert") || equal(tok, "static_assert")) {
             tok = skip(vm, tok->next, "(");
             long long val = const_expr(vm, &tok, tok);
             tok = skip(vm, tok, ",");
@@ -3938,6 +4006,9 @@ Obj *parse(JCC *vm, Token *tok) {
             tok = skip(vm, tok, ";");
             continue;
         }
+
+        VarAttr attr = {};
+        Type *basety = declspec(vm, &tok, tok, &attr);
 
         // Typedef
         if (attr.is_typedef) {
