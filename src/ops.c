@@ -519,6 +519,12 @@ int op_JMP_fn(JCC *vm) {
     return 0;
 }
 
+int op_JMPI_fn(JCC *vm) {
+    // Jump indirect - jump to address in ax
+    vm->pc = (long long *)vm->ax;
+    return 0;
+}
+
 int op_CALL_fn(JCC *vm) {
     // Call subroutine: push return address to main stack and shadow stack
     long long ret_addr = (long long)(vm->pc+1);

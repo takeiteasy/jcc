@@ -256,36 +256,10 @@ void gen_expr(JCC *vm, Node *node) {
             return;
 
         case ND_ASSIGN:
-            // Get left side address and push it
-            if (node->lhs->kind == ND_VAR) {
-                if (node->lhs->var->is_local) {
-                    // Check if variable is alive (for stack instrumentation)
-                    if (vm->flags & JCC_STACK_INSTR) {
-                        emit_with_arg(vm, CHKL, node->lhs->var->offset);
-                    }
-                    emit_with_arg(vm, LEA, node->lhs->var->offset);
-                } else {
-                    // Global variable - resolve to canonical version
-                    Obj *resolved = resolve_global_var(vm, node->lhs->var);
-                    emit_with_arg(vm, IMM, (long long)(vm->data_seg + resolved->offset));
-                }
-                emit(vm, PUSH);  // Push address onto stack
-            } else if (node->lhs->kind == ND_VLA_PTR) {
-                // For VLA pointer - get address of the pointer variable itself
-                // The VLA pointer is a local variable that stores the address of allocated memory
-                if (node->lhs->var->is_local) {
-                    emit_with_arg(vm, LEA, node->lhs->var->offset);
-                } else {
-                    error_tok(vm, node->tok, "VLA must be local");
-                }
-                emit(vm, PUSH);  // Push address onto stack
-            } else if (node->lhs->kind == ND_DEREF) {
-                // For pointer dereference on left side (including array subscripts)
-                // Evaluate the address expression
-                gen_expr(vm, node->lhs->lhs);
-                emit(vm, PUSH);  // Push address onto stack
-            } else if (node->lhs->kind == ND_MEMBER) {
-                // For struct member access on left side
+            // Special handling for bitfield assignment
+            if (node->lhs->kind == ND_MEMBER && node->lhs->member->is_bitfield) {
+                // Bitfield write - compute address, do read-modify-write
+
                 // Get address of struct base first
                 if (node->lhs->lhs->kind == ND_VAR) {
                     // Direct struct variable - get its address
@@ -299,22 +273,86 @@ void gen_expr(JCC *vm, Node *node) {
                     // Expression evaluating to struct
                     gen_expr(vm, node->lhs->lhs);
                 }
-                
+
                 // Add member offset
                 if (node->lhs->member->offset != 0) {
                     emit(vm, PUSH);  // Save struct address
                     emit_with_arg(vm, IMM, node->lhs->member->offset);
                     emit(vm, ADD);  // ax = struct_addr + offset
                 }
-                
-                emit(vm, PUSH);  // Push member address onto stack
+
+                // ax now has the member address
+                emit(vm, PUSH);  // Save address
+
+                // Evaluate the new value
+                gen_expr(vm, node->rhs);
+                // ax now has new value, stack has [address]
+
+                // Perform bitfield write (handled below)
             } else {
-                error_tok(vm, node->tok, "invalid lvalue in assignment");
+                // Get left side address and push it
+                if (node->lhs->kind == ND_VAR) {
+                    if (node->lhs->var->is_local) {
+                        // Check if variable is alive (for stack instrumentation)
+                        if (vm->flags & JCC_STACK_INSTR) {
+                            emit_with_arg(vm, CHKL, node->lhs->var->offset);
+                        }
+                        emit_with_arg(vm, LEA, node->lhs->var->offset);
+                    } else {
+                        // Global variable - resolve to canonical version
+                        Obj *resolved = resolve_global_var(vm, node->lhs->var);
+                        emit_with_arg(vm, IMM, (long long)(vm->data_seg + resolved->offset));
+                    }
+                    emit(vm, PUSH);  // Push address onto stack
+                } else if (node->lhs->kind == ND_VLA_PTR) {
+                    // For VLA pointer - get address of the pointer variable itself
+                    // The VLA pointer is a local variable that stores the address of allocated memory
+                    if (node->lhs->var->is_local) {
+                        emit_with_arg(vm, LEA, node->lhs->var->offset);
+                    } else {
+                        error_tok(vm, node->tok, "VLA must be local");
+                    }
+                    emit(vm, PUSH);  // Push address onto stack
+                } else if (node->lhs->kind == ND_DEREF) {
+                    // For pointer dereference on left side (including array subscripts)
+                    // Evaluate the address expression
+                    gen_expr(vm, node->lhs->lhs);
+                    emit(vm, PUSH);  // Push address onto stack
+                } else if (node->lhs->kind == ND_MEMBER) {
+                    // For struct member access on left side
+                    // Get address of struct base first
+                    if (node->lhs->lhs->kind == ND_VAR) {
+                        // Direct struct variable - get its address
+                        if (node->lhs->lhs->var->is_local) {
+                            emit_with_arg(vm, LEA, node->lhs->lhs->var->offset);
+                        } else {
+                            // Global struct
+                            emit_with_arg(vm, IMM, (long long)(vm->data_seg + node->lhs->lhs->var->offset));
+                        }
+                    } else {
+                        // Expression evaluating to struct
+                        gen_expr(vm, node->lhs->lhs);
+                    }
+
+                    // Add member offset
+                    if (node->lhs->member->offset != 0) {
+                        emit(vm, PUSH);  // Save struct address
+                        emit_with_arg(vm, IMM, node->lhs->member->offset);
+                        emit(vm, ADD);  // ax = struct_addr + offset
+                    }
+
+                    emit(vm, PUSH);  // Push member address onto stack
+                } else {
+                    error_tok(vm, node->tok, "invalid lvalue in assignment");
+                }
             }
-            
-            // Evaluate right side - result goes in ax
-            gen_expr(vm, node->rhs);
-            
+
+            // For bitfields, we already evaluated rhs above
+            // For non-bitfields, evaluate right side now
+            if (!(node->lhs->kind == ND_MEMBER && node->lhs->member->is_bitfield)) {
+                gen_expr(vm, node->rhs);
+            }
+
             // Now ax/fax has the value/address, stack has the destination address
             if (node->ty->kind == TY_STRUCT || node->ty->kind == TY_UNION) {
                 // For structs/unions, ax contains source address, stack has dest address
@@ -328,6 +366,61 @@ void gen_expr(JCC *vm, Node *node) {
                 // Call MCPY (VM memcpy)
                 emit(vm, MCPY);  // Pops size, src, dest; returns dest in ax
                 // Note: We don't return the dest address for now (chibicc limitation)
+            } else if (node->lhs->kind == ND_MEMBER && node->lhs->member->is_bitfield) {
+                // Bitfield write - read-modify-write operation
+                // Entry: Stack: [address], ax: new_value
+
+                long long mask = (1LL << node->lhs->member->bit_width) - 1;
+                long long clear_mask = ~(mask << node->lhs->member->bit_offset);
+
+                // Mask and shift the new value first
+                emit(vm, PUSH);  // Stack: [address, new_value]
+                emit_with_arg(vm, IMM, mask);
+                emit(vm, AND);  // ax = new_value & mask
+
+                if (node->lhs->member->bit_offset > 0) {
+                    emit(vm, PUSH);  // Stack: [address, masked_new_value]
+                    emit_with_arg(vm, IMM, node->lhs->member->bit_offset);
+                    emit(vm, SHL);  // ax = shifted_new_val
+                }
+
+                // ax = shifted_new_val, Stack: [address]
+                // Save shifted new value
+                emit(vm, PUSH);  // Stack: [address, shifted_new_val]
+
+                // Recompute address (simpler than trying to peek at stack)
+                if (node->lhs->lhs->kind == ND_VAR) {
+                    if (node->lhs->lhs->var->is_local) {
+                        emit_with_arg(vm, LEA, node->lhs->lhs->var->offset);
+                    } else {
+                        emit_with_arg(vm, IMM, (long long)(vm->data_seg + node->lhs->lhs->var->offset));
+                    }
+                } else {
+                    gen_expr(vm, node->lhs->lhs);
+                }
+                if (node->lhs->member->offset != 0) {
+                    emit(vm, PUSH);
+                    emit_with_arg(vm, IMM, node->lhs->member->offset);
+                    emit(vm, ADD);
+                }
+                // ax = address
+
+                // Load current value
+                emit_load(vm, node->lhs->member->ty, 1);  // ax = current_value
+
+                // Clear target bits
+                emit(vm, PUSH);  // Stack: [address, shifted_new_val, current_value]
+                emit_with_arg(vm, IMM, clear_mask);
+                emit(vm, AND);  // ax = cleared_old_val, pops current_value
+
+                // OR with shifted new value
+                emit(vm, OR);  // Pops shifted_new_val, ax = final_value
+
+                // Now ax has the final value to store, Stack: [address (original)]
+                // Stack still has the address we computed at the beginning
+                // emit_store expects: Stack: [address], ax: value
+                // We already have exactly that!
+                emit_store(vm, node->lhs->member->ty);
             } else {
                 // For scalar types, emit appropriate store instruction
                 // Mark write access for stack instrumentation (before store)
@@ -1020,7 +1113,7 @@ void gen_expr(JCC *vm, Node *node) {
             // Struct member access: struct.member or ptr->member
             // The lhs is the struct expression, member field has the offset
             // We need to get the address of the struct base first
-            
+
             // Just evaluate the lhs - it will give us the struct address
             // ND_VAR handles both local structs and parameters correctly
             if (node->lhs->kind == ND_DEREF) {
@@ -1033,7 +1126,7 @@ void gen_expr(JCC *vm, Node *node) {
                 // This ensures struct parameters are handled correctly
                 gen_expr(vm, node->lhs);
             }
-            
+
             // ax now contains the address of the struct
             // Add member offset to get member address
             if (node->member->offset != 0) {
@@ -1041,12 +1134,55 @@ void gen_expr(JCC *vm, Node *node) {
                 emit_with_arg(vm, IMM, node->member->offset);
                 emit(vm, ADD);  // ax = struct_addr + offset
             }
-            
+
             // Now ax contains the address of the member
-            // Load the value unless it's an array or nested struct
-            if (node->ty->kind != TY_ARRAY && node->ty->kind != TY_STRUCT && node->ty->kind != TY_UNION) {
-                // Member access involves dereferencing the struct pointer
-                emit_load(vm, node->ty, 1);  // This is a dereference
+            // Handle bitfield reads specially
+            if (node->member->is_bitfield) {
+                // Load the underlying storage unit
+                // Bitfields use the member's type size for the storage unit
+                emit_load(vm, node->member->ty, 1);
+
+                // Extract bits: (value >> bit_offset) & ((1 << bit_width) - 1)
+                if (node->member->bit_offset > 0) {
+                    emit(vm, PUSH);  // Save value
+                    emit_with_arg(vm, IMM, node->member->bit_offset);
+                    emit(vm, SHR);  // Logical shift right (unsigned)
+                }
+
+                // Create mask and apply it
+                long long mask = (1LL << node->member->bit_width) - 1;
+                emit(vm, PUSH);  // Save shifted value
+                emit_with_arg(vm, IMM, mask);
+                emit(vm, AND);  // Extract bits
+
+                // Sign extend if signed type
+                if (!node->ty->is_unsigned) {
+                    // Check if sign bit is set
+                    long long sign_bit = 1LL << (node->member->bit_width - 1);
+                    emit(vm, PUSH);  // Save value
+                    emit_with_arg(vm, IMM, sign_bit);
+                    emit(vm, AND);  // Test sign bit
+
+                    // If sign bit is set, we need to sign extend
+                    // Jump if zero (positive value, no sign extension needed)
+                    long long *jz_loc = vm->text_ptr++;
+                    emit(vm, JZ);
+                    long long skip_extend = 0;
+                    *jz_loc = (long long)&skip_extend;
+
+                    // Sign extend: value | ~mask
+                    emit(vm, PUSH);  // Save value
+                    emit_with_arg(vm, IMM, ~mask);
+                    emit(vm, OR);  // Set upper bits
+
+                    skip_extend = (long long)vm->text_ptr;
+                }
+            } else {
+                // Load the value unless it's an array or nested struct
+                if (node->ty->kind != TY_ARRAY && node->ty->kind != TY_STRUCT && node->ty->kind != TY_UNION) {
+                    // Member access involves dereferencing the struct pointer
+                    emit_load(vm, node->ty, 1);  // This is a dereference
+                }
             }
             return;
 
@@ -1068,6 +1204,24 @@ void gen_expr(JCC *vm, Node *node) {
             } else {
                 error_tok(vm, node->tok, "VLA must be local");
             }
+            return;
+
+        case ND_LABEL_VAL:
+            // Label address: &&label
+            // Emit IMM with label address (will be patched later)
+            emit(vm, IMM);
+            long long *label_addr_loc = ++vm->text_ptr;
+
+            // Record patch information (similar to goto patches)
+            if (vm->num_goto_patches >= MAX_LABELS) {
+                error_tok(vm, node->tok, "too many label references");
+            }
+            vm->goto_patches[vm->num_goto_patches].name = node->label;
+            vm->goto_patches[vm->num_goto_patches].unique_label = node->unique_label;
+            vm->goto_patches[vm->num_goto_patches].location = label_addr_loc;
+            vm->num_goto_patches++;
+
+            *label_addr_loc = 0;  // Placeholder
             return;
 
         default:
@@ -1580,11 +1734,11 @@ static void gen_stmt(JCC *vm, Node *node) {
             if (vm->num_goto_patches >= MAX_LABELS) {
                 error_tok(vm, node->tok, "too many goto statements");
             }
-            
+
             // Emit JMP instruction with placeholder address
             emit(vm, JMP);
             long long *jmp_addr = ++vm->text_ptr;
-            
+
             // Record patch information
             vm->goto_patches[vm->num_goto_patches].name = node->label;
             vm->goto_patches[vm->num_goto_patches].unique_label = node->unique_label;
@@ -1594,6 +1748,14 @@ static void gen_stmt(JCC *vm, Node *node) {
             // Placeholder (will be patched after function code generation completes)
             // This is patched in gen_function() after all labels are collected
             *jmp_addr = 0;
+            return;
+
+        case ND_GOTO_EXPR:
+            // Computed goto: goto *expr
+            // Evaluate expression to get target address
+            gen_expr(vm, node->lhs);
+            // ax now contains the target address
+            emit(vm, JMPI);  // Jump indirect to address in ax
             return;
 
         case ND_ASM:
