@@ -11,6 +11,7 @@ int main() {
     
     // Sum: 14 + 6 + 8 + 8 + 4 = 40
     int result = or_result + xor_result + and_result + shl_result + shr_result;
-    
-    return result;
+
+    if (result != 40) return 1;  // Assert result == 40
+    return 42;
 }

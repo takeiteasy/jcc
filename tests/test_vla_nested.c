@@ -20,6 +20,7 @@ int main() {
         arr2[1] = 200;
         // result should still be 30 from above
     }
-    
-    return result;
+
+    if (result != 30) return 1;  // Assert result == 30
+    return 42;
 }

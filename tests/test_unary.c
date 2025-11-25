@@ -12,6 +12,7 @@ int main() {
     // But we can't return negative, so let's adjust
     int result = (-neg) + not1 + not2 + (-bitnot);
     // = 5 + 1 + 0 + 1 = 7
-    
-    return result;
+
+    if (result != 7) return 1;  // Assert result == 7
+    return 42;
 }

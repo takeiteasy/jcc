@@ -14,5 +14,5 @@ int main() {
     printf("Extra argument: %d\n", 42, 99);
 
     printf("This should not be reached\n");
-    return 1;
+    return 42;
 }

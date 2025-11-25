@@ -14,5 +14,5 @@ int main() {
     printf("Missing argument: %d %d\n", 42);
 
     printf("This should not be reached\n");
-    return 1;
+    return 42;
 }

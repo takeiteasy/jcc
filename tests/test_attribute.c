@@ -109,6 +109,7 @@ int main(void) {
     // Test complex attributes
     int x = 10, y = 15;
     result += complex_func(&x, &y);    // 25, total 230
-    
-    return result; // Should return 230
+
+    if (result != 230) return 1;  // Assert result == 230
+    return 42;
 }

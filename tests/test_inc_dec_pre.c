@@ -1,22 +1,28 @@
-// Simple t    if (a != 11) {
-        return 2;
-    }
-    
-    return 42;  // Success
-}r pre-increment
+// Test pre-increment and pre-decrement operators
 int main() {
-    int c = 5;
-    int d = ++c;  // Both c and d should be 6
-    
-    // Check if d is 6
-    if (d != 6) {
+    // Test pre-increment
+    int a = 10;
+    int b = ++a;  // Both a and b should be 11
+
+    if (a != 11) {
         return 1;
     }
-    
-    // Check if c is 6
-    if (c != 6) {
+
+    if (b != 11) {
         return 2;
     }
-    
-    return 0;  // Success
+
+    // Test pre-decrement
+    int c = 5;
+    int d = --c;  // Both c and d should be 4
+
+    if (c != 4) {
+        return 3;
+    }
+
+    if (d != 4) {
+        return 4;
+    }
+
+    return 42;  // Success
 }

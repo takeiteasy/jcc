@@ -1,7 +1,12 @@
 int main() {
+    int result = 0;
 #ifdef TEST_FLAG
-    return 100;
+    result = 100;
 #else
-    return 200;
+    result = 200;
 #endif
+    // Test that #ifdef/#else works correctly
+    // Expected: 200 (TEST_FLAG not defined)
+    if (result != 200) return 1;
+    return 42;
 }

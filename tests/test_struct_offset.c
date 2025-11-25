@@ -16,7 +16,8 @@ int main() {
     
     int a_val = t.a;
     int b_val = t.b;
-    
-    // Return a to see if it's still 100
-    return a_val;  // Should be 100
+
+    // Check if a is still 100
+    if (a_val != 100) return 1;
+    return 42;
 }

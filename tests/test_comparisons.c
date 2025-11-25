@@ -12,6 +12,7 @@ int main() {
     
     // Sum should be 6
     int result = eq + ne + lt + le + gt + ge;
-    
-    return result;
+
+    if (result != 6) return 1;  // Assert result == 6
+    return 42;
 }

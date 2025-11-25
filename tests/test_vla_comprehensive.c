@@ -34,6 +34,6 @@ int main() {
     if (test2 != 50) return 2;
     if (test3 != 30) return 3;
     if (total != 150) return 4;
-    
-    return 100;  // Success
+
+    return 42;  // Success
 }

@@ -28,6 +28,7 @@ static void usage(const char *argv0, int exit_code) {
     printf("Options:\n");
     printf("\t-h/--help           Show this message\n");
     printf("\t-I <path>           Add <path> to include search paths\n");
+    printf("\t   --isystem <path> Add <path> to system include paths (for non-standard headers)\n");
     printf("\t-D <macro>[=def]    Define a macro\n");
     printf("\t-U <macro>          Undefine a macro\n");
     printf("\t-a/--ast            Dump AST (TODO)\n");
@@ -147,6 +148,8 @@ int main(int argc, const char* argv[]) {
     int input_files_count = 0;
     const char **inc_paths = NULL; // -I
     int inc_paths_count = 0;
+    const char **sys_inc_paths = NULL; // -isystem
+    int sys_inc_paths_count = 0;
     const char **defines = NULL; // -D
     int defines_count = 0;
     const char **undefs = NULL; // -U
@@ -202,6 +205,7 @@ int main(int argc, const char* argv[]) {
         {"vm-heap", no_argument, 0, 'V'},
         {"control-flow-integrity", no_argument, 0, 'C'},
         {"include", required_argument, 0, 'I'},
+        {"isystem", required_argument, 0, 1013},
         {"define", required_argument, 0, 'D'},
         {"undef", required_argument, 0, 'U'},
         {"url-cache-dir", required_argument, 0, 1008},
@@ -266,6 +270,10 @@ int main(int argc, const char* argv[]) {
         case 'I':
             inc_paths = realloc(inc_paths, sizeof(*inc_paths) * (inc_paths_count + 1));
             inc_paths[inc_paths_count++] = strdup(optarg);
+            break;
+        case 1013: // --isystem
+            sys_inc_paths = realloc(sys_inc_paths, sizeof(*sys_inc_paths) * (sys_inc_paths_count + 1));
+            sys_inc_paths[sys_inc_paths_count++] = strdup(optarg);
             break;
         case 'D':
             defines = realloc(defines, sizeof(*defines) * (defines_count + 1));
@@ -409,6 +417,9 @@ int main(int argc, const char* argv[]) {
             for (int i = 0; i < inc_paths_count; i++)
                 free((void *)inc_paths[i]);
             free(inc_paths);
+            for (int i = 0; i < sys_inc_paths_count; i++)
+                free((void *)sys_inc_paths[i]);
+            free(sys_inc_paths);
             for (int i = 0; i < defines_count; i++)
                 free((void *)defines[i]);
             free(defines);
@@ -461,8 +472,19 @@ int main(int argc, const char* argv[]) {
 
     if (!skip_stdlib)
         cc_load_stdlib(&vm);
+
+    // Add JCC's standard library header directory by default
+    // This allows #include <stdio.h> and other standard headers to work
+    cc_include(&vm, "./include");
+
+    // Add user-specified include paths (these take precedence via search order)
     for (int i = 0; i < inc_paths_count; i++)
         cc_include(&vm, inc_paths[i]);
+
+    // Add system include paths (for non-standard headers with angle brackets)
+    for (int i = 0; i < sys_inc_paths_count; i++)
+        cc_system_include(&vm, sys_inc_paths[i]);
+
     for (int i = 0; i < defines_count; i++)
         parse_define(&vm, (char *)defines[i]);
     for (int i = 0; i < undefs_count; i++)
@@ -612,6 +634,11 @@ BAIL:
         for (int i = 0; i < inc_paths_count; i++)
             free((void *)inc_paths[i]);
         free(inc_paths);
+    }
+    if (sys_inc_paths) {
+        for (int i = 0; i < sys_inc_paths_count; i++)
+            free((void *)sys_inc_paths[i]);
+        free(sys_inc_paths);
     }
     if (defines) {
         for (int i = 0; i < defines_count; i++)

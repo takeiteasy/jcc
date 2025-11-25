@@ -3,5 +3,6 @@
 int __attribute__((unused)) x = 5;
 
 int main(void) {
-    return x;
+    if (x != 5) return 1;  // Assert x == 5
+    return 42;
 }

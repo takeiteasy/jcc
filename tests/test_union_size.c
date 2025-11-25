@@ -6,5 +6,7 @@ union Data {
 };
 
 int main() {
-    return sizeof(union Data);  // Should return 8 (size of long, which is 8 in VM)
+    int size = sizeof(union Data);  // Should return 8 (size of long, which is 8 in VM)
+    if (size != 8) return 1;  // Assert sizeof(union Data) == 8
+    return 42;
 }

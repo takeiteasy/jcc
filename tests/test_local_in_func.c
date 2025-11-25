@@ -6,5 +6,7 @@ int test(int a) {
 }
 
 int main() {
-    return test(99);  // Should return 10, ignoring the param
+    int result = test(99);  // Should return 10, ignoring the param
+    if (result != 10) return 1;  // Assert result == 10
+    return 42;
 }

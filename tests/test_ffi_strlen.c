@@ -1,7 +1,8 @@
 // Test just strlen
 // Expected return: 42
 
-#include "stdlib.h"
+#include <stdio.h>
+#include <string.h>
 
 int main() {
     char *str = "hello world";

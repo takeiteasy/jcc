@@ -1,15 +1,26 @@
 // stdlib.h stdlib function registration
 #include "../jcc.h"
 
+// Wrapper for realloc that matches C11 semantics
+static void *jcc_realloc(void *ptr, size_t size) {
+    if (size == 0) {
+        // C11: realloc(ptr, 0) should free ptr and return NULL
+        free(ptr);
+        return NULL;
+    }
+    return realloc(ptr, size);
+}
+
 // Register all stdlib.h functions
 void register_stdlib_functions(JCC *vm) {
     // Conversion functions
-    cc_register_cfunc(vm, "atof", (void*)atof, 1, 1);
-    cc_register_cfunc(vm, "atoi", (void*)atoi, 1, 1);
-    cc_register_cfunc(vm, "atoll", (void*)atoll, 1, 0);
-    cc_register_cfunc(vm, "strtod", (void*)strtod, 2, 1);
-    cc_register_cfunc(vm, "strtof", (void*)strtof, 2, 0);
-    cc_register_cfunc(vm, "strtold", (void*)strtold, 2, 1);
+    cc_register_cfunc(vm, "atof", (void*)atof, 1, 1);       // returns double
+    cc_register_cfunc(vm, "atoi", (void*)atoi, 1, 0);       // returns int (was incorrectly 1)
+    cc_register_cfunc(vm, "atol", (void*)atol, 1, 0);       // returns long
+    cc_register_cfunc(vm, "atoll", (void*)atoll, 1, 0);     // returns long long
+    cc_register_cfunc(vm, "strtod", (void*)strtod, 2, 1);   // returns double
+    cc_register_cfunc(vm, "strtof", (void*)strtof, 2, 1);   // returns float (was incorrectly 0)
+    cc_register_cfunc(vm, "strtold", (void*)strtold, 2, 1); // returns long double
     cc_register_cfunc(vm, "strtol", (void*)strtol, 3, 0);
     cc_register_cfunc(vm, "strtoll", (void*)strtoll, 3, 0);
     cc_register_cfunc(vm, "strtoul", (void*)strtoul, 3, 0);
@@ -23,7 +34,7 @@ void register_stdlib_functions(JCC *vm) {
     cc_register_cfunc(vm, "calloc", (void*)calloc, 2, 0);
     cc_register_cfunc(vm, "free", (void*)free, 1, 0);
     cc_register_cfunc(vm, "malloc", (void*)malloc, 1, 0);
-    cc_register_cfunc(vm, "realloc", (void*)realloc, 2, 0);
+    cc_register_cfunc(vm, "realloc", (void*)jcc_realloc, 2, 0);  // Use wrapper for C11 semantics
     cc_register_cfunc(vm, "posix_memalign", (void*)posix_memalign, 3, 0);
 
     // Process control

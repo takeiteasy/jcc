@@ -23,5 +23,8 @@ int main() {
     default:
         y = 20;
 
-    return x + y + z;
+    int result = x + y + z;
+    // x=10 (from case), y=20 (from default), z=3 => 33
+    if (result != 33) return 1;  // Assert result == 33
+    return 42;
 }

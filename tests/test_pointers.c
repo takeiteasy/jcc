@@ -8,7 +8,8 @@ int main() {
     
     // Modify through pointer
     *p = 100;
-    
+
     // a should now be 100
-    return a;
+    if (a != 100) return 1;  // Assert a == 100
+    return 42;
 }

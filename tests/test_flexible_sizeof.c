@@ -8,5 +8,6 @@ struct packet {
 int main() {
     int s = sizeof(struct packet);
     // Return the actual sizeof value to see what it is
-    return s;
+    if (s != 4) return 1;  // Assert s == 4 (sizeof(int))
+    return 42;
 }

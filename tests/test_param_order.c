@@ -9,5 +9,6 @@ int test(int a, int b) {
 
 int main() {
     int result = test(10, 20);
-    return result;  // Should be 30
+    if (result != 30) return 1;  // Assert result == 30
+    return 42;
 }

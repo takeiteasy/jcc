@@ -26,13 +26,11 @@ int main() {
     // Test chained typedef
     MyInt a = 10;
     MyIntPtr b = &a;
-
+    
     // Test multiple typedef names
     Point p = {5, 7};
     PointPtr pp = &p;
-
+    
     // Verify values
-    int result = a + p.x + p.y + pp->x + pp->y;  // 10 + 5 + 7 + 5 + 7 = 34
-    if (result != 34) return 1;
-    return 42;
+    return a + p.x + p.y + pp->x + pp->y;  // 10 + 5 + 7 + 5 + 7 = 34
 }

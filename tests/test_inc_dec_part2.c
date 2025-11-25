@@ -23,9 +23,6 @@ int main() {
         count2++;
     }
     if (count2 != 5) return 6;
-    
-    return 5;
-    }
-    
+
     return 42;  // All passed
 }

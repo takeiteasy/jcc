@@ -83,7 +83,7 @@ static int eval1(JCC *vm) {
 
     goto *op_table[op];
 #define X(NAME) op_##NAME: return op_##NAME##_fn(vm);
-    OPS_X 
+    OPS_X
 #undef X
     return -1;
 }

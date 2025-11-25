@@ -4,5 +4,6 @@
 int main() {
     int n = 1;
     int arr[n];
-    return n;  // Don't even touch arr
+    if (n != 1) return 0;  // Assert n == 1
+    return 42;
 }

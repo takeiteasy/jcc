@@ -381,6 +381,11 @@ void add_type(JCC *vm, Node *node) {
         case ND_VAR:
         case ND_VLA_PTR:
             node->ty = node->var->ty;
+            // Function-to-pointer decay: when a function name is used as a value,
+            // it decays to a pointer to that function
+            if (node->var->ty->kind == TY_FUNC) {
+                node->ty = pointer_to(node->var->ty);
+            }
             return;
         case ND_COND:
             if (node->then->ty->kind == TY_VOID || node->els->ty->kind == TY_VOID) {

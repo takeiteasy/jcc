@@ -8,6 +8,7 @@ int main() {
     
     // Combined operations
     int result = a + b * c - d / e;  // 8 + 6*14 - 5/2 = 8 + 84 - 2 = 90
-    
-    return result;
+
+    if (result != 90) return 1;  // Assert result == 90
+    return 42;
 }
