@@ -1231,6 +1231,20 @@ struct JCC {
     GotoPatch goto_patches[MAX_LABELS];
     int num_goto_patches;
 
+    // Switch statement code generation (for dense switches)
+    long long *current_switch_table;  // Jump table being filled
+    long current_switch_min;           // Minimum case value
+    long current_switch_size;          // Jump table size
+
+    // Switch statement code generation (for sparse switches)
+    long long *current_sparse_case_table;  // Array of jump addresses
+    int current_sparse_num;                  // Number of case entries
+    #ifndef MAX_SPARSE_CASES
+    #define MAX_SPARSE_CASES 256
+    #endif
+    Node *sparse_case_nodes[MAX_SPARSE_CASES];    // Case nodes
+    long long *sparse_jump_addrs[MAX_SPARSE_CASES];  // Jump address pointers
+
     // Inline assembly callback
     JCCAsmCallback asm_callback;  // User-provided callback for asm statements
     void *asm_user_data;               // User-provided context for callback

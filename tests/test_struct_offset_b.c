@@ -10,7 +10,8 @@ int main() {
     struct Test t;
     t.a = 100;
     t.b = 200;
-    
+
     int b_val = t.b;
-    return b_val;  // Should be 200
+    if (b_val != 200) return 1;
+    return 42;
 }

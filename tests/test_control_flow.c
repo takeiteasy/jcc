@@ -23,7 +23,8 @@ int main() {
         result = result + i;
     }
     // Adds: 1 + 2 + 3 + 4 + 5 = 15
-    
+
     // Total: 10 + 20 + 15 = 45
-    return result;
+    if (result != 45) return 1;  // Assert result == 45
+    return 42;
 }

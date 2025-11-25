@@ -29,5 +29,5 @@ int main() {
     printf("Size needed: %d bytes\n", n);
     
     printf("All snprintf tests passed!\n");
-    return 1;
+    return 42;
 }

@@ -7,6 +7,7 @@ int main() {
     const int *p = &x;  // Pointer to const int
     p = &y;             // OK: can change pointer
     // *p = 30;         // ERROR: cannot modify through pointer to const
-    
-    return *p;  // Should return 20
+
+    if (*p != 20) return 1;  // Assert *p == 20
+    return 42;
 }

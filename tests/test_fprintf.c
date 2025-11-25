@@ -11,7 +11,7 @@ int main() {
     
     // Test fprintf to stdout
     fprintf(stdout, "This goes to stdout: %d %s\n", 123, "hello");
-    
+
     printf("Test completed\n");
-    return 1;
+    return 42;
 }

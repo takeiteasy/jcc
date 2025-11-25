@@ -196,7 +196,7 @@ void gen_expr(JCC *vm, Node *node) {
                 emit(vm, IMM);
                 long long *addr_loc = ++vm->text_ptr;
                 *addr_loc = 0;  // Placeholder
-                
+
                 // Record patch location
                 if (vm->num_func_addr_patches >= MAX_CALLS) {
                     error("too many function address references");
@@ -1159,23 +1159,35 @@ void gen_expr(JCC *vm, Node *node) {
                 if (!node->ty->is_unsigned) {
                     // Check if sign bit is set
                     long long sign_bit = 1LL << (node->member->bit_width - 1);
-                    emit(vm, PUSH);  // Save value
+                    emit(vm, PUSH);  // Save value for later use
+                    emit(vm, PUSH);  // Save value again for sign bit test
                     emit_with_arg(vm, IMM, sign_bit);
-                    emit(vm, AND);  // Test sign bit
+                    emit(vm, AND);  // Test sign bit (pops one copy of value)
 
                     // If sign bit is set, we need to sign extend
                     // Jump if zero (positive value, no sign extension needed)
-                    long long *jz_loc = vm->text_ptr++;
                     emit(vm, JZ);
-                    long long skip_extend = 0;
-                    *jz_loc = (long long)&skip_extend;
+                    long long *jz_addr = ++vm->text_ptr;
+                    *jz_addr = 0;  // Placeholder
 
-                    // Sign extend: value | ~mask
-                    emit(vm, PUSH);  // Save value
+                    // Negative path: Sign extend value | ~mask
+                    // Stack still has the original value saved from first PUSH
                     emit_with_arg(vm, IMM, ~mask);
-                    emit(vm, OR);  // Set upper bits
+                    emit(vm, OR);  // Set upper bits (pops the saved value)
 
-                    skip_extend = (long long)vm->text_ptr;
+                    // Jump past the positive path
+                    emit(vm, JMP);
+                    long long *end_jmp = ++vm->text_ptr;
+                    *end_jmp = 0;
+
+                    // Positive path: restore value from stack
+                    *jz_addr = (long long)(vm->text_ptr + 1);
+                    // Stack has the saved value, ax = 0
+                    // Pop the value using OR with 0
+                    emit_with_arg(vm, IMM, 0);
+                    emit(vm, OR);  // ax = value | 0 = value (pops from stack)
+
+                    *end_jmp = (long long)(vm->text_ptr + 1);
                 }
             } else {
                 // Load the value unless it's an array or nested struct
@@ -1383,33 +1395,23 @@ static void gen_dense_switch(JCC *vm, Node *node, long min_case, long max_case) 
         emit(vm, 0);  // Placeholder, will patch later
     }
 
-    // 6. Generate case bodies and fill jump table
-    // The case_next list is in reverse source order, so collect and reverse
-    #define MAX_CASES_FOR_DENSE 256
-    Node *case_list[MAX_CASES_FOR_DENSE];
-    int case_count = 0;
-    for (Node *c = node->case_next; c; c = c->case_next) {
-        if (case_count >= MAX_CASES_FOR_DENSE) {
-            error_tok(vm, node->tok, "too many cases for dense switch");
-        }
-        case_list[case_count++] = c;
-    }
+    // 6. Set up tracking for case label positions
+    // Store the jump table pointer in VM so ND_CASE can fill it during body generation
+    long long *old_switch_table = vm->current_switch_table;
+    long old_switch_min = vm->current_switch_min;
+    long old_switch_size = vm->current_switch_size;
+    vm->current_switch_table = jump_table;
+    vm->current_switch_min = min_case;
+    vm->current_switch_size = table_size;
 
-    // Generate case bodies in reverse order (to get source order for fallthrough)
-    for (int i = case_count - 1; i >= 0; i--) {
-        Node *c = case_list[i];
-        long long *case_start = vm->text_ptr + 1;
+    // Generate the entire switch body
+    // Case labels will fill in their positions in the jump table as they're encountered
+    gen_stmt(vm, node->then);
 
-        // Fill jump table for this case's range
-        for (long val = c->begin; val <= c->end; val++) {
-            long idx = val - min_case;
-            if (idx >= 0 && idx < table_size) {
-                jump_table[idx] = (long long)case_start;
-            }
-        }
-
-        gen_stmt(vm, c->lhs);  // Generate case body
-    }
+    // Restore previous switch context
+    vm->current_switch_table = old_switch_table;
+    vm->current_switch_min = old_switch_min;
+    vm->current_switch_size = old_switch_size;
 
     // 7. Default case (bounds check failed or holes in table)
     long long *default_start = vm->text_ptr + 1;
@@ -1469,33 +1471,31 @@ static void gen_sparse_switch(JCC *vm, Node *node) {
     emit(vm, JMP);
     long long *no_match_addr = ++vm->text_ptr;
 
-    // Generate all case bodies and record their start addresses
-    long long case_body_starts[MAX_CASES];
-    int case_idx = 0;
-    for (Node *c = node->case_next; c; c = c->case_next) {
-        // Record where this case body starts (as actual address)
-        case_body_starts[case_idx] = (long long)(vm->text_ptr + 1);
-        case_idx++;
-        gen_stmt(vm, c->lhs);
-    }
+    // Set up sparse switch tracking
+    // Record case positions as we generate the body
+    long long *old_sparse_case_table = vm->current_sparse_case_table;
+    int old_sparse_num = vm->current_sparse_num;
+    vm->current_sparse_case_table = case_table[0].jump_addr;
+    vm->current_sparse_num = num_entries;
 
-    // Patch all case jumps
+    // Store mapping in temporary storage for ND_CASE to use
     for (int i = 0; i < num_entries; i++) {
-        // Find which case this entry belongs to
-        int idx = 0;
-        for (Node *c = node->case_next; c; c = c->case_next) {
-            if (c == case_table[i].case_node) {
-                *case_table[i].jump_addr = case_body_starts[idx];
-                break;
-            }
-            idx++;
-        }
+        vm->sparse_case_nodes[i] = case_table[i].case_node;
+        vm->sparse_jump_addrs[i] = case_table[i].jump_addr;
     }
 
-    // Generate default case or just end
+    // Generate the entire switch body
+    // Case labels will patch jump addresses as they're encountered
+    gen_stmt(vm, node->then);
+
+    // Restore sparse switch context
+    vm->current_sparse_case_table = old_sparse_case_table;
+    vm->current_sparse_num = old_sparse_num;
+
+    // Default case or end
     if (node->default_case) {
         *no_match_addr = (long long)(vm->text_ptr + 1);
-        gen_stmt(vm, node->default_case->lhs);
+        // Default case is part of node->then, don't generate separately
     } else {
         *no_match_addr = (long long)(vm->text_ptr + 1);
     }
@@ -1717,8 +1717,27 @@ static void gen_stmt(JCC *vm, Node *node) {
         }
         
         case ND_CASE:
-            // Case labels are handled by the switch statement
-            // Just generate the body code
+            // Case label: record position in jump table for switch dispatch
+            if (vm->current_switch_table) {
+                // Dense switch: fill jump table entries for this case's value range
+                long long *case_addr = vm->text_ptr + 1;
+                for (long val = node->begin; val <= node->end; val++) {
+                    long idx = val - vm->current_switch_min;
+                    if (idx >= 0 && idx < vm->current_switch_size) {
+                        vm->current_switch_table[idx] = (long long)case_addr;
+                    }
+                }
+            } else if (vm->current_sparse_num > 0) {
+                // Sparse switch: patch jump addresses for this case
+                long long *case_addr = vm->text_ptr + 1;
+                for (int i = 0; i < vm->current_sparse_num; i++) {
+                    if (vm->sparse_case_nodes[i] == node) {
+                        *vm->sparse_jump_addrs[i] = (long long)case_addr;
+                    }
+                }
+            }
+            // Generate the body code (just the first statement after the label)
+            // Fallthrough works because subsequent statements are naturally generated
             gen_stmt(vm, node->lhs);
             return;
 
@@ -2140,10 +2159,26 @@ void codegen(JCC *vm, Obj *prog) {
     }
 
     // Patch function addresses (for function pointers)
+    // Same as call patches - must look up by name to handle forward declarations
     for (int i = 0; i < vm->num_func_addr_patches; i++) {
-        Obj *fn = vm->func_addr_patches[i].function;
+        char *fn_name = vm->func_addr_patches[i].function->name;
         long long *loc = vm->func_addr_patches[i].location;
-        *loc = (long long)(vm->text_seg + fn->code_addr);
+
+        // Find the function definition in the program list
+        Obj *fn_def = NULL;
+        for (Obj *fn = prog; fn; fn = fn->next) {
+            if (fn->is_function && fn->body && strcmp(fn->name, fn_name) == 0) {
+                fn_def = fn;
+                break;
+            }
+        }
+
+        if (!fn_def) {
+            error("undefined function: %s", fn_name);
+        }
+
+        long long addr = (long long)(vm->text_seg + fn_def->code_addr);
+        *loc = addr;
     }
 
     // Find main function and store its address

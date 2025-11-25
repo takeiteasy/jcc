@@ -25,5 +25,7 @@ int main() {
     int val3 = global_const;
     
     // Result: 10 + 5 + 20 + 35 + 10 + 100 = 180
-    return a + val1 + *p2 + val2 + val3;
+    int result = a + val1 + *p2 + val2 + val3;
+    if (result != 180) return 1;  // Assert result == 180
+    return 42;
 }

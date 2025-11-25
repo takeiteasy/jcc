@@ -126,5 +126,6 @@ int main() {
     
     // Return number of tests passed (out of 4)
     // Expected: 4 (all pass)
-    return passed;
+    if (passed != 4) return 1;  // Assert all 4 tests passed
+    return 42;
 }

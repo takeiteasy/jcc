@@ -15,6 +15,7 @@ int main() {
     
     // Sum: 1 + 0 + 0 + 1 + 1 + 0 = 3
     int result = and1 + and2 + and3 + or1 + or2 + or3;
-    
-    return result;
+
+    if (result != 3) return 1;  // Assert result == 3
+    return 42;
 }

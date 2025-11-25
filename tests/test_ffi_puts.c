@@ -1,7 +1,7 @@
 // Test just puts
 // Expected return: 42
 
-#include "stdlib.h"
+#include <stdio.h>
 
 int main() {
     puts("Hello from FFI!");

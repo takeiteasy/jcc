@@ -47,6 +47,7 @@ int main() {
     if (r2.tl.x == 10 && r2.tl.y == 20 && r2.br.x == 30 && r2.br.y == 40) {
         result += 8;  // total: 150
     }
-    
-    return result;  // Expected: 150
+
+    if (result != 150) return 1;  // Assert result == 150
+    return 42;
 }

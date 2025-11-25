@@ -181,7 +181,8 @@ int main() {
         if (l != 150) return 20;
         result += 1;
     }
-    
-    // All tests passed
-    return 0;
+
+    // All tests passed - result should be 17
+    if (result != 17) return 1;
+    return 42;
 }

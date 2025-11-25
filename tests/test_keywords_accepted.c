@@ -121,6 +121,7 @@ int main() {
     
     // Test auto
     result += test_auto();  // 5, total: 171
-    
-    return result;
+
+    if (result != 171) return 1;  // Assert result == 171
+    return 42;
 }

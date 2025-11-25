@@ -8,8 +8,9 @@ struct buffer {
 
 int main() {
     // Test sizeof first
+    // Should be 8: int (4 bytes) + padding (4 bytes) to align to long (8 bytes)
     int s = sizeof(struct buffer);
-    if (s != 4) return 10 + s;  // Return 10 + actual size if wrong
+    if (s != 8) return 10 + s;  // Return 10 + actual size if wrong
     
     // Allocate
     struct buffer *buf = malloc(sizeof(struct buffer) + 3 * sizeof(long));
@@ -28,5 +29,5 @@ int main() {
     if (buf->values[2] != 300) return 60;
     
     free(buf);
-    return 0;  // SUCCESS
+    return 42;  // SUCCESS
 }

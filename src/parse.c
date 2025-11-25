@@ -839,14 +839,8 @@ static Type *declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
         Type dummy = {};
         declarator(vm, &tok, start->next, &dummy);
         tok = skip(vm, tok, ")");
-        ty = type_suffix(vm, &tok, tok, ty);
-        ty = declarator(vm, &tok, start->next, ty);
-
-        // Handle __attribute__ after declarator
-        tok = attribute_list(vm, tok, ty);
-        tok = c23_attribute_list(vm, tok, ty);
-        *rest = tok;
-        return ty;
+        ty = type_suffix(vm, rest, tok, ty);
+        return declarator(vm, &tok, start->next, ty);
     }
 
     Token *name = NULL;
@@ -857,10 +851,10 @@ static Type *declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
         tok = tok->next;
     }
 
-    ty = type_suffix(vm, &tok, tok, ty);
+    ty = type_suffix(vm, rest, tok, ty);
 
     // Handle __attribute__ after declarator
-    tok = attribute_list(vm, tok, ty);
+    tok = attribute_list(vm, *rest, ty);
     tok = c23_attribute_list(vm, tok, ty);
 
     ty->name = name;
@@ -882,24 +876,11 @@ static Type *abstract_declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
         Type dummy = {};
         abstract_declarator(vm, &tok, start->next, &dummy);
         tok = skip(vm, tok, ")");
-        ty = type_suffix(vm, &tok, tok, ty);
-        ty = abstract_declarator(vm, &tok, start->next, ty);
-
-        // Handle __attribute__ after abstract declarator
-        tok = attribute_list(vm, tok, ty);
-        tok = c23_attribute_list(vm, tok, ty);
-        *rest = tok;
-        return ty;
+        ty = type_suffix(vm, rest, tok, ty);
+        return abstract_declarator(vm, &tok, start->next, ty);
     }
 
-    ty = type_suffix(vm, &tok, tok, ty);
-
-    // Handle __attribute__ after abstract declarator
-    tok = attribute_list(vm, tok, ty);
-    tok = c23_attribute_list(vm, tok, ty);
-    *rest = tok;
-
-    return ty;
+    return type_suffix(vm, rest, tok, ty);
 }
 
 // type-name = declspec abstract-declarator
@@ -961,12 +942,13 @@ static Type *enum_specifier(JCC *vm, Token **rest, Token *tok) {
             tok = skip(vm, tok, ",");
 
         char *name = get_ident(vm, tok);
+        int name_len = tok->len;
         tok = tok->next;
 
         if (equal(tok, "="))
             val = const_expr(vm, &tok, tok->next);
 
-        VarScope *sc = push_scope(vm, name, tok->len);
+        VarScope *sc = push_scope(vm, name, name_len);
         sc->enum_ty = ty;
         sc->enum_val = val;
 
@@ -3208,14 +3190,18 @@ static Type *struct_decl(JCC *vm, Token **rest, Token *tok) {
             mem->bit_offset = bits % (sz * 8);
             bits += mem->bit_width;
         } else {
-            if (!ty->is_packed)
+            // Flexible array members (array with size 0) should not add padding before them,
+            // but they DO affect struct alignment (for final size calculation)
+            bool is_flexible_array = (mem->ty->kind == TY_ARRAY && mem->ty->array_len == 0);
+            if (!ty->is_packed && !is_flexible_array)
                 bits = align_to(bits, mem->align * 8);
             mem->offset = bits / 8;
             bits += mem->ty->size * 8;
-        }
 
-        if (!ty->is_packed && ty->align < mem->align)
-            ty->align = mem->align;
+            // Update struct alignment (including for flexible arrays, for final size padding)
+            if (!ty->is_packed && ty->align < mem->align)
+                ty->align = mem->align;
+        }
     }
 
     ty->size = align_to(bits, ty->align * 8) / 8;

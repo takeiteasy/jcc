@@ -83,6 +83,7 @@ int main() {
     result += test_pointer_casts();         // 42, total: 103
     result += test_cast_with_side_effects(); // 16, total: 119
     result += test_cast_in_call();          // 7, total: 126
-    
-    return result;
+
+    if (result != 126) return 1;  // Assert result == 126
+    return 42;
 }

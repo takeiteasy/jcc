@@ -37,6 +37,7 @@ int main() {
         p[i] = i;
     }
     sum = sum + p[5];  // 97 + 5 = 102
-    
-    return sum;
+
+    if (sum != 102) return 1;
+    return 42;
 }

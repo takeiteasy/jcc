@@ -5,6 +5,6 @@ int add_three(int a, int b, int c) {
 
 int main() {
     int result = add_three(10, 20, 30);
-    if (result == 60) return 1;
-    return 0;
+    if (result != 60) return 1;  // Assert result == 60
+    return 42;
 }

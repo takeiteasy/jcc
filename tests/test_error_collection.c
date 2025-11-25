@@ -1,3 +1,4 @@
+// EXPECT_COMPILE_ERROR
 // Test to demonstrate error collection and reporting
 // This file has one error that will be caught and reported
 

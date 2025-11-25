@@ -10,5 +10,7 @@ int main() {
     int v4 = arr[4];  // Should be 50
     
     // Return sum to verify all values
-    return v0 + v1;  // Should be 30
+    int sum = v0 + v1;  // Should be 30
+    if (sum != 30) return 1;  // Assert sum == 30
+    return 42;
 }

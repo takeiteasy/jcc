@@ -27,7 +27,7 @@ int main() {
     int num;
     sscanf(num_str, "%d", &num);
     printf("Parsed number: %d\n", num);
-    
+
     printf("\n=== All tests passed ===\n");
-    return 1;
+    return 42;
 }

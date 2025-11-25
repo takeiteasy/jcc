@@ -1,3 +1,4 @@
+// EXPECT_COMPILE_ERROR
 // Test that changing const pointer is rejected
 
 int main() {

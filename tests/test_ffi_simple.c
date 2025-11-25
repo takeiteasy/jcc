@@ -1,7 +1,8 @@
 // Simple FFI test
 // Expected return: 42
 
-#include "stdlib.h"
+#include <stdio.h>
+#include <string.h>
 
 int main() {
     // Test strlen

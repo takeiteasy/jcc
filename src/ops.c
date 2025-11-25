@@ -538,12 +538,13 @@ int op_CALL_fn(JCC *vm) {
 
 int op_CALLI_fn(JCC *vm) {
     // Call subroutine indirect: push return address to main stack and shadow stack
+    // Function address is in ax register
     long long ret_addr = (long long)vm->pc;
     *--vm->sp = ret_addr;
     if (vm->flags & JCC_CFI) {
         *--vm->shadow_sp = ret_addr;  // Also push to shadow stack for CFI
     }
-    vm->pc = (long long *)*vm->pc;
+    vm->pc = (long long *)vm->ax;  // Jump to address in ax
     return 0;
 }
 

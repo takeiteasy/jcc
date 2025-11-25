@@ -11,11 +11,9 @@ int main() {
     // global_counter starts at 0
     increment_counter();
     increment_counter();
-    
+
     // Should be 2 now
-    if (global_counter == 2) {
-        return 0;  // Success
-    }
-    
-    return global_counter;  // Return actual value for debugging
+    if (global_counter != 2) return global_counter;  // Return actual value for debugging
+
+    return 42;  // Success
 }

@@ -14,7 +14,9 @@ int main() {
     for (int i = 0; i < 7; i = i + 1) {
         sum = sum + arr[i];
     }
-    
+
     // sum = 0+10+20+30+40+50+60 = 210
-    return sum / 2 - 21;  // 210/2 - 21 = 105 - 21 = 84
+    int result = sum / 2 - 21;  // 210/2 - 21 = 105 - 21 = 84
+    if (result != 84) return 1;  // Assert result == 84
+    return 42;
 }

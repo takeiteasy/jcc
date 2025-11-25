@@ -3,7 +3,9 @@ int main() {
     int a = -5;
     int b = a;  // b = -5
     a++;        // a should be -4
-    
-    // Return difference
-    return a - b;  // Should return 1 if increment worked
+
+    // Check difference
+    int result = a - b;  // Should be 1 if increment worked
+    if (result != 1) return 1;
+    return 42;
 }

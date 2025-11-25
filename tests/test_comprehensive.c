@@ -52,5 +52,6 @@ int main() {
     if (val == 88) passed = passed + 1; else failed = failed + 1;
     
     // Return passed tests (should be 26 if all work)
-    return passed;
+    if (passed != 26) return 1;  // Assert all 26 tests passed
+    return 42;
 }

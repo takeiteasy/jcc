@@ -17,9 +17,8 @@ int main() {
     int result2 = call_helper(10);  // Should return 52
     
     // Verify results
-    if (result1 == 84 && result2 == 52) {
-        return 0;  // Success
-    }
-    
-    return 1;  // Failure
+    if (result1 != 84) return 1;  // Failure
+    if (result2 != 52) return 2;  // Failure
+
+    return 42;  // Success
 }

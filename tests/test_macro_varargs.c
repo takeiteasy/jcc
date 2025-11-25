@@ -23,7 +23,7 @@ int main() {
     char buf2[100];
     snprintf(buf2, 100, "snprintf: %d %d %d %d %d", 5, 10, 15, 20, 25);
     printf("%s\n", buf2);
-    
+
     printf("All macro-generated wrappers working!\n");
-    return 99;
+    return 42;
 }

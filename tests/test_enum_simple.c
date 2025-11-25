@@ -9,5 +9,6 @@ int main() {
     if (c == 1) {
         c = BLUE;
     }
-    return c;  // Should return 2 (BLUE)
+    if (c != 2) return 1;  // Assert c == 2 (BLUE)
+    return 42;
 }

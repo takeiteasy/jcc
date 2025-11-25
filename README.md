@@ -24,7 +24,7 @@ There are lots of memory safety features available. See [SAFETY.md](./SAFETY.md)
 
 #### Safety Levels
 
-JCC provides preset safety levels that automatically enable appropriate combinations of safety features. These make it easy to choose the right balance between safety and performance without needing to remember individual flags.
+JCC provides preset safety levels that automatically enable appropriate combinations of safety features. These make it easy to choose the right balance between safety and performance without needing to remember individual flags. These overhead percentages are just guesses by the way. Pure speculation. Source? I made them up.
 
 **Level 0: None** (`-0` or `--safety=none`)
 - No safety checks
@@ -80,7 +80,6 @@ All individual safety flags can be used standalone or combined with safety level
 - `--memory-poisoning` **Poison allocated/freed memory (0xCD/0xDD patterns)**
 - `--memory-leak-detection` **Memory leak detection**
 - `--uaf-detection` **Use-after-free detection**
-- **Double-free detection** (always enabled with VM heap)
 - `--bounds-checks` **Runtime array bounds checking**
 - `--type-checks` **Runtime type checking on pointer dereferences**
 - `--uninitialized-detection` **Uninitialized variable detection**
@@ -96,7 +95,7 @@ All individual safety flags can be used standalone or combined with safety level
 - `--control-flow-integrity` **Control flow integrity (shadow stack for return address validation)**
 - `--vm-heap` **Route all malloc/free through VM heap (enables memory safety features)**
 
-> **VM Heap Mode**: Most memory safety features require heap allocations to go through the VM's internal allocator (MALC/MFRE opcodes) rather than system malloc/free. The `--vm-heap` flag automatically intercepts malloc/free calls at compile time and routes them through the VM heap. Without this flag, memory safety checks only apply to code that directly uses VM heap opcodes. Use `--vm-heap` in combination with other safety flags for comprehensive protection.
+> **VM Heap Mode**: Most memory safety features require heap allocations to go through the VM's internal allocator (MALC/MFRE opcodes) rather than system malloc/free. The `--vm-heap` flag automatically intercepts malloc/free calls at compile time and routes them through the VM heap. Without this flag, memory safety checks only apply to code that directly uses VM heap opcodes. Use `--vm-heap` in combination with other safety flags for comprehensive protection. While `--vm-heap` is enable, double free protection checks are done automatically.
 
 ### Pragma Macros
 
@@ -250,11 +249,11 @@ cc_destroy(&vm);
 
 ### Control Flow
 
-- `if`/`else`
-- `for`/`while`/`do-while`
-- `switch`/`case`/`default`
-- `goto label`/`goto *expr;`/`&&label`
-- `break`/`continue`
+- `if`, `else`
+- `for`, `while`, `do-while`
+- `switch`, `case`, `default`
+- `goto label`, `goto *expr;`, `&&label`
+- `break`, `continue`
 
 ### Functions
 
@@ -262,7 +261,7 @@ cc_destroy(&vm);
 - Function calls (direct and indirect via function pointers)
 - Recursion
 - Parameters and return values
-- Function pointers (declaration, assignment, indirect calls via `CALLI`)
+- Function pointers (declaration, assignment, indirect calls)
 - Variadic functions (`<stdarg.h>` support with `va_start`, `va_arg`, `va_end`)
 
 ### Data Types
@@ -301,7 +300,12 @@ cc_destroy(&vm);
 
 ### Preprocessor
 
-- `#include` (with multiple search paths)
+- `#include` (with intelligent search path handling)
+  - **Standard library headers** (`<stdio.h>`, `<stdlib.h>`, etc.) automatically use JCC's `./include` directory
+  - **User headers** with `"quotes"` search `-I` paths
+  - **Non-standard angle-bracket headers** require `--isystem` paths (system headers not searched by default)
+  - Full paths work directly
+  - No `-I./include` flag needed - added automatically
 - `#define` (object-like and function-like macros)
 - `#ifdef`, `#ifndef`, `#if`, `#elif`, `#else`, `#endif`
 - `#elifdef`, `#elifndef`
@@ -364,12 +368,14 @@ JCC is single-threaded and does not implement any threading or atomic operations
 ## TODO
 
 ### Language features
+
 - Blocks/closures (`^{}`) - Complex feature requiring variable capture and closure runtime
 - Nested functions - Requires static chain or trampolines for accessing parent scope
 - `#embed` directive for embedding binary data directly
 - `__VA_OPT__` for better variadic macro handling
 
 ### JCC features
+
 - Hot reloading for FFI functions + compiled functions
 - Support for pthread + internal thread support
   - Thread safety features (race condition checks, etc)

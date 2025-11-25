@@ -2,5 +2,7 @@
 
 int main() {
     long x;
-    return sizeof(x);
+    int size = sizeof(x);
+    if (size != 8) return 1;  // Assert sizeof(long) == 8
+    return 42;
 }

@@ -382,6 +382,7 @@ static void read_macro_definition(JCC *vm, Token **rest, Token *tok) {
     if (tok->kind != TK_IDENT)
         error_tok(vm, tok, "macro name must be an identifier");
     char *name = strndup(tok->loc, tok->len);
+    int name_len = tok->len;  // Save name length before moving tok
     tok = tok->next;
 
     if (!tok->has_space && equal(tok, "(")) {
@@ -389,12 +390,12 @@ static void read_macro_definition(JCC *vm, Token **rest, Token *tok) {
         char *va_args_name = NULL;
         MacroParam *params = read_macro_params(vm, &tok, tok->next, &va_args_name);
 
-        Macro *m = add_macro(vm, name, tok->len, false, copy_line(vm, rest, tok));
+        Macro *m = add_macro(vm, name, name_len, false, copy_line(vm, rest, tok));
         m->params = params;
         m->va_args_name = va_args_name;
     } else {
         // Object-like macro
-        add_macro(vm, name, tok->len, true, copy_line(vm, rest, tok));
+        add_macro(vm, name, name_len, true, copy_line(vm, rest, tok));
     }
 }
 
@@ -705,6 +706,25 @@ static bool file_exists(char *path) {
     return !stat(path, &st);
 }
 
+// Check if a filename is a standard C library header provided by JCC
+static bool is_standard_header(const char *filename) {
+    static const char *std_headers[] = {
+        "assert.h", "ctype.h", "errno.h", "float.h", "inttypes.h",
+        "limits.h", "math.h", "setjmp.h", "stdarg.h", "stdbool.h",
+        "stddef.h", "stdint.h", "stdio.h", "stdlib.h", "string.h",
+        "time.h",
+        // JCC-specific headers
+        "pragma_api.h", "reflection_api.h",
+        NULL
+    };
+
+    for (int i = 0; std_headers[i]; i++) {
+        if (strcmp(filename, std_headers[i]) == 0)
+            return true;
+    }
+    return false;
+}
+
 char *search_include_paths(JCC *vm, char *filename, int filename_len, bool is_system) {
     if (filename[0] == '/')
         return filename;
@@ -713,9 +733,21 @@ char *search_include_paths(JCC *vm, char *filename, int filename_len, bool is_sy
     if (cached)
         return cached;
 
-    // For <...> includes, search system_include_paths
-    // For "..." includes, search include_paths
-    StringArray *paths = is_system ? &vm->system_include_paths : &vm->include_paths;
+    // For standard library headers, ALWAYS search include_paths (JCC's headers)
+    // This prevents accidentally loading system headers which have complex macros
+    // that JCC cannot handle
+    bool force_jcc_headers = is_standard_header(filename);
+
+    // For <...> includes:
+    //   - Standard headers: search include_paths (JCC's headers)
+    //   - Other headers: search system_include_paths (requires -isystem)
+    // For "..." includes: search include_paths
+    StringArray *paths;
+    if (force_jcc_headers || !is_system) {
+        paths = &vm->include_paths;
+    } else {
+        paths = &vm->system_include_paths;
+    }
 
     // Search a file from the include paths.
     for (int i = 0; i < paths->len; i++) {
