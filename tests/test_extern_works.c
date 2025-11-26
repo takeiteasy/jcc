@@ -1,11 +1,11 @@
 // Comprehensive test demonstrating extern keyword functionality
-// This test uses multiple files to demonstrate external linkage
+// Merged into single file
 
-// Test 1: Simple extern variable
-extern int x;
+// Define x
+int x = 42;
 
 int main() {
-    // x is defined in test_extern_simple2.c as 42
+    // Test extern variable
     if (x != 42) return 1;
 
     return 42;  // Success
