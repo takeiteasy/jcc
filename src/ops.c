@@ -1741,7 +1741,7 @@ int op_CALLF_fn(JCC *vm) {
                 }
             }
         }
-            }
+    }
 
 #ifdef JCC_HAS_FFI
     // libffi implementation - supports variadic functions
@@ -1830,7 +1830,7 @@ int op_CALLF_fn(JCC *vm) {
 #if defined(__aarch64__) || defined(__arm64__)
     // ARM64 inline assembly implementation (AAPCS64 calling convention)
     // Supports both non-variadic and variadic functions
-    
+
     // Pop arguments from VM stack into local array
     long long args[actual_nargs];
     for (int i = 0; i < actual_nargs; i++) {
@@ -1838,24 +1838,24 @@ int op_CALLF_fn(JCC *vm) {
         if (vm->debug_vm)
             printf("  arg[%d] = 0x%llx (%lld)\n", i, args[i], args[i]);
     }
-    
+
     // Determine which arguments go in registers vs stack
     // AAPCS64 rules (Darwin/macOS variant):
     // - Fixed integer args: x0-x7
     // - Fixed double args: d0-d7
     // - Variadic args: ALWAYS STACK (on macOS/Darwin)
     // - Remaining args: stack
-    
+
     int num_fixed = ff->is_variadic ? ff->num_fixed_args : actual_nargs;
     int int_reg_idx = 0;   // Track next available x register (x0-x7)
     int fp_reg_idx = 0;    // Track next available d register (d0-d7)
     int stack_args = 0;    // Count of arguments that go on stack
-    
+
     // Calculate how many args will go on stack
     for (int i = 0; i < actual_nargs; i++) {
         int is_double = (i < 64 && (double_arg_mask & (1ULL << i)));
         int is_variadic_arg = (i >= num_fixed);
-        
+
         // On macOS ARM64, ALL variadic arguments go on the stack
         if (is_variadic_arg) {
             stack_args++;
@@ -1876,16 +1876,16 @@ int op_CALLF_fn(JCC *vm) {
             }
         }
     }
-    
+
     // Allocate stack space locally to hold the values before copying to actual stack
     // We need this because we can't easily iterate args inside inline asm
     long long stack_area[stack_args > 0 ? stack_args : 1];
     int stack_idx = 0;
-    
+
     // Reset register indices for actual assignment
     int_reg_idx = 0;
     fp_reg_idx = 0;
-    
+
     // Declare ARM64 register variables
     register long long x0 __asm__("x0") = 0;
     register long long x1 __asm__("x1") = 0;
@@ -1903,11 +1903,11 @@ int op_CALLF_fn(JCC *vm) {
     register double d5 __asm__("d5") = 0.0;
     register double d6 __asm__("d6") = 0.0;
     register double d7 __asm__("d7") = 0.0;
-    
+
     for (int i = 0; i < actual_nargs; i++) {
         int is_double = (i < 64 && (double_arg_mask & (1ULL << i)));
         int is_variadic_arg = (i >= num_fixed);
-        
+
         if (is_variadic_arg) {
             // Variadic arg: always stack on macOS
             stack_area[stack_idx++] = args[i];
@@ -1949,18 +1949,18 @@ int op_CALLF_fn(JCC *vm) {
             }
         }
     }
-    
+
     // Calculate aligned stack size (must be 16-byte aligned)
     // stack_args is number of 8-byte words
     int stack_bytes = (stack_args * 8 + 15) & ~15;
-    
+
     // Make the call using inline assembly
     // We need to:
     // 1. Adjust SP to make room for arguments
     // 2. Copy arguments from stack_area to SP
     // 3. Call function
     // 4. Restore SP
-    
+
     if (ff->returns_double) {
         register double result __asm__("d0");
         __asm__ volatile(

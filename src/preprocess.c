@@ -615,9 +615,21 @@ static Token *subst(JCC *vm, Token *tok, MacroArg *args) {
         // empty token list. Otherwise, __VA_OPT__(x) is expanded to x.
         if (equal(tok, "__VA_OPT__") && equal(tok->next, "(")) {
             MacroArg *arg = read_macro_arg_one(vm, &tok, tok->next->next, true);
-            if (has_varargs(args))
-                for (Token *t = arg->tok; t->kind != TK_EOF; t = t->next)
-                    cur = cur->next = t;
+            if (has_varargs(args)) {
+                // Manually substitute parameters in __VA_OPT__ content
+                for (Token *t = arg->tok; t->kind != TK_EOF; t = t->next) {
+                    MacroArg *a = find_arg(args, t);
+                    if (a) {
+                        // Expand and copy the parameter's tokens
+                        Token *expanded = preprocess2(vm, a->tok);
+                        for (Token *e = expanded; e->kind != TK_EOF; e = e->next)
+                            cur = cur->next = copy_token(vm, e);
+                    } else {
+                        // Not a parameter, just copy the token
+                        cur = cur->next = copy_token(vm, t);
+                    }
+                }
+            }
             tok = skip(vm, tok, ")");
             continue;
         }
