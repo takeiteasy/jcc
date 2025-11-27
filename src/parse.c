@@ -124,6 +124,7 @@ static void initializer2(JCC *vm, Token **rest, Token *tok, Initializer *init);
 static Initializer *initializer(JCC *vm, Token **rest, Token *tok, Type *ty, Type **new_ty);
 static Node *lvar_initializer(JCC *vm, Token **rest, Token *tok, Obj *var);
 static void gvar_initializer(JCC *vm, Token **rest, Token *tok, Obj *var);
+static Node *create_vla_init(JCC *vm, Initializer *init, Type *ty, Obj *var, Token *tok);
 static Node *compound_stmt(JCC *vm, Token **rest, Token *tok);
 static Node *stmt(JCC *vm, Token **rest, Token *tok);
 static Node *expr_stmt(JCC *vm, Token **rest, Token *tok);
@@ -299,6 +300,12 @@ static Initializer *new_initializer(JCC *vm, Type *ty, bool is_flexible) {
         memset(init->children, 0, ty->array_len * sizeof(Initializer *));
         for (int i = 0; i < ty->array_len; i++)
             init->children[i] = new_initializer(vm, ty->base, false);
+        return init;
+    }
+
+    // VLA initialization: treat like flexible array - will be sized during parsing
+    if (ty->kind == TY_VLA) {
+        init->is_flexible = true;
         return init;
     }
 
@@ -1087,25 +1094,27 @@ static Node *declaration(JCC *vm, Token **rest, Token *tok, Type *basety, VarAtt
         cur = cur->next = new_unary(vm, ND_EXPR_STMT, compute_vla_size(vm, ty, tok), tok);
 
         if (ty->kind == TY_VLA) {
-            if (equal(tok, "=")) {
-                if (vm->collect_errors && error_tok_recover(vm, tok, "variable-sized object may not be initialized")) {
-                    // Skip the initializer
-                    assign(vm, &tok, tok->next);
-                } else {
-                    error_tok(vm, tok, "variable-sized object may not be initialized");
-                }
-            }
-
             // Variable length arrays (VLAs) are translated to alloca() calls.
             // For example, `int x[n+2]` is translated to `tmp = n + 2,
             // x = alloca(tmp)`.
             Obj *var = new_lvar(vm, get_ident(vm, ty->name), ty->name->len, ty);
-            Token *tok = ty->name;
-            Node *expr = new_binary(vm, ND_ASSIGN, new_vla_ptr(vm, var, tok),
-                                    new_alloca(vm, new_var_node(vm, ty->vla_size, tok)),
-                                    tok);
+            Token *tok_local = ty->name;
+            Node *expr = new_binary(vm, ND_ASSIGN, new_vla_ptr(vm, var, tok_local),
+                                    new_alloca(vm, new_var_node(vm, ty->vla_size, tok_local)),
+                                    tok_local);
 
-            cur = cur->next = new_unary(vm, ND_EXPR_STMT, expr, tok);
+            cur = cur->next = new_unary(vm, ND_EXPR_STMT, expr, tok_local);
+
+            // Handle VLA initialization if present
+            if (equal(tok, "=")) {
+                tok = tok->next;
+                Type *new_ty;
+                Initializer *init = initializer(vm, &tok, tok, ty, &new_ty);
+                Node *init_node = create_vla_init(vm, init, ty, var, tok_local);
+                if (init_node)
+                    cur = cur->next = new_unary(vm, ND_EXPR_STMT, init_node, tok_local);
+            }
+
             continue;
         }
 
@@ -1345,15 +1354,20 @@ static void array_initializer1(JCC *vm, Token **rest, Token *tok, Initializer *i
 
     if (init->is_flexible) {
         int len = count_array_init_elements(vm, tok, init->ty);
-        *init = *new_initializer(vm, array_of(init->ty->base, len), false);
+        // For VLA, keep the VLA type but allocate children for initializer elements
+        if (init->ty->kind == TY_VLA) {
+            init->is_flexible = false;
+            init->children = arena_alloc(&vm->parser_arena, len * sizeof(Initializer *));
+            memset(init->children, 0, len * sizeof(Initializer *));
+            for (int i = 0; i < len; i++)
+                init->children[i] = new_initializer(vm, init->ty->base, false);
+        } else {
+            // For flexible arrays, create a fixed-size array type
+            *init = *new_initializer(vm, array_of(init->ty->base, len), false);
+        }
     }
 
     bool first = true;
-
-    if (init->is_flexible) {
-        int len = count_array_init_elements(vm, tok, init->ty);
-        *init = *new_initializer(vm, array_of(init->ty->base, len), false);
-    }
 
     for (int i = 0; !consume_end(rest, tok); i++) {
         if (!first)
@@ -1372,10 +1386,18 @@ static void array_initializer1(JCC *vm, Token **rest, Token *tok, Initializer *i
             continue;
         }
 
-        if (i < init->ty->array_len)
-            initializer2(vm, &tok, tok, init->children[i]);
-        else
-            tok = skip_excess_element(vm, tok);
+        // For VLA, check if children[i] exists; for regular arrays, check array_len
+        if (init->ty->kind == TY_VLA) {
+            if (init->children && init->children[i])
+                initializer2(vm, &tok, tok, init->children[i]);
+            else
+                tok = skip_excess_element(vm, tok);
+        } else {
+            if (i < init->ty->array_len)
+                initializer2(vm, &tok, tok, init->children[i]);
+            else
+                tok = skip_excess_element(vm, tok);
+        }
     }
 }
 
@@ -1383,10 +1405,22 @@ static void array_initializer1(JCC *vm, Token **rest, Token *tok, Initializer *i
 static void array_initializer2(JCC *vm, Token **rest, Token *tok, Initializer *init, int i) {
     if (init->is_flexible) {
         int len = count_array_init_elements(vm, tok, init->ty);
-        *init = *new_initializer(vm, array_of(init->ty->base, len), false);
+        // For VLA, keep the VLA type but allocate children for initializer elements
+        if (init->ty->kind == TY_VLA) {
+            init->is_flexible = false;
+            init->children = arena_alloc(&vm->parser_arena, len * sizeof(Initializer *));
+            memset(init->children, 0, len * sizeof(Initializer *));
+            for (int j = 0; j < len; j++)
+                init->children[j] = new_initializer(vm, init->ty->base, false);
+        } else {
+            // For flexible arrays, create a fixed-size array type
+            *init = *new_initializer(vm, array_of(init->ty->base, len), false);
+        }
     }
 
-    for (; i < init->ty->array_len && !is_end(tok); i++) {
+    // For VLA, loop until children run out; for regular arrays, use array_len
+    int limit = (init->ty->kind == TY_VLA) ? INT_MAX : init->ty->array_len;
+    for (; i < limit && !is_end(tok); i++) {
         Token *start = tok;
         if (i > 0)
             tok = skip(vm, tok, ",");
@@ -1483,6 +1517,15 @@ static void initializer2(JCC *vm, Token **rest, Token *tok, Initializer *init) {
     }
 
     if (init->ty->kind == TY_ARRAY) {
+        if (equal(tok, "{"))
+            array_initializer1(vm, rest, tok, init);
+        else
+            array_initializer2(vm, rest, tok, init, 0);
+        return;
+    }
+
+    // VLA initialization uses same syntax as array initialization
+    if (init->ty->kind == TY_VLA) {
         if (equal(tok, "{"))
             array_initializer1(vm, rest, tok, init);
         else
@@ -1627,6 +1670,40 @@ static Node *create_lvar_init(JCC *vm, Initializer *init, Type *ty, InitDesg *de
 
     Node *lhs = init_desg_expr(vm, desg, tok);
     return new_binary(vm, ND_ASSIGN, lhs, init->expr, tok);
+}
+
+// Generate initialization for VLA
+// Unlike create_lvar_init which uses ty->array_len, VLAs have runtime-determined size
+// We generate assignments based on the number of initializer elements (known at parse time)
+static Node *create_vla_init(JCC *vm, Initializer *init, Type *ty, Obj *var, Token *tok) {
+    if (!init || ty->kind != TY_VLA)
+        return NULL;
+
+    // Count how many elements are in the initializer
+    if (!init->children)
+        return NULL;
+
+    int init_count = 0;
+    // Count non-null children (initializer elements)
+    while (init->children[init_count])
+        init_count++;
+
+    if (init_count == 0)
+        return NULL;
+
+    // Generate assignments: arr[0] = val0, arr[1] = val1, ...
+    Node *node = new_node(vm, ND_NULL_EXPR, tok);
+    InitDesg desg = {NULL, 0, NULL, var};
+
+    for (int i = 0; i < init_count; i++) {
+        InitDesg desg2 = {&desg, i, NULL, NULL};
+        if (init->children[i]) {
+            Node *rhs = create_lvar_init(vm, init->children[i], ty->base, &desg2, tok);
+            node = new_binary(vm, ND_COMMA, node, rhs, tok);
+        }
+    }
+
+    return node;
 }
 
 // A variable definition with an initializer is a shorthand notation
