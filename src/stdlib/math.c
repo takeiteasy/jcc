@@ -39,27 +39,27 @@ void register_math_functions(JCC *vm) {
     cc_register_cfunc(vm, "fabs", (void*)fabs, 1, 1);
     cc_register_cfunc(vm, "fabsf", (void*)fabsf, 1, 0);
     cc_register_cfunc(vm, "fabsl", (void*)fabsl, 1, 1);
-    cc_register_cfunc(vm, "fmod", (void*)fmod, 2, 1);
-    cc_register_cfunc(vm, "fmodf", (void*)fmodf, 2, 0);
-    cc_register_cfunc(vm, "fmodl", (void*)fmodl, 2, 1);
-    cc_register_cfunc(vm, "remainder", (void*)remainder, 2, 1);
-    cc_register_cfunc(vm, "remainderf", (void*)remainderf, 2, 0);
-    cc_register_cfunc(vm, "remainderl", (void*)remainderl, 2, 1);
-    cc_register_cfunc(vm, "remquo", (void*)remquo, 3, 0);
-    cc_register_cfunc(vm, "remquof", (void*)remquof, 3, 0);
-    cc_register_cfunc(vm, "remquol", (void*)remquol, 3, 0);
-    cc_register_cfunc(vm, "fma", (void*)fma, 3, 1);
-    cc_register_cfunc(vm, "fmaf", (void*)fmaf, 3, 0);
-    cc_register_cfunc(vm, "fmal", (void*)fmal, 3, 1);
-    cc_register_cfunc(vm, "fmax", (void*)fmax, 2, 1);
-    cc_register_cfunc(vm, "fmaxf", (void*)fmaxf, 2, 0);
-    cc_register_cfunc(vm, "fmaxl", (void*)fmaxl, 2, 1);
-    cc_register_cfunc(vm, "fmin", (void*)fmin, 2, 1);
-    cc_register_cfunc(vm, "fminf", (void*)fminf, 2, 0);
-    cc_register_cfunc(vm, "fminl", (void*)fminl, 2, 1);
-    cc_register_cfunc(vm, "fdim", (void*)fdim, 2, 1);
-    cc_register_cfunc(vm, "fdimf", (void*)fdimf, 2, 0);
-    cc_register_cfunc(vm, "fdiml", (void*)fdiml, 2, 1);
+    cc_register_cfunc_ex(vm, "fmod", (void*)fmod, 2, 1, 0b11);
+    cc_register_cfunc_ex(vm, "fmodf", (void*)fmodf, 2, 0, 0b11);
+    cc_register_cfunc_ex(vm, "fmodl", (void*)fmodl, 2, 1, 0b11);
+    cc_register_cfunc_ex(vm, "remainder", (void*)remainder, 2, 1, 0b11);
+    cc_register_cfunc_ex(vm, "remainderf", (void*)remainderf, 2, 0, 0b11);
+    cc_register_cfunc_ex(vm, "remainderl", (void*)remainderl, 2, 1, 0b11);
+    cc_register_cfunc_ex(vm, "remquo", (void*)remquo, 3, 0, 0b11);  // double, double, int*
+    cc_register_cfunc_ex(vm, "remquof", (void*)remquof, 3, 0, 0b11);
+    cc_register_cfunc_ex(vm, "remquol", (void*)remquol, 3, 0, 0b11);
+    cc_register_cfunc_ex(vm, "fma", (void*)fma, 3, 1, 0b111);  // double, double, double
+    cc_register_cfunc_ex(vm, "fmaf", (void*)fmaf, 3, 0, 0b111);
+    cc_register_cfunc_ex(vm, "fmal", (void*)fmal, 3, 1, 0b111);
+    cc_register_cfunc_ex(vm, "fmax", (void*)fmax, 2, 1, 0b11);
+    cc_register_cfunc_ex(vm, "fmaxf", (void*)fmaxf, 2, 0, 0b11);
+    cc_register_cfunc_ex(vm, "fmaxl", (void*)fmaxl, 2, 1, 0b11);
+    cc_register_cfunc_ex(vm, "fmin", (void*)fmin, 2, 1, 0b11);
+    cc_register_cfunc_ex(vm, "fminf", (void*)fminf, 2, 0, 0b11);
+    cc_register_cfunc_ex(vm, "fminl", (void*)fminl, 2, 1, 0b11);
+    cc_register_cfunc_ex(vm, "fdim", (void*)fdim, 2, 1, 0b11);
+    cc_register_cfunc_ex(vm, "fdimf", (void*)fdimf, 2, 0, 0b11);
+    cc_register_cfunc_ex(vm, "fdiml", (void*)fdiml, 2, 1, 0b11);
     cc_register_cfunc(vm, "nan", (void*)nan, 1, 1);
     cc_register_cfunc(vm, "nanf", (void*)nanf, 1, 0);
     cc_register_cfunc(vm, "nanl", (void*)nanl, 1, 1);
@@ -86,18 +86,18 @@ void register_math_functions(JCC *vm) {
     cc_register_cfunc(vm, "log1p", (void*)log1p, 1, 1);
     cc_register_cfunc(vm, "log1pf", (void*)log1pf, 1, 0);
     cc_register_cfunc(vm, "log1pl", (void*)log1pl, 1, 1);
-    cc_register_cfunc(vm, "pow", (void*)pow, 2, 1);
-    cc_register_cfunc(vm, "powf", (void*)powf, 2, 0);
-    cc_register_cfunc(vm, "powl", (void*)powl, 2, 1);
+    cc_register_cfunc_ex(vm, "pow", (void*)pow, 2, 1, 0b11);  // double, double
+    cc_register_cfunc_ex(vm, "powf", (void*)powf, 2, 0, 0b11);
+    cc_register_cfunc_ex(vm, "powl", (void*)powl, 2, 1, 0b11);
     cc_register_cfunc(vm, "sqrt", (void*)sqrt, 1, 1);
     cc_register_cfunc(vm, "sqrtf", (void*)sqrtf, 1, 0);
     cc_register_cfunc(vm, "sqrtl", (void*)sqrtl, 1, 1);
     cc_register_cfunc(vm, "cbrt", (void*)cbrt, 1, 1);
     cc_register_cfunc(vm, "cbrtf", (void*)cbrtf, 1, 0);
     cc_register_cfunc(vm, "cbrtl", (void*)cbrtl, 1, 1);
-    cc_register_cfunc(vm, "hypot", (void*)hypot, 2, 1);
-    cc_register_cfunc(vm, "hypotf", (void*)hypotf, 2, 0);
-    cc_register_cfunc(vm, "hypotl", (void*)hypotl, 2, 1);
+    cc_register_cfunc_ex(vm, "hypot", (void*)hypot, 2, 1, 0b11);  // double, double
+    cc_register_cfunc_ex(vm, "hypotf", (void*)hypotf, 2, 0, 0b11);
+    cc_register_cfunc_ex(vm, "hypotl", (void*)hypotl, 2, 1, 0b11);
 
     // Trigonometric
     cc_register_cfunc(vm, "sin", (void*)sin, 1, 1);
@@ -118,9 +118,9 @@ void register_math_functions(JCC *vm) {
     cc_register_cfunc(vm, "atan", (void*)atan, 1, 1);
     cc_register_cfunc(vm, "atanf", (void*)atanf, 1, 0);
     cc_register_cfunc(vm, "atanl", (void*)atanl, 1, 1);
-    cc_register_cfunc(vm, "atan2", (void*)atan2, 2, 1);
-    cc_register_cfunc(vm, "atan2f", (void*)atan2f, 2, 0);
-    cc_register_cfunc(vm, "atan2l", (void*)atan2l, 2, 1);
+    cc_register_cfunc_ex(vm, "atan2", (void*)atan2, 2, 1, 0b11);  // double, double
+    cc_register_cfunc_ex(vm, "atan2f", (void*)atan2f, 2, 0, 0b11);
+    cc_register_cfunc_ex(vm, "atan2l", (void*)atan2l, 2, 1, 0b11);
 
     // Hyperbolic
     cc_register_cfunc(vm, "sinh", (void*)sinh, 1, 1);
@@ -186,31 +186,31 @@ void register_math_functions(JCC *vm) {
     cc_register_cfunc(vm, "frexp", (void*)frexp, 3, 0);
     cc_register_cfunc(vm, "frexpf", (void*)frexpf, 3, 0);
     cc_register_cfunc(vm, "frexpl", (void*)frexpl, 3, 0);
-    cc_register_cfunc(vm, "ldexp", (void*)ldexp, 2, 1);
-    cc_register_cfunc(vm, "ldexpf", (void*)ldexpf, 2, 0);
-    cc_register_cfunc(vm, "ldexpl", (void*)ldexpl, 2, 1);
-    cc_register_cfunc(vm, "modf", (void*)modf, 2, 0);
-    cc_register_cfunc(vm, "modff", (void*)modff, 2, 0);
-    cc_register_cfunc(vm, "modfl", (void*)modfl, 2, 0);
-    cc_register_cfunc(vm, "scalbn", (void*)scalbn, 2, 1);
-    cc_register_cfunc(vm, "scalbnf", (void*)scalbnf, 2, 0);
-    cc_register_cfunc(vm, "scalbnl", (void*)scalbnl, 2, 1);
-    cc_register_cfunc(vm, "scalbln", (void*)scalbln, 2, 1);
-    cc_register_cfunc(vm, "scalblnf", (void*)scalblnf, 2, 0);
-    cc_register_cfunc(vm, "scalblnl", (void*)scalblnl, 2, 1);
+    cc_register_cfunc_ex(vm, "ldexp", (void*)ldexp, 2, 1, 0b01);  // double, int
+    cc_register_cfunc_ex(vm, "ldexpf", (void*)ldexpf, 2, 0, 0b01);
+    cc_register_cfunc_ex(vm, "ldexpl", (void*)ldexpl, 2, 1, 0b01);
+    cc_register_cfunc_ex(vm, "modf", (void*)modf, 2, 0, 0b01);  // double, double*
+    cc_register_cfunc_ex(vm, "modff", (void*)modff, 2, 0, 0b01);
+    cc_register_cfunc_ex(vm, "modfl", (void*)modfl, 2, 0, 0b01);
+    cc_register_cfunc_ex(vm, "scalbn", (void*)scalbn, 2, 1, 0b01);  // double, int
+    cc_register_cfunc_ex(vm, "scalbnf", (void*)scalbnf, 2, 0, 0b01);
+    cc_register_cfunc_ex(vm, "scalbnl", (void*)scalbnl, 2, 1, 0b01);
+    cc_register_cfunc_ex(vm, "scalbln", (void*)scalbln, 2, 1, 0b01);  // double, long
+    cc_register_cfunc_ex(vm, "scalblnf", (void*)scalblnf, 2, 0, 0b01);
+    cc_register_cfunc_ex(vm, "scalblnl", (void*)scalblnl, 2, 1, 0b01);
     cc_register_cfunc(vm, "ilogb", (void*)ilogb, 1, 1);
     cc_register_cfunc(vm, "ilogbf", (void*)ilogbf, 1, 0);
     cc_register_cfunc(vm, "ilogbl", (void*)ilogbl, 1, 1);
     cc_register_cfunc(vm, "logb", (void*)logb, 1, 1);
     cc_register_cfunc(vm, "logbf", (void*)logbf, 1, 0);
     cc_register_cfunc(vm, "logbl", (void*)logbl, 1, 1);
-    cc_register_cfunc(vm, "nextafter", (void*)nextafter, 2, 1);
-    cc_register_cfunc(vm, "nextafterf", (void*)nextafterf, 2, 0);
-    cc_register_cfunc(vm, "nextafterl", (void*)nextafterl, 2, 1);
+    cc_register_cfunc_ex(vm, "nextafter", (void*)nextafter, 2, 1, 0b11);  // double, double
+    cc_register_cfunc_ex(vm, "nextafterf", (void*)nextafterf, 2, 0, 0b11);
+    cc_register_cfunc_ex(vm, "nextafterl", (void*)nextafterl, 2, 1, 0b11);
     cc_register_cfunc(vm, "nexttoward", (void*)nexttoward, 2, 1);
     cc_register_cfunc(vm, "nexttowardf", (void*)nexttowardf, 2, 0);
     cc_register_cfunc(vm, "nexttowardl", (void*)nexttowardl, 2, 1);
-    cc_register_cfunc(vm, "copysign", (void*)copysign, 2, 1);
-    cc_register_cfunc(vm, "copysignf", (void*)copysignf, 2, 0);
-    cc_register_cfunc(vm, "copysignl", (void*)copysignl, 2, 1);
+    cc_register_cfunc_ex(vm, "copysign", (void*)copysign, 2, 1, 0b11);  // double, double
+    cc_register_cfunc_ex(vm, "copysignf", (void*)copysignf, 2, 0, 0b11);
+    cc_register_cfunc_ex(vm, "copysignl", (void*)copysignl, 2, 1, 0b11);
 }

@@ -565,8 +565,11 @@ static bool convert_pp_int(JCC *vm, Token *tok) {
             // Skip digit separator
             continue;
         }
-        // Stop at suffix or end
+        // Stop at suffix (L, U, l, u) or non-alphanumeric
         if (!isalnum(*s))
+            break;
+        // Stop at suffix letters
+        if ((*s == 'L' || *s == 'l' || *s == 'U' || *s == 'u') && j > 0)
             break;
         cleaned[j++] = *s;
     }

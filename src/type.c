@@ -312,7 +312,8 @@ void add_type(JCC *vm, Node *node) {
 
     switch (node->kind) {
         case ND_NUM:
-            node->ty = ty_int;
+            // Parser already sets the correct type from token (ty_double for 3.14, etc.)
+            // Don't override it here!
             return;
         case ND_ADD:
         case ND_SUB:

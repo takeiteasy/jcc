@@ -765,6 +765,7 @@ typedef struct ForeignFunc {
     int returns_double;
     int is_variadic;        // 1 if function is variadic (e.g., printf), 0 otherwise
     int num_fixed_args;     // For variadic functions, number of fixed args (rest are variable)
+    uint64_t double_arg_mask; // Bitmask indicating which args are doubles (bit N = arg N)
 #ifdef JCC_HAS_FFI
     ffi_cif cif;            // libffi call interface
     ffi_type **arg_types;   // Array of argument types (NULL if not prepared)
@@ -1418,6 +1419,24 @@ void cc_set_asm_callback(JCC *vm, JCCAsmCallback callback, void *user_data);
              All integer types are passed/returned as long long, floats as double.
 */
 void cc_register_cfunc(JCC *vm, const char *name, void *func_ptr, int num_args, int returns_double);
+
+/*!
+ @function cc_register_cfunc_ex
+ @abstract Register a C function with detailed argument type information for correct FFI calling conventions.
+ @param vm The JCC instance.
+ @param name Function name (must match declarations in C source).
+ @param func_ptr Pointer to the native C function.
+ @param num_args Total number of arguments.
+ @param returns_double 1 if function returns double, 0 if returns long long.
+ @param double_arg_mask Bitmask indicating which arguments are doubles. Bit N corresponds to argument N (0-indexed).
+                        For example: 0b11 = both args 0 and 1 are doubles (e.g., pow(double, double)).
+                                    0b01 = only arg 0 is double (e.g., ldexp(double, int)).
+ @discussion Use this function instead of cc_register_cfunc() for functions that take multiple double
+             arguments or mix double and integer arguments. The bitmask ensures correct calling conventions
+             on all platforms. For functions with only integer arguments or single double arguments,
+             cc_register_cfunc() is sufficient.
+*/
+void cc_register_cfunc_ex(JCC *vm, const char *name, void *func_ptr, int num_args, int returns_double, uint64_t double_arg_mask);
 
 /*!
  @function cc_register_variadic_cfunc
