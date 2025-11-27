@@ -146,11 +146,38 @@ static int find_ffi_function(JCC *vm, const char *name) {
     if (!vm || !name)
         return -1;
     
+    // First try exact match
     for (int i = 0; i < vm->ffi_count; i++) {
         if (strcmp(vm->ffi_table[i].name, name) == 0) {
             return i;
         }
     }
+    
+    // If no exact match, check if this looks like a specialized variadic name
+    // (e.g., "printf1", "sprintf2", etc.) and try the base name
+    size_t len = strlen(name);
+    if ((len > 1 && isdigit(name[len-1])) || 
+        (len > 2 && isdigit(name[len-1]) && isdigit(name[len-2]))) {
+        // Strip trailing digits to get base name
+        char base_name[256];
+        strncpy(base_name, name, sizeof(base_name) - 1);
+        base_name[sizeof(base_name) - 1] = '\0';
+        
+        // Find where digits start from the end
+        int base_len = len;
+        while (base_len > 0 && isdigit(base_name[base_len-1])) {
+            base_len--;
+        }
+        base_name[base_len] = '\0';
+        
+        // Try to find a variadic function with this base name
+        for (int i = 0; i < vm->ffi_count; i++) {
+            if (vm->ffi_table[i].is_variadic && strcmp(vm->ffi_table[i].name, base_name) == 0) {
+                return i;
+            }
+        }
+    }
+    
     return -1;
 }
 
@@ -1105,9 +1132,28 @@ void gen_expr(JCC *vm, Node *node) {
                 
                 if (ffi_idx >= 0) {
                     // It's a registered FFI function - use CALLF
-                    // For variadic functions, we need to pass the actual argument count
-                    // We'll push the arg count before the function index
-                    emit_with_arg(vm, IMM, nargs);  // Actual argument count
+                    // We need to pass: 1) double_arg_mask, 2) arg count, 3) function index
+                    
+                    // Compute double_arg_mask based on actual arguments
+                    uint64_t double_arg_mask = 0;
+                    int arg_idx = 0;
+                    for (Node *arg = node->args; arg && arg_idx < 64; arg = arg->next, arg_idx++) {
+                        if (is_flonum(arg->ty)) {
+                            double_arg_mask |= (1ULL << arg_idx);
+                            if (vm->debug_vm)
+                                printf("  codegen: arg[%d] is double\n", arg_idx);
+                        } else if (vm->debug_vm) {
+                            printf("  codegen: arg[%d] is NOT double (kind=%d)\n", arg_idx, arg->ty ? arg->ty->kind : -1);
+                        }
+                    }
+                    
+                    if (vm->debug_vm)
+                        printf("  codegen: computed double_arg_mask = 0x%llx for %s\n", double_arg_mask, fn->name);
+                    
+                    // Push double_arg_mask, arg count, then function index
+                    emit_with_arg(vm, IMM, double_arg_mask);
+                    emit(vm, PUSH);                  // Save double_arg_mask on stack
+                    emit_with_arg(vm, IMM, nargs);   // Actual argument count
                     emit(vm, PUSH);                  // Save on stack
                     emit_with_arg(vm, IMM, ffi_idx); // Function index in ax
                     emit(vm, CALLF);

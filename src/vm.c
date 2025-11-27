@@ -480,17 +480,21 @@ void cc_set_asm_callback(JCC *vm, JCCAsmCallback callback, void *user_data) {
 }
 
 void cc_register_cfunc(JCC *vm, const char *name, void *func_ptr, int num_args, int returns_double) {
+    cc_register_cfunc_ex(vm, name, func_ptr, num_args, returns_double, 0);
+}
+
+void cc_register_cfunc_ex(JCC *vm, const char *name, void *func_ptr, int num_args, int returns_double, uint64_t double_arg_mask) {
     if (!vm)
-        error("cc_register_cfunc: vm is NULL");
+        error("cc_register_cfunc_ex: vm is NULL");
     if (!name || !func_ptr)
-        error("cc_register_cfunc: name or func_ptr is NULL");
+        error("cc_register_cfunc_ex: name or func_ptr is NULL");
 
     // Expand capacity if needed
     if (vm->ffi_count >= vm->ffi_capacity) {
         vm->ffi_capacity = vm->ffi_capacity ? vm->ffi_capacity * 2 : 32;
         vm->ffi_table = realloc(vm->ffi_table, vm->ffi_capacity * sizeof(ForeignFunc));
         if (!vm->ffi_table)
-            error("cc_register_cfunc: realloc failed");
+            error("cc_register_cfunc_ex: realloc failed");
     }
 
     // Add function to registry (non-variadic)
@@ -500,7 +504,8 @@ void cc_register_cfunc(JCC *vm, const char *name, void *func_ptr, int num_args, 
         .num_args = num_args,
         .returns_double = returns_double,
         .is_variadic = 0,
-        .num_fixed_args = num_args
+        .num_fixed_args = num_args,
+        .double_arg_mask = double_arg_mask
 #ifdef JCC_HAS_FFI
         , .arg_types = NULL
 #endif
@@ -512,11 +517,6 @@ void cc_register_variadic_cfunc(JCC *vm, const char *name, void *func_ptr, int n
         error("cc_register_variadic_cfunc: vm is NULL");
     if (!name || !func_ptr)
         error("cc_register_variadic_cfunc: name or func_ptr is NULL");
-
-#ifndef JCC_HAS_FFI
-    // Variadic functions require libffi
-    error("cc_register_variadic_cfunc: variadic FFI functions require libffi (build with JCC_HAS_FFI=1)");
-#else
 
     // Expand capacity if needed
     if (vm->ffi_count >= vm->ffi_capacity) {
@@ -536,9 +536,11 @@ void cc_register_variadic_cfunc(JCC *vm, const char *name, void *func_ptr, int n
         .returns_double = returns_double,
         .is_variadic = 1,
         .num_fixed_args = num_fixed_args,
-        .arg_types = NULL  // Will be prepared during first CALLF
-    };
+        .double_arg_mask = 0  // Variadic functions don't use mask - doubles passed as bits
+#ifdef JCC_HAS_FFI
+        , .arg_types = NULL  // Will be prepared during first CALLF
 #endif
+    };
 }
 
 int cc_dlsym(JCC *vm, const char *name, void *func_ptr, int num_args, int returns_double) {

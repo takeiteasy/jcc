@@ -1669,12 +1669,14 @@ int op_CALLF_fn(JCC *vm) {
 
     ForeignFunc *ff = &vm->ffi_table[func_idx];
 
-    // Pop actual argument count from stack (pushed by codegen for all FFI calls)
+    // Pop actual argument count and double_arg_mask from stack (pushed by codegen for all FFI calls)
+    // Stack layout: [args...] [double_arg_mask] [arg_count] [func_idx in ax]
     int actual_nargs = (int)*vm->sp++;
+    uint64_t double_arg_mask = (uint64_t)*vm->sp++;  // Bitmask indicating which args are doubles
 
     if (vm->debug_vm)
-        printf("CALLF: calling %s with %d args (fixed: %d, variadic: %d)\n",
-                ff->name, actual_nargs, ff->num_fixed_args, ff->is_variadic);
+        printf("CALLF: calling %s with %d args (fixed: %d, variadic: %d, double_mask: 0x%llx)\n",
+                ff->name, actual_nargs, ff->num_fixed_args, ff->is_variadic, double_arg_mask);
 
     // Format string validation for printf-family functions
     if (vm->flags & JCC_FORMAT_STR_CHECKS) {
@@ -1825,84 +1827,204 @@ int op_CALLF_fn(JCC *vm) {
     }
 #else
     // Fallback implementation without libffi - no variadic support
-    // Check for variadic functions
-    if (ff->is_variadic) {
-        printf("error: variadic FFI functions require libffi (build with JCC_HAS_FFI=1)\n");
-        return -1;
-    }
-
-    // Arguments are on stack in reverse order (arg0 at higher address)
-    // sp[0] is first arg, sp[1] is second arg, etc.
-    long long args[20];  // Support up to 20 arguments
-    if (actual_nargs > 20) {
-        printf("error: FFI function has too many arguments: %d (max 20 without libffi)\n", actual_nargs);
-        return -1;
-    }
-
-    // Pop arguments from stack (they were pushed right-to-left)
+#if defined(__aarch64__) || defined(__arm64__)
+    // ARM64 inline assembly implementation (AAPCS64 calling convention)
+    // Supports both non-variadic and variadic functions
+    
+    // Pop arguments from VM stack into local array
+    long long args[actual_nargs];
     for (int i = 0; i < actual_nargs; i++) {
         args[i] = *vm->sp++;
         if (vm->debug_vm)
             printf("  arg[%d] = 0x%llx (%lld)\n", i, args[i], args[i]);
     }
-
-    // Call the native function based on argument count
-    if (ff->returns_double) {
-        switch (actual_nargs) {
-            case 0: vm->fax = ((double(*)())ff->func_ptr)(); break;
-            case 1: vm->fax = ((double(*)(long long))ff->func_ptr)(args[0]); break;
-            case 2: vm->fax = ((double(*)(long long,long long))ff->func_ptr)(args[0],args[1]); break;
-            case 3: vm->fax = ((double(*)(long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2]); break;
-            case 4: vm->fax = ((double(*)(long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3]); break;
-            case 5: vm->fax = ((double(*)(long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4]); break;
-            case 6: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5]); break;
-            case 7: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6]); break;
-            case 8: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7]); break;
-            case 9: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8]); break;
-            case 10: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9]); break;
-            case 11: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10]); break;
-            case 12: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11]); break;
-            case 13: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12]); break;
-            case 14: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13]); break;
-            case 15: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14]); break;
-            case 16: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15]); break;
-            case 17: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16]); break;
-            case 18: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16],args[17]); break;
-            case 19: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16],args[17],args[18]); break;
-            case 20: vm->fax = ((double(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16],args[17],args[18],args[19]); break;
-            default:
-                printf("error: unsupported arg count for double return: %d\n", actual_nargs);
-                return -1;
-        }
-    } else {
-        // Integer/pointer return
-        switch (actual_nargs) {
-            case 0: vm->ax = ((long long(*)())ff->func_ptr)(); break;
-            case 1: vm->ax = ((long long(*)(long long))ff->func_ptr)(args[0]); break;
-            case 2: vm->ax = ((long long(*)(long long,long long))ff->func_ptr)(args[0],args[1]); break;
-            case 3: vm->ax = ((long long(*)(long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2]); break;
-            case 4: vm->ax = ((long long(*)(long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3]); break;
-            case 5: vm->ax = ((long long(*)(long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4]); break;
-            case 6: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5]); break;
-            case 7: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6]); break;
-            case 8: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7]); break;
-            case 9: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8]); break;
-            case 10: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9]); break;
-            case 11: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10]); break;
-            case 12: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11]); break;
-            case 13: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12]); break;
-            case 14: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13]); break;
-            case 15: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14]); break;
-            case 16: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15]); break;
-            case 17: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16]); break;
-            case 18: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16],args[17]); break;
-            case 19: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16],args[17],args[18]); break;
-            case 20: vm->ax = ((long long(*)(long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long,long long))ff->func_ptr)(args[0],args[1],args[2],args[3],args[4],args[5],args[6],args[7],args[8],args[9],args[10],args[11],args[12],args[13],args[14],args[15],args[16],args[17],args[18],args[19]); break;
-            default:
-                printf("error: unsupported arg count for int return: %d\n", actual_nargs);
-                return -1;
+    
+    // Determine which arguments go in registers vs stack
+    // AAPCS64 rules (Darwin/macOS variant):
+    // - Fixed integer args: x0-x7
+    // - Fixed double args: d0-d7
+    // - Variadic args: ALWAYS STACK (on macOS/Darwin)
+    // - Remaining args: stack
+    
+    int num_fixed = ff->is_variadic ? ff->num_fixed_args : actual_nargs;
+    int int_reg_idx = 0;   // Track next available x register (x0-x7)
+    int fp_reg_idx = 0;    // Track next available d register (d0-d7)
+    int stack_args = 0;    // Count of arguments that go on stack
+    
+    // Calculate how many args will go on stack
+    for (int i = 0; i < actual_nargs; i++) {
+        int is_double = (i < 64 && (double_arg_mask & (1ULL << i)));
+        int is_variadic_arg = (i >= num_fixed);
+        
+        // On macOS ARM64, ALL variadic arguments go on the stack
+        if (is_variadic_arg) {
+            stack_args++;
+        } else {
+            // Fixed arg: use appropriate register type
+            if (is_double) {
+                if (fp_reg_idx < 8) {
+                    fp_reg_idx++;
+                } else {
+                    stack_args++;
+                }
+            } else {
+                if (int_reg_idx < 8) {
+                    int_reg_idx++;
+                } else {
+                    stack_args++;
+                }
+            }
         }
     }
+    
+    // Allocate stack space locally to hold the values before copying to actual stack
+    // We need this because we can't easily iterate args inside inline asm
+    long long stack_area[stack_args > 0 ? stack_args : 1];
+    int stack_idx = 0;
+    
+    // Reset register indices for actual assignment
+    int_reg_idx = 0;
+    fp_reg_idx = 0;
+    
+    // Declare ARM64 register variables
+    register long long x0 __asm__("x0") = 0;
+    register long long x1 __asm__("x1") = 0;
+    register long long x2 __asm__("x2") = 0;
+    register long long x3 __asm__("x3") = 0;
+    register long long x4 __asm__("x4") = 0;
+    register long long x5 __asm__("x5") = 0;
+    register long long x6 __asm__("x6") = 0;
+    register long long x7 __asm__("x7") = 0;
+    register double d0 __asm__("d0") = 0.0;
+    register double d1 __asm__("d1") = 0.0;
+    register double d2 __asm__("d2") = 0.0;
+    register double d3 __asm__("d3") = 0.0;
+    register double d4 __asm__("d4") = 0.0;
+    register double d5 __asm__("d5") = 0.0;
+    register double d6 __asm__("d6") = 0.0;
+    register double d7 __asm__("d7") = 0.0;
+    
+    for (int i = 0; i < actual_nargs; i++) {
+        int is_double = (i < 64 && (double_arg_mask & (1ULL << i)));
+        int is_variadic_arg = (i >= num_fixed);
+        
+        if (is_variadic_arg) {
+            // Variadic arg: always stack on macOS
+            stack_area[stack_idx++] = args[i];
+        } else {
+            // Fixed arg: use appropriate register
+            if (is_double) {
+                // Extract double from args
+                double val = *(double*)&args[i];
+                if (fp_reg_idx < 8) {
+                    switch(fp_reg_idx++) {
+                        case 0: d0 = val; break;
+                        case 1: d1 = val; break;
+                        case 2: d2 = val; break;
+                        case 3: d3 = val; break;
+                        case 4: d4 = val; break;
+                        case 5: d5 = val; break;
+                        case 6: d6 = val; break;
+                        case 7: d7 = val; break;
+                    }
+                } else {
+                    stack_area[stack_idx++] = args[i];
+                }
+            } else {
+                // Integer argument
+                if (int_reg_idx < 8) {
+                    switch(int_reg_idx++) {
+                        case 0: x0 = args[i]; break;
+                        case 1: x1 = args[i]; break;
+                        case 2: x2 = args[i]; break;
+                        case 3: x3 = args[i]; break;
+                        case 4: x4 = args[i]; break;
+                        case 5: x5 = args[i]; break;
+                        case 6: x6 = args[i]; break;
+                        case 7: x7 = args[i]; break;
+                    }
+                } else {
+                    stack_area[stack_idx++] = args[i];
+                }
+            }
+        }
+    }
+    
+    // Calculate aligned stack size (must be 16-byte aligned)
+    // stack_args is number of 8-byte words
+    int stack_bytes = (stack_args * 8 + 15) & ~15;
+    
+    // Make the call using inline assembly
+    // We need to:
+    // 1. Adjust SP to make room for arguments
+    // 2. Copy arguments from stack_area to SP
+    // 3. Call function
+    // 4. Restore SP
+    
+    if (ff->returns_double) {
+        register double result __asm__("d0");
+        __asm__ volatile(
+            // Subtract stack space
+            "sub sp, sp, %2\n\t"
+            // Copy arguments if any
+            "cbz %2, 2f\n\t"  // Skip if stack_bytes is 0
+            "mov x10, sp\n\t" // Dest
+            "mov x11, %3\n\t" // Source (stack_area)
+            "mov x12, %4\n\t" // Count (stack_args)
+            "1:\n\t"
+            "ldr x13, [x11], #8\n\t"
+            "str x13, [x10], #8\n\t"
+            "subs x12, x12, #1\n\t"
+            "b.ne 1b\n\t"
+            "2:\n\t"
+            "blr %1\n\t"
+            // Restore SP
+            "add sp, sp, %2"
+            : "=r"(result)
+            : "r"(ff->func_ptr), "r"((long long)stack_bytes), "r"(stack_area), "r"((long long)stack_args),
+              "r"(x0), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5), "r"(x6), "r"(x7),
+              "w"(d0), "w"(d1), "w"(d2), "w"(d3), "w"(d4), "w"(d5), "w"(d6), "w"(d7)
+            : "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "x18",
+              "d8", "d9", "d10", "d11", "d12", "d13", "d14", "d15",
+              "d16", "d17", "d18", "d19", "d20", "d21", "d22", "d23",
+              "d24", "d25", "d26", "d27", "d28", "d29", "d30", "d31",
+              "memory"
+        );
+        vm->fax = result;
+    } else {
+        register long long result __asm__("x0");
+        __asm__ volatile(
+            // Subtract stack space
+            "sub sp, sp, %2\n\t"
+            // Copy arguments if any
+            "cbz %2, 2f\n\t"  // Skip if stack_bytes is 0
+            "mov x10, sp\n\t" // Dest
+            "mov x11, %3\n\t" // Source (stack_area)
+            "mov x12, %4\n\t" // Count (stack_args)
+            "1:\n\t"
+            "ldr x13, [x11], #8\n\t"
+            "str x13, [x10], #8\n\t"
+            "subs x12, x12, #1\n\t"
+            "b.ne 1b\n\t"
+            "2:\n\t"
+            "blr %1\n\t"
+            // Restore SP
+            "add sp, sp, %2"
+            : "=r"(result)
+            : "r"(ff->func_ptr), "r"((long long)stack_bytes), "r"(stack_area), "r"((long long)stack_args),
+              "r"(x0), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5), "r"(x6), "r"(x7),
+              "w"(d0), "w"(d1), "w"(d2), "w"(d3), "w"(d4), "w"(d5), "w"(d6), "w"(d7)
+            : "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "x18",
+              "d8", "d9", "d10", "d11", "d12", "d13", "d14", "d15",
+              "d16", "d17", "d18", "d19", "d20", "d21", "d22", "d23",
+              "d24", "d25", "d26", "d27", "d28", "d29", "d30", "d31",
+              "memory"
+        );
+        vm->ax = result;
+    }
+#else
+    #error "FFI inline assembly not implemented for this platform. Build with -DJCC_HAS_FFI to use libffi."
+#endif
 #endif  // JCC_HAS_FFI
     return 0;
 }

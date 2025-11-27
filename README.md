@@ -8,7 +8,7 @@ The goal of this project is correctness and safety. This is just a toy, and won'
 
 `JCC` is not just a JIT compiler. It also extends the C preprocessor with new features, see [Pragma Macros](#pragma-macros) for more details. I have lots of other ideas for more `#pragma` extensions too.
 
-**Status**: All C11 language features are supported (minus `<threads.h>` and `_Thread_local`, see [Thread Support](#threading-and-atomics-support)). There is also partial C23 support (mostly parser/preprocessor features).
+**Status**: All C11 language features are supported (minus `<threads.h>` and `_Thread_local`, see [Thread Support](#thread-support)). There is also partial C23 support (mostly parser/preprocessor features).
 
 See [here](https://takeiteasy.github.io/jcc) for some basic documentation on the API.
 
@@ -323,14 +323,16 @@ cc_destroy(&vm);
 
 ### Foreign Function Interface (FFI)
 
-- Direct calls to native C standard library via `CALLF` opcode
-- Standard library functions supported (see [Standard Library Support](#standard-library-support))
-- Custom function registration via `cc_register_cfunc()` (fixed-arg) and `cc_register_variadic_cfunc()` (variadic)
-#- **Optional libffi support** for true variadic foreign functions (`printf`, `scanf`, etc.)
+JCC provides two modes for variadic foreign functions:
+
+- **Native Inline Assembly**
+  - macOS ARM64 (AAPCS64)
+  - TODO: x86_64 (System V AMD64)
+  - TODO: x86_64 (Windows x64)
+  - TODO: x86_32 (Legacy 32-bit System V)
+- **Optional libffi support** (Other platforms)
   - Build with `make JCC_HAS_FFI=1` to enable libffi support
-  - Automatically uses platform-specific calling conventions via libffi
-  - Falls back to macro-based dispatch if libffi is not available
-- Dual-mode operation: works with or without libffi (see [Variadic Foreign Functions](#variadic-foreign-functions))
+  - Use libffi if your platform isn't supported
 
 ### Inline Assembly
 
@@ -359,11 +361,16 @@ cc_destroy(&vm);
 - Binary literals (0b10101010)
 - Digit seperates with single quotes (1'000'000)
 
-### Threading + Atomics Support
+### Thread Support
 
 > Not supported (yet)
 
 JCC is single-threaded and does not implement any threading or atomic operations yet. Registering `pthread` as a dynamic library amd loading the functions may work but is untested.
+
+## Standard Library Support
+
+JCC has a custom standard library that is located in `include`. It is just a collection of headers with function declarations that are registered with the VM when they are included. This is so that you can easily include the standard library without having to register each function manually and also define a lot of preprocessor macros. If JCC ever becomes mature enough to include the proper system headers, this will be replaced.
+
 
 ## TODO
 
@@ -374,7 +381,7 @@ JCC is single-threaded and does not implement any threading or atomic operations
 - `#embed` directive for embedding binary data directly
 - `__VA_OPT__` for better variadic macro handling
 
-### JCC features
+### JCC features (and ideas)
 
 - Hot reloading for FFI functions + compiled functions
 - Support for pthread + internal thread support
@@ -495,93 +502,6 @@ Individual tests can be run directly:
 ```bash
 ./jcc tests/test_simple.c
 echo $status  # Check exit code
-```
-
-## Standard Library Support
-
-JCC includes a **Foreign Function Interface (FFI)** that allows compiled C code to call native standard library functions directly, without reimplementing them as VM opcodes. The FFI uses a **header-based lazy loading** system that automatically registers functions when their corresponding standard headers are included.
-
-### Header-Based Registration
-
-Functions are registered on-demand during preprocessing when you `#include` standard headers:
-
-- `#include <stdio.h>` → Registers `printf`, `fopen`, `fread`, etc. (~50 functions)
-- `#include <stdlib.h>` → Registers `malloc`, `atoi`, `rand`, etc. (~40 functions)
-- `#include <string.h>` → Registers `strlen`, `strcmp`, `memcpy`, etc. (~25 functions)
-- `#include <math.h>` → Registers `sin`, `cos`, `sqrt`, `pow`, etc. (~180 functions)
-- `#include <ctype.h>` → Registers `isalpha`, `isdigit`, `tolower`, etc. (~11 functions)
-- `#include <time.h>` → Registers `time`, `clock`, `strftime`, etc. (~14 functions)
-
-**Benefits:**
-- **Smaller FFI table:** Only loads functions you actually use (~70% reduction for typical programs)
-- **Faster initialization:** Functions registered during preprocessing, not at runtime
-- **Backward compatible:** Programs calling `cc_load_stdlib()` directly still work (registers all functions)
-
-**Implementation:** The preprocessor calls `register_stdlib_for_header()` in `include_file()` when a standard header is encountered. Each header has a dedicated registration function in `src/stdlib/*.c`.
-
-### Variadic Foreign Functions
-
-JCC supports variadic foreign functions (`printf`, `scanf`, etc.) in **two modes**:
-
-#### Mode 1: With libffi (Recommended)
-
-Build with `make JCC_HAS_FFI=1` to enable true variadic support:
-
-**How it works:**
-1. Variadic functions are registered with `cc_register_variadic_cfunc()`
-2. At call time, the actual argument count is passed to the `CALLF` opcode
-3. libffi's `ffi_prep_cif_var()` prepares the call interface dynamically
-4. Native function is called with correct platform-specific calling convention
-5. **No limit** on number of arguments (platform-dependent, typically 100+)
-
-**Advantages:**
-- True C variadic functions - no macro magic
-- Standard headers use real `...` syntax: `int printf(const char *fmt, ...);`
-- Works with any number of arguments
-- Fully portable (libffi handles all platforms)
-
-#### Mode 2: Without libffi (Fallback)
-
-When built without libffi, variadic functions use macro-based dispatch:
-
-**How it works:**
-1. `printf(...)` is a preprocessor macro that **counts arguments at compile time**
-2. Macro expands to `printf0`, `printf1`, ... `printf16` based on argument count
-3. Each `printfN` is a fixed-argument FFI function registered with the VM
-4. The FFI function calls native `printf()` with the exact number of arguments
-
-**Limitation:** Maximum **20 additional arguments** (format string counts as 1). This covers 99% of real-world usage and can be increased if needed.
-
-**Why this mode exists:**
-- Works without external dependencies
-- Portable and simple
-- Compile-time argument counting (no runtime overhead)
-- Useful for embedded environments or when libffi is unavailable
-
-### Registering Custom Functions
-
-You can register additional native functions using `cc_register_cfunc()` (fixed-arg) or `cc_register_variadic_cfunc()` (variadic):
-
-```c
-// Example: Register a custom fixed-argument function
-void my_native_func(int x, double y) {
-    printf("Called with: %d, %f\n", x, y);
-}
-
-JCC vm;
-cc_init(&vm, 0);  // 0 for no flags, or JCC_ENABLE_DEBUGGER etc.
-
-// Register fixed-arg function: name, function pointer, arg count, returns_double
-cc_register_cfunc(&vm, "my_native_func", (void*)my_native_func, 2, 0);
-
-// Register variadic function (requires libffi, JCC_HAS_FFI=1)
-#ifdef JCC_HAS_FFI
-// Register: name, function pointer, num_fixed_args, returns_double
-cc_register_variadic_cfunc(&vm, "my_printf", (void*)printf, 1, 0);
-// num_fixed_args = 1 (format string is the fixed arg, rest are variadic)
-#endif
-
-// Now they can be called from C code compiled to VM bytecode
 ```
 
 ## LICENSE

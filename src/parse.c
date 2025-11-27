@@ -231,6 +231,7 @@ static Node *new_unary(JCC *vm, NodeKind kind, Node *expr, Token *tok) {
 static Node *new_num(JCC *vm, int64_t val, Token *tok) {
     Node *node = new_node(vm, ND_NUM, tok);
     node->val = val;
+    node->ty = ty_int;
     return node;
 }
 
@@ -3710,14 +3711,24 @@ static Node *primary(JCC *vm, Token **rest, Token *tok) {
 
     if (tok->kind == TK_NUM) {
         Node *node;
+        if (vm->debug_vm)
+            printf("  primary: TK_NUM tok->ty kind=%d, is_flonum=%d\n", tok->ty ? tok->ty->kind : -1, is_flonum(tok->ty));
+        
         if (is_flonum(tok->ty)) {
             node = new_node(vm, ND_NUM, tok);
             node->fval = tok->fval;
+            if (vm->debug_vm)
+                printf("  primary: created flonum node, fval=%Lf\n", node->fval);
         } else {
             node = new_num(vm, tok->val, tok);
+            if (vm->debug_vm)
+                printf("  primary: created int node, val=%lld\n", node->val);
         }
 
         node->ty = tok->ty;
+        if (vm->debug_vm)
+            printf(" primary: set node->ty to tok->ty, kind=%d\n", node->ty ? node->ty->kind : -1);
+        
         *rest = tok->next;
         return node;
     }
