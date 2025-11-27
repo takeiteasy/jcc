@@ -112,6 +112,7 @@ See [here](https://takeiteasy.github.io/jcc) for some basic documentation on the
 - `#pragma once`
 - `#error`, `#warning`
 - Macro expansion and stringification
+- `__VA_OPT__` for conditional variadic macro expansion (C23)
 - String literal concatenation (adjacent strings automatically combined)
 
 ### Linker
@@ -125,7 +126,7 @@ See [here](https://takeiteasy.github.io/jcc) for some basic documentation on the
 JCC provides two modes for variadic foreign functions:
 
 - **Native Inline Assembly**
-  - macOS ARM64 (AAPCS64)
+  - **AAPCS64** (macOS ARM64)
   - TODO: x86_64 (System V AMD64)
   - TODO: x86_64 (Windows x64)
   - TODO: x86_32 (Legacy 32-bit System V)
@@ -179,7 +180,6 @@ JCC has a custom standard library that is located in `include`. It is just a col
 - Blocks/closures (`^{}`) - Complex feature requiring variable capture and closure runtime
 - Nested functions - Requires static chain or trampolines for accessing parent scope
 - `#embed` directive for embedding binary data directly
-- `__VA_OPT__` for better variadic macro handling
 
 ### JCC features (and ideas)
 
@@ -230,7 +230,7 @@ This produces:
 ./jcc -I./include -DDEBUG -o debug.bin main.c
 ```
 
-## Running Tests
+### Running Tests
 
 All test files are located in the `tests/` directory. To run the complete test suite:
 
