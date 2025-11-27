@@ -111,9 +111,12 @@ void cc_init(JCC *vm, uint32_t flags) {
     vm->poolsize = 256 * 1024;  // 256KB default
     vm->debug_vm = 0;
 
-    // Return buffer will be allocated in data segment during codegen
+    // Return buffer pool will be allocated in data segment during codegen
     vm->return_buffer_size = 1024;
-    vm->return_buffer = NULL;  // Will be set to data segment location
+    vm->return_buffer_index = 0;
+    for (int i = 0; i < RETURN_BUFFER_POOL_SIZE; i++) {
+        vm->return_buffer_pool[i] = NULL;  // Will be set to data segment locations
+    }
 
     init_macros(vm);
     cc_init_parser(vm);

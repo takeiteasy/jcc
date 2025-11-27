@@ -1235,6 +1235,7 @@ struct JCC {
     long long *current_switch_table;  // Jump table being filled
     long current_switch_min;           // Minimum case value
     long current_switch_size;          // Jump table size
+    Node *current_switch_default;      // Default case node (to avoid filling jump table)
 
     // Switch statement code generation (for sparse switches)
     long long *current_sparse_case_table;  // Array of jump addresses
@@ -1257,9 +1258,11 @@ struct JCC {
     // Current function being compiled (for VLA cleanup)
     Obj *current_codegen_fn;
 
-    // Struct/union return buffer (copy-before-return approach)
-    char *return_buffer;               // Buffer for struct/union returns
-    int return_buffer_size;            // Size of return buffer
+    // Struct/union return buffer pool (copy-before-return approach)
+    #define RETURN_BUFFER_POOL_SIZE 8
+    char *return_buffer_pool[RETURN_BUFFER_POOL_SIZE];  // Pool of return buffers
+    int return_buffer_index;           // Current buffer index (rotates 0-7)
+    int return_buffer_size;            // Size of each buffer (1024 bytes)
 
     // Linked programs for extern offset propagation
     Obj **link_progs;                 // Array of original program lists
