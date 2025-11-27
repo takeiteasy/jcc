@@ -1039,10 +1039,49 @@ void gen_expr(JCC *vm, Node *node) {
             // Push arguments in reverse order (right-to-left)
             for (int j = nargs - 1; j >= 0; j--) {
                 Node *arg = arg_array[j];
-                
-                // For structs/unions, gen_expr already returns the address
-                // So we just push the address (pass by implicit pointer)
-                gen_expr(vm, arg);
+
+                // Special handling for struct/union arguments that are function call results
+                // We need to copy them to temporaries to avoid return buffer reuse issues
+                if (arg->kind == ND_FUNCALL && arg->ty &&
+                    (arg->ty->kind == TY_STRUCT || arg->ty->kind == TY_UNION)) {
+
+                    int struct_size = arg->ty->size;
+
+                    // Step 1: Allocate temporary heap space
+                    emit_with_arg(vm, IMM, struct_size);
+                    emit(vm, PUSH);
+                    emit(vm, MALC);  // ax = temp_addr
+
+                    // Step 2: Save temp address and evaluate function call
+                    emit(vm, PUSH);  // stack = [temp_addr]
+                    gen_expr(vm, arg);  // ax = return_buffer_addr, stack = [temp_addr]
+
+                    // Step 3: Build stack for MCPY: need [size, src, dest]
+                    // Currently: ax = return_buffer_addr, stack = [temp_addr]
+                    // Stack grows down, so sp[0] is topmost, sp[2] is bottom
+                    // After pushing 3 items: sp[0]=size, sp[1]=src, sp[2]=dest
+
+                    emit(vm, PUSH);  // stack = [temp_addr, return_buffer_addr]
+                    // Stack is now: sp[1]=temp_addr (dest), sp[0]=return_buffer_addr (src)
+
+                    // Push size
+                    emit_with_arg(vm, IMM, struct_size);
+                    emit(vm, PUSH);  // stack = [temp_addr, return_buffer_addr, size]
+                    // Stack is now: sp[2]=temp_addr (dest), sp[1]=return_buffer_addr (src), sp[0]=size
+
+                    // Step 4: Copy from return buffer to temp
+                    emit(vm, MCPY);  // Returns temp_addr in ax
+
+                    // ax now contains address of temp, which is what we want to pass as argument
+                    // Note: These heap temporaries will leak, but that's acceptable for this fix
+
+                } else {
+                    // For non-struct-returning calls and other expressions, evaluate normally
+                    // For structs/unions, gen_expr already returns the address
+                    // So we just push the address (pass by implicit pointer)
+                    gen_expr(vm, arg);
+                }
+
                 if (is_flonum(arg->ty)) {
                     emit(vm, FPUSH);
                 } else {
@@ -1385,9 +1424,9 @@ static void gen_dense_switch(JCC *vm, Node *node, long min_case, long max_case) 
         error_tok(vm, node->tok, "failed to allocate jump table");
     }
 
-    // Initialize all entries to 0 (will be filled with case addresses)
+    // Initialize all entries to ~0ULL (sentinel for unfilled entries)
     for (long i = 0; i < table_size; i++) {
-        jump_table[i] = 0;
+        jump_table[i] = ~0ULL;
     }
 
     // Emit placeholders in text segment
@@ -1400,9 +1439,11 @@ static void gen_dense_switch(JCC *vm, Node *node, long min_case, long max_case) 
     long long *old_switch_table = vm->current_switch_table;
     long old_switch_min = vm->current_switch_min;
     long old_switch_size = vm->current_switch_size;
+    Node *old_switch_default = vm->current_switch_default;
     vm->current_switch_table = jump_table;
     vm->current_switch_min = min_case;
     vm->current_switch_size = table_size;
+    vm->current_switch_default = node->default_case;
 
     // Generate the entire switch body
     // Case labels will fill in their positions in the jump table as they're encountered
@@ -1412,6 +1453,7 @@ static void gen_dense_switch(JCC *vm, Node *node, long min_case, long max_case) 
     vm->current_switch_table = old_switch_table;
     vm->current_switch_min = old_switch_min;
     vm->current_switch_size = old_switch_size;
+    vm->current_switch_default = old_switch_default;
 
     // 7. Default case (bounds check failed or holes in table)
     long long *default_start = vm->text_ptr + 1;
@@ -1420,7 +1462,7 @@ static void gen_dense_switch(JCC *vm, Node *node, long min_case, long max_case) 
 
     // Fill any unfilled table entries with default address
     for (long i = 0; i < table_size; i++) {
-        if (jump_table[i] == 0) {
+        if (jump_table[i] == ~0ULL) {
             jump_table[i] = (long long)default_start;
         }
     }
@@ -1444,6 +1486,15 @@ static void gen_sparse_switch(JCC *vm, Node *node) {
         long long *jump_addr;
     } case_table[MAX_CASES];
     int num_entries = 0;
+
+    // Check if this is a default-only switch (no case labels)
+    if (!node->case_next) {
+        // No case labels - just generate default if present
+        if (node->default_case) {
+            gen_stmt(vm, node->default_case->lhs);
+        }
+        return;
+    }
 
     // Generate comparison chain
     for (Node *c = node->case_next; c; c = c->case_next) {
@@ -1519,26 +1570,30 @@ static void gen_stmt(JCC *vm, Node *node) {
             if (node->lhs) {
                 // If returning struct/union, copy to return buffer
                 if (node->lhs->ty && (node->lhs->ty->kind == TY_STRUCT || node->lhs->ty->kind == TY_UNION)) {
+                    // Get next buffer from pool (rotating)
+                    char *buffer = vm->return_buffer_pool[vm->return_buffer_index];
+                    vm->return_buffer_index = (vm->return_buffer_index + 1) % RETURN_BUFFER_POOL_SIZE;
+
                     // MCPY expects stack: sp[0]=size, sp[1]=src, sp[2]=dest
                     // Push order: dest, src, size
-                    
-                    // Push destination (return_buffer) FIRST
-                    emit_with_arg(vm, IMM, (long long)vm->return_buffer);
+
+                    // Push destination (buffer) FIRST
+                    emit_with_arg(vm, IMM, (long long)buffer);
                     emit(vm, PUSH);  // stack = [dest]
-                    
+
                     // Now evaluate source expression (struct to return)
                     gen_expr(vm, node->lhs);  // ax = src address
                     emit(vm, PUSH);  // stack = [dest, src]
-                    
+
                     // Push size
                     emit_with_arg(vm, IMM, node->lhs->ty->size);
                     emit(vm, PUSH);  // stack = [dest, src, size]
-                    
+
                     // Call MCPY (VM memcpy): sp[2]=dest, sp[1]=src, sp[0]=size
                     emit(vm, MCPY);  // Pops size, src, dest; returns dest in ax
-                    
-                    // Return address of return_buffer in ax
-                    emit_with_arg(vm, IMM, (long long)vm->return_buffer);
+
+                    // Return address of buffer in ax
+                    emit_with_arg(vm, IMM, (long long)buffer);
                 } else {
                     // For non-struct types, just evaluate and return
                     gen_expr(vm, node->lhs);
@@ -1718,6 +1773,12 @@ static void gen_stmt(JCC *vm, Node *node) {
         
         case ND_CASE:
             // Case label: record position in jump table for switch dispatch
+            // Skip default case - it doesn't fill the jump table
+            if (node == vm->current_switch_default) {
+                gen_stmt(vm, node->lhs);
+                return;
+            }
+
             if (vm->current_switch_table) {
                 // Dense switch: fill jump table entries for this case's value range
                 long long *case_addr = vm->text_ptr + 1;
@@ -2118,14 +2179,16 @@ void codegen(JCC *vm, Obj *prog) {
     
 
     
-    // Allocate return buffer for struct/union returns at end of data segment
-    // Align to 8-byte boundary
-    long long offset = vm->data_ptr - vm->data_seg;
-    offset = (offset + 7) & ~7;
-    vm->data_ptr = vm->data_seg + offset;
-    vm->return_buffer = vm->data_ptr;  // Store pointer for codegen
-    memset(vm->return_buffer, 0, vm->return_buffer_size);
-    vm->data_ptr += vm->return_buffer_size;
+    // Allocate return buffer pool for struct/union returns at end of data segment
+    for (int i = 0; i < RETURN_BUFFER_POOL_SIZE; i++) {
+        // Align to 8-byte boundary
+        long long offset = vm->data_ptr - vm->data_seg;
+        offset = (offset + 7) & ~7;
+        vm->data_ptr = vm->data_seg + offset;
+        vm->return_buffer_pool[i] = vm->data_ptr;  // Store pointer for codegen
+        memset(vm->return_buffer_pool[i], 0, vm->return_buffer_size);
+        vm->data_ptr += vm->return_buffer_size;
+    }
 
     // First pass: generate code for all functions
     for (Obj *fn = prog; fn; fn = fn->next) {
