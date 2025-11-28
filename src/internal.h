@@ -117,14 +117,14 @@ bool is_flonum(Type *ty);
 bool is_numeric(Type *ty);
 bool is_error_type(Type *ty);
 bool is_compatible(Type *t1, Type *t2);
-Type *copy_type(Type *ty);
-Type *pointer_to(Type *base);
-Type *func_type(Type *return_ty);
-Type *array_of(Type *base, int size);
-Type *vla_of(Type *base, Node *expr);
-Type *enum_type(void);
-Type *struct_type(void);
-Type *union_type(void);
+Type *copy_type(JCC *vm, Type *ty);
+Type *pointer_to(JCC *vm, Type *base);
+Type *func_type(JCC *vm, Type *return_ty);
+Type *array_of(JCC *vm, Type *base, int size);
+Type *vla_of(JCC *vm, Type *base, Node *expr);
+Type *enum_type(JCC *vm);
+Type *struct_type(JCC *vm);
+Type *union_type(JCC *vm);
 void add_type(JCC *vm, Node *node);
 
 //

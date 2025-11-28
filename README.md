@@ -120,6 +120,8 @@ See [here](https://takeiteasy.github.io/jcc) for some basic documentation on the
   - `limit(N)` parameter - Restricts number of bytes embedded
   - `__has_embed("file")` - Check file availability (returns 0=not found, 1=non-empty, 2=empty)
   - Files >10MB trigger warnings (no hard limits)
+  - `prefix(...)`, `suffix(...)` - Pre/append parameters to data
+  - `if_empty(...)` - Handle empty resources
 - String literal concatenation (adjacent strings automatically combined)
 
 ### Linker
@@ -171,6 +173,9 @@ JCC provides two modes for variadic foreign functions:
 - `#embed` directive (C23) - Binary resource inclusion
   - Example: `unsigned char data[] = { #embed "file.bin" };`
   - Supports `limit(N)` parameter to restrict bytes
+  - Supports `prefix(...)` to insert tokens before byte sequence
+  - Supports `suffix(...)` to insert tokens after byte sequence
+  - Supports `if_empty(...)` for empty file fallback values
   - `__has_embed("file")` macro for file availability checks
 
 ### Thread Support
@@ -193,9 +198,11 @@ JCC has a custom standard library that is located in `include`. It is just a col
 - `#embed` directive for embedding binary data directly
   - ~~`#embed "file.bin"`~~ **DONE**
   - ~~`limit(...)`~~ **DONE**
-  - `prefix(...)` **TODO**
-  - `suffix(...)` **TODO**
-  - `if_empty(...)` **TODO**
+  - ~~`prefix(...)`~~ **DONE**
+  - ~~`suffix(...)`~~ **DONE**
+  - ~~`if_empty(...)`~~ **DONE**
+  - Modify limits from arguments, --embed-limit=100mb
+  - Error on limit from arguments, --embed-hard-limit (10mb will be default if --embed--limit is not set)
 
 ### JCC features (and ideas)
 

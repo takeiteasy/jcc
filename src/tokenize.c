@@ -455,7 +455,7 @@ static Token *read_string_literal(JCC *vm, char *start, char *quote) {
     }
 
     Token *tok = new_token(vm, TK_STR, start, end + 1);
-    tok->ty = array_of(ty_char, len + 1);
+    tok->ty = array_of(vm, ty_char, len + 1);
     tok->str = buf;
     return tok;
 }
@@ -492,7 +492,7 @@ static Token *read_utf16_string_literal(JCC *vm, char *start, char *quote) {
     }
 
     Token *tok = new_token(vm, TK_STR, start, end + 1);
-    tok->ty = array_of(ty_ushort, len + 1);
+    tok->ty = array_of(vm, ty_ushort, len + 1);
     tok->str = (char *)buf;
     return tok;
 }
@@ -515,7 +515,7 @@ static Token *read_utf32_string_literal(JCC *vm, char *start, char *quote, Type 
     }
 
     Token *tok = new_token(vm, TK_STR, start, end + 1);
-    tok->ty = array_of(ty, len + 1);
+    tok->ty = array_of(vm, ty, len + 1);
     tok->str = (char *)buf;
     return tok;
 }

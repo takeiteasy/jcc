@@ -269,7 +269,7 @@ Node *new_cast(JCC *vm, Node *expr, Type *ty) {
     node->kind = ND_CAST;
     node->tok = expr->tok;
     node->lhs = expr;
-    node->ty = copy_type(ty);
+    node->ty = copy_type(vm, ty);
     return node;
 }
 
@@ -363,7 +363,9 @@ static Obj *new_gvar(JCC *vm, char *name, int name_len, Type *ty) {
 }
 
 static char *new_unique_name(JCC *vm) {
-    return format(".L..%d", vm->unique_name_counter++);
+    char *name = format(".L..%d", vm->unique_name_counter++);
+    strarray_push(&vm->file_buffers, name);
+    return name;
 }
 
 static Obj *new_anon_gvar(JCC *vm, Type *ty) {
@@ -716,12 +718,12 @@ static Type *declspec(JCC *vm, Token **rest, Token *tok, VarAttr *attr) {
     }
 
     if (is_atomic) {
-        ty = copy_type(ty);
+        ty = copy_type(vm, ty);
         ty->is_atomic = true;
     }
 
     if (is_const) {
-        ty = copy_type(ty);
+        ty = copy_type(vm, ty);
         ty->is_const = true;
     }
 
@@ -734,7 +736,7 @@ static Type *declspec(JCC *vm, Token **rest, Token *tok, VarAttr *attr) {
 static Type *func_params(JCC *vm, Token **rest, Token *tok, Type *ty) {
     if (equal(tok, "void") && equal(tok->next, ")")) {
         *rest = tok->next->next;
-        return func_type(ty);
+        return func_type(vm, ty);
     }
 
     Type head = {};
@@ -760,22 +762,22 @@ static Type *func_params(JCC *vm, Token **rest, Token *tok, Type *ty) {
         if (ty2->kind == TY_ARRAY) {
             // "array of T" is converted to "pointer to T" only in the parameter
             // context. For example, *argv[] is converted to **argv by this.
-            ty2 = pointer_to(ty2->base);
+            ty2 = pointer_to(vm, ty2->base);
             ty2->name = name;
         } else if (ty2->kind == TY_FUNC) {
             // Likewise, a function is converted to a pointer to a function
             // only in the parameter context.
-            ty2 = pointer_to(ty2);
+            ty2 = pointer_to(vm, ty2);
             ty2->name = name;
         }
 
-        cur = cur->next = copy_type(ty2);
+        cur = cur->next = copy_type(vm, ty2);
     }
 
     if (cur == &head)
         is_variadic = true;
 
-    ty = func_type(ty);
+    ty = func_type(vm, ty);
     ty->params = head.next;
     ty->is_variadic = is_variadic;
     *rest = tok->next;
@@ -789,7 +791,7 @@ static Type *array_dimensions(JCC *vm, Token **rest, Token *tok, Type *ty) {
 
     if (equal(tok, "]")) {
         ty = type_suffix(vm, rest, tok->next, ty);
-        return array_of(ty, -1);
+        return array_of(vm, ty, -1);
     }
 
     Node *expr = conditional(vm, &tok, tok);
@@ -797,8 +799,8 @@ static Type *array_dimensions(JCC *vm, Token **rest, Token *tok, Type *ty) {
     ty = type_suffix(vm, rest, tok, ty);
 
     if (ty->kind == TY_VLA || !is_const_expr(vm, expr))
-        return vla_of(ty, expr);
-    return array_of(ty, eval(vm, expr));
+        return vla_of(vm, ty, expr);
+    return array_of(vm, ty, eval(vm, expr));
 }
 
 // type-suffix = "(" func-params
@@ -818,13 +820,13 @@ static Type *type_suffix(JCC *vm, Token **rest, Token *tok, Type *ty) {
 // pointers = ("*" ("const" | "volatile" | "restrict")*)*
 static Type *pointers(JCC *vm, Token **rest, Token *tok, Type *ty) {
     while (consume(vm, &tok, tok, "*")) {
-        ty = pointer_to(ty);
+        ty = pointer_to(vm, ty);
         // Handle const qualification on the pointer itself
         // Example: "int *const p" makes the pointer const, not the pointee
         while (equal(tok, "const") || equal(tok, "volatile") || equal(tok, "restrict") ||
                equal(tok, "__restrict") || equal(tok, "__restrict__")) {
             if (equal(tok, "const")) {
-                ty = copy_type(ty);
+                ty = copy_type(vm, ty);
                 ty->is_const = true;
             }
             tok = tok->next;
@@ -920,7 +922,7 @@ static bool consume_end(Token **rest, Token *tok) {
 //
 // enum-list      = ident ("=" num)? ("," ident ("=" num)?)* ","?
 static Type *enum_specifier(JCC *vm, Token **rest, Token *tok) {
-    Type *ty = enum_type();
+    Type *ty = enum_type(vm);
 
     // Read a struct tag.
     Token *tag = NULL;
@@ -1002,7 +1004,7 @@ static Type *typeof_specifier(JCC *vm, Token **rest, Token *tok) {
 static Type *typeof_unqual_specifier(JCC *vm, Token **rest, Token *tok) {
     Type *ty = typeof_specifier(vm, rest, tok);
     // Copy the type to avoid mutating the original
-    ty = copy_type(ty);
+    ty = copy_type(vm, ty);
     // Remove all qualifiers (only is_const is tracked in Type struct)
     ty->is_const = false;
     // Note: volatile and restrict are parsed but not stored in Type
@@ -1170,7 +1172,7 @@ static Token *skip_excess_element(JCC *vm, Token *tok) {
 // string-initializer = string-literal
 static void string_initializer(JCC *vm, Token **rest, Token *tok, Initializer *init) {
     if (init->is_flexible)
-        *init = *new_initializer(vm, array_of(init->ty->base, tok->ty->array_len), false);
+        *init = *new_initializer(vm, array_of(vm, init->ty->base, tok->ty->array_len), false);
 
     int len = MIN(init->ty->array_len, tok->ty->array_len);
 
@@ -1363,7 +1365,7 @@ static void array_initializer1(JCC *vm, Token **rest, Token *tok, Initializer *i
                 init->children[i] = new_initializer(vm, init->ty->base, false);
         } else {
             // For flexible arrays, create a fixed-size array type
-            *init = *new_initializer(vm, array_of(init->ty->base, len), false);
+            *init = *new_initializer(vm, array_of(vm, init->ty->base, len), false);
         }
     }
 
@@ -1414,7 +1416,7 @@ static void array_initializer2(JCC *vm, Token **rest, Token *tok, Initializer *i
                 init->children[j] = new_initializer(vm, init->ty->base, false);
         } else {
             // For flexible arrays, create a fixed-size array type
-            *init = *new_initializer(vm, array_of(init->ty->base, len), false);
+            *init = *new_initializer(vm, array_of(vm, init->ty->base, len), false);
         }
     }
 
@@ -1586,7 +1588,7 @@ static void initializer2(JCC *vm, Token **rest, Token *tok, Initializer *init) {
 }
 
 static Type *copy_struct_type(JCC *vm, Type *ty) {
-    ty = copy_type(ty);
+    ty = copy_type(vm, ty);
 
     Member head = {};
     Member *cur = &head;
@@ -2442,7 +2444,7 @@ static Node *to_assign(JCC *vm, Node *binary) {
 
     // Convert `A.x op= C` to `tmp = &A, (*tmp).x = (*tmp).x op C`.
     if (binary->lhs->kind == ND_MEMBER) {
-        Obj *var = new_lvar(vm, "", 0, pointer_to(binary->lhs->lhs->ty));
+        Obj *var = new_lvar(vm, "", 0, pointer_to(vm, binary->lhs->lhs->ty));
 
         Node *expr1 = new_binary(vm, ND_ASSIGN, new_var_node(vm, var, tok),
                                  new_unary(vm, ND_ADDR, binary->lhs->lhs, tok), tok);
@@ -2477,7 +2479,7 @@ static Node *to_assign(JCC *vm, Node *binary) {
         Node head = {};
         Node *cur = &head;
 
-        Obj *addr = new_lvar(vm, "", 0, pointer_to(binary->lhs->ty));
+        Obj *addr = new_lvar(vm, "", 0, pointer_to(vm, binary->lhs->ty));
         Obj *val = new_lvar(vm, "", 0, binary->rhs->ty);
         Obj *old = new_lvar(vm, "", 0, binary->lhs->ty);
         Obj *new = new_lvar(vm, "", 0, binary->lhs->ty);
@@ -2527,7 +2529,7 @@ static Node *to_assign(JCC *vm, Node *binary) {
     }
 
     // Convert `A op= B` to ``tmp = &A, *tmp = *tmp op B`.
-    Obj *var = new_lvar(vm, "", 0, pointer_to(binary->lhs->ty));
+    Obj *var = new_lvar(vm, "", 0, pointer_to(vm, binary->lhs->ty));
 
     Node *expr1 = new_binary(vm, ND_ASSIGN, new_var_node(vm, var, tok),
                              new_unary(vm, ND_ADDR, binary->lhs, tok), tok);
@@ -3073,7 +3075,7 @@ static void struct_members(JCC *vm, Token **rest, Token *tok, Type *ty) {
     // called a "flexible array member". It should behave as if
     // if were a zero-sized array.
     if (cur != &head && cur->ty->kind == TY_ARRAY && cur->ty->array_len < 0) {
-        cur->ty = array_of(cur->ty->base, 0);
+        cur->ty = array_of(vm, cur->ty->base, 0);
         ty->is_flexible = true;
     }
 
@@ -3190,7 +3192,7 @@ static Token *c23_attribute_list(JCC *vm, Token *tok, Type *ty) {
 
 // struct-union-decl = attribute? ident? ("{" struct-members)?
 static Type *struct_union_decl(JCC *vm, Token **rest, Token *tok) {
-    Type *ty = struct_type();
+    Type *ty = struct_type(vm);
     tok = attribute_list(vm, tok, ty);
     tok = c23_attribute_list(vm, tok, ty);
 
@@ -3562,9 +3564,9 @@ static Node *generic_selection(JCC *vm, Token **rest, Token *tok) {
 
     Type *t1 = ctrl->ty;
     if (t1->kind == TY_FUNC)
-        t1 = pointer_to(t1);
+        t1 = pointer_to(vm, t1);
     else if (t1->kind == TY_ARRAY)
-        t1 = pointer_to(t1->base);
+        t1 = pointer_to(vm, t1->base);
 
     Node *ret = NULL;
 
@@ -3945,8 +3947,8 @@ static Token *function(JCC *vm, Token *tok, Type *basety, VarAttr *attr) {
     fn->params = vm->locals;
 
     if (ty->is_variadic)
-        fn->va_area = new_lvar(vm, "__va_area__", 11, array_of(ty_char, 136));
-    fn->alloca_bottom = new_lvar(vm, "__alloca_size__", 15, pointer_to(ty_char));
+        fn->va_area = new_lvar(vm, "__va_area__", 11, array_of(vm, ty_char, 136));
+    fn->alloca_bottom = new_lvar(vm, "__alloca_size__", 15, pointer_to(vm, ty_char));
 
     tok = skip(vm, tok, "{");
 
@@ -3954,11 +3956,11 @@ static Token *function(JCC *vm, Token *tok, Type *basety, VarAttr *attr) {
     // automatically defined as a local variable containing the
     // current function name.
     push_scope(vm, "__func__", 8)->var =
-    new_string_literal(vm, fn->name, array_of(ty_char, strlen(fn->name) + 1));
+    new_string_literal(vm, fn->name, array_of(vm, ty_char, strlen(fn->name) + 1));
 
     // [GNU] __FUNCTION__ is yet another name of __func__.
     push_scope(vm, "__FUNCTION__", 12)->var =
-    new_string_literal(vm, fn->name, array_of(ty_char, strlen(fn->name) + 1));
+    new_string_literal(vm, fn->name, array_of(vm, ty_char, strlen(fn->name) + 1));
 
     fn->body = compound_stmt(vm, &tok, tok);
     fn->locals = vm->locals;
@@ -4035,22 +4037,22 @@ static void scan_globals(JCC *vm) {
 
 static void declare_builtin_functions(JCC *vm) {
     // alloca(size) -> void*
-    Type *ty = func_type(pointer_to(ty_void));
-    ty->params = copy_type(ty_int);
+    Type *ty = func_type(vm, pointer_to(vm, ty_void));
+    ty->params = copy_type(vm, ty_int);
     vm->builtin_alloca = new_gvar(vm, "alloca", 6, ty);
     vm->builtin_alloca->is_definition = false;
 
     // setjmp(jmp_buf) -> int
     // jmp_buf is an array type, but we'll treat it as a pointer for now
-    Type *setjmp_ty = func_type(ty_int);
-    setjmp_ty->params = pointer_to(ty_long);  // jmp_buf is long long[5]
+    Type *setjmp_ty = func_type(vm, ty_int);
+    setjmp_ty->params = pointer_to(vm, ty_long);  // jmp_buf is long long[5]
     vm->builtin_setjmp = new_gvar(vm, "setjmp", 6, setjmp_ty);
     vm->builtin_setjmp->is_definition = false;
 
     // longjmp(jmp_buf, int) -> void (noreturn)
-    Type *longjmp_ty = func_type(ty_void);
-    longjmp_ty->params = pointer_to(ty_long);
-    longjmp_ty->params->next = copy_type(ty_int);
+    Type *longjmp_ty = func_type(vm, ty_void);
+    longjmp_ty->params = pointer_to(vm, ty_long);
+    longjmp_ty->params->next = copy_type(vm, ty_int);
     vm->builtin_longjmp = new_gvar(vm, "longjmp", 7, longjmp_ty);
     vm->builtin_longjmp->is_definition = false;
 }
