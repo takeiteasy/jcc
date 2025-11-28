@@ -113,6 +113,13 @@ See [here](https://takeiteasy.github.io/jcc) for some basic documentation on the
 - `#error`, `#warning`
 - Macro expansion and stringification
 - `__VA_OPT__` for conditional variadic macro expansion (C23)
+- `#embed` - Binary resource inclusion (C23)
+  - Embeds binary files as comma-separated integer literals (0-255)
+  - `#embed "file.bin"` - Quoted form (searches include paths)
+  - `#embed <file.bin>` - Angle bracket form (searches system paths)
+  - `limit(N)` parameter - Restricts number of bytes embedded
+  - `__has_embed("file")` - Check file availability (returns 0=not found, 1=non-empty, 2=empty)
+  - Files >10MB trigger warnings (no hard limits)
 - String literal concatenation (adjacent strings automatically combined)
 
 ### Linker
@@ -161,6 +168,10 @@ JCC provides two modes for variadic foreign functions:
 - `Anonymous structs/unions` - Direct member access without intermediate name
 - Binary literals (0b10101010)
 - Digit seperates with single quotes (1'000'000)
+- `#embed` directive (C23) - Binary resource inclusion
+  - Example: `unsigned char data[] = { #embed "file.bin" };`
+  - Supports `limit(N)` parameter to restrict bytes
+  - `__has_embed("file")` macro for file availability checks
 
 ### Thread Support
 
@@ -180,6 +191,11 @@ JCC has a custom standard library that is located in `include`. It is just a col
 - Blocks/closures (`^{}`) - Complex feature requiring variable capture and closure runtime
 - Nested functions - Requires static chain or trampolines for accessing parent scope
 - `#embed` directive for embedding binary data directly
+  - ~~`#embed "file.bin"`~~ **DONE**
+  - ~~`limit(...)`~~ **DONE**
+  - `prefix(...)` **TODO**
+  - `suffix(...)` **TODO**
+  - `if_empty(...)` **TODO**
 
 ### JCC features (and ideas)
 

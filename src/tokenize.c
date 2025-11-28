@@ -952,6 +952,47 @@ static char *read_file(JCC *vm, char *path) {
     return buf;
 }
 
+// Read binary file without text processing (for #embed directive)
+unsigned char *read_binary_file(JCC *vm, char *path, size_t *out_size) {
+    FILE *fp = fopen(path, "rb");
+    if (!fp)
+        return NULL;
+
+    // Get file size
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        return NULL;
+    }
+
+    long file_size = ftell(fp);
+    if (file_size < 0) {
+        fclose(fp);
+        return NULL;
+    }
+
+    if (fseek(fp, 0, SEEK_SET) != 0) {
+        fclose(fp);
+        return NULL;
+    }
+
+    *out_size = (size_t)file_size;
+
+    // Allocate buffer (use arena for automatic cleanup)
+    unsigned char *buffer = arena_alloc(&vm->parser_arena, file_size);
+
+    // Read entire file
+    if (file_size > 0) {
+        size_t bytes_read = fread(buffer, 1, file_size, fp);
+        if (bytes_read != (size_t)file_size) {
+            fclose(fp);
+            error("failed to read file: %s", path);
+        }
+    }
+
+    fclose(fp);
+    return buffer;
+}
+
 File *new_file(JCC *vm, char *name, int file_no, char *contents) {
     File *file = arena_alloc(&vm->parser_arena, sizeof(File));
     memset(file, 0, sizeof(File));
