@@ -10,14 +10,7 @@
 */
 
 #include "jcc.h"
-
-// Forward declarations needed from other modules
-extern Node *cc_parse_expr(JCC *vm, Token **rest, Token *tok);
-extern Token *tokenize(JCC *vm, File *file);
-extern int vm_eval(JCC *vm);
-
-// Forward declarations
-static int debugger_eval_condition(JCC *vm, const char *condition_str);
+#include "./internal.h"
 
 static int is_valid_vm_address(JCC *vm, void *addr) {
     long long ptr = (long long)addr;
@@ -118,6 +111,8 @@ void cc_remove_breakpoint(JCC *vm, int index) {
 
     printf("Breakpoint #%d removed\n", index);
 }
+
+static int debugger_eval_condition(JCC *vm, const char *condition_str);
 
 int debugger_check_breakpoint(JCC *vm) {
     // Safety check

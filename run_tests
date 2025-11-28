@@ -6,6 +6,26 @@ script_dir=$(cd "$(dirname "$0")" && pwd)
 jcc="$script_dir/jcc"
 tests_dir="$script_dir/tests"
 
+# Detect platform for memory leak detection
+detect_platform() {
+    case "$(uname -s)" in
+        Darwin*)
+            echo "macos"
+            ;;
+        Linux*)
+            echo "linux"
+            ;;
+        CYGWIN*|MINGW*|MSYS*)
+            echo "windows"
+            ;;
+        *)
+            echo "unknown"
+            ;;
+    esac
+}
+
+platform=$(detect_platform)
+
 # Check if jcc exists
 if [ ! -f "$jcc" ]; then
     echo "Error: jcc executable not found. Please run 'make' first."
@@ -36,6 +56,7 @@ done < <(find "$tests_dir" -name "test_*.c" -maxdepth 1 | sort)
 
 # Parse arguments
 use_leaks=0
+match_pattern=""
 jcc_args=()
 
 while [[ $# -gt 0 ]]; do
@@ -44,12 +65,29 @@ while [[ $# -gt 0 ]]; do
             use_leaks=1
             shift
             ;;
+        --match)
+            match_pattern="$2"
+            shift 2
+            ;;
         *)
             jcc_args+=("$1")
             shift
             ;;
     esac
 done
+
+# Filter tests by match pattern if provided
+if [ -n "$match_pattern" ]; then
+    filtered_tests=()
+    for test_file in "${test_files[@]}"; do
+        test_name=$(basename "$test_file")
+        # Use bash pattern matching
+        if [[ $test_name == $match_pattern ]]; then
+            filtered_tests+=("$test_file")
+        fi
+    done
+    test_files=("${filtered_tests[@]}")
+fi
 
 if [ ${#test_files[@]} -eq 0 ]; then
     echo "No test files found in $tests_dir"
@@ -58,7 +96,24 @@ fi
 
 echo "Running JCC tests..."
 if [ $use_leaks -eq 1 ]; then
-    echo "Memory leak detection enabled (using 'leaks')"
+    case "$platform" in
+        macos)
+            echo "Memory leak detection enabled (using 'leaks')"
+            ;;
+        linux)
+            echo "Memory leak detection enabled (using 'valgrind')"
+            ;;
+        windows)
+            echo "Memory leak detection enabled (using 'drmemory')"
+            ;;
+        *)
+            echo "Warning: Memory leak detection not supported on this platform"
+            use_leaks=0
+            ;;
+    esac
+fi
+if [ -n "$match_pattern" ]; then
+    echo "Filtering tests matching: $match_pattern"
 fi
 echo "======================="
 echo ""
@@ -76,17 +131,53 @@ for test_file in "${test_files[@]}"; do
 
     # Run the test and capture output and exit code
     if [ $use_leaks -eq 1 ]; then
-        # Run with leaks detection
-        # Capture output to check for leaks
-        output=$(leaks -atExit -- "$jcc" -I./include "${jcc_args[@]}" "$test_file" 2>&1)
-        exit_code=$?
-
-        # Check if leaks were detected (leaks usually prints "0 leaks" if clean)
-        if echo "$output" | grep -q "0 leaks"; then
-            is_leaking=0
-        else
-            is_leaking=1
-        fi
+        # Run with platform-specific leak detection tool
+        case "$platform" in
+            macos)
+                # macOS: use 'leaks' command
+                output=$(leaks -atExit -- "$jcc" -I./include "${jcc_args[@]}" "$test_file" 2>&1)
+                exit_code=$?
+                # Check if leaks were detected (leaks prints "0 leaks" if clean)
+                if echo "$output" | grep -q "0 leaks"; then
+                    is_leaking=0
+                else
+                    is_leaking=1
+                fi
+                ;;
+            linux)
+                # Linux: use valgrind
+                output=$(valgrind --leak-check=full --error-exitcode=1 --quiet "$jcc" -I./include "${jcc_args[@]}" "$test_file" 2>&1)
+                exit_code=$?
+                # valgrind exits with error code 1 if leaks detected (when --error-exitcode=1 is set)
+                # Check for leak summary in output
+                if echo "$output" | grep -q "no leaks are possible\|All heap blocks were freed"; then
+                    is_leaking=0
+                elif echo "$output" | grep -q "definitely lost\|indirectly lost\|possibly lost"; then
+                    is_leaking=1
+                else
+                    is_leaking=0
+                fi
+                ;;
+            windows)
+                # Windows: use Dr. Memory
+                output=$(drmemory -batch -quiet -- "$jcc" -I./include "${jcc_args[@]}" "$test_file" 2>&1)
+                exit_code=$?
+                # Dr. Memory reports leaks in its output
+                if echo "$output" | grep -q "0 unique,.*0 total"; then
+                    is_leaking=0
+                elif echo "$output" | grep -q "LEAK\|UNADDRESSABLE ACCESS"; then
+                    is_leaking=1
+                else
+                    is_leaking=0
+                fi
+                ;;
+            *)
+                # Unsupported platform - run normally
+                output=$("$jcc" -I./include "${jcc_args[@]}" "$test_file" 2>&1)
+                exit_code=$?
+                is_leaking=0
+                ;;
+        esac
     else
         # Normal run - capture stderr to check for compilation errors
         output=$("$jcc" -I./include "${jcc_args[@]}" "$test_file" 2>&1)
