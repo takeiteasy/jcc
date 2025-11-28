@@ -76,6 +76,9 @@ struct Macro {
 
 static Token *preprocess2(JCC *vm, Token *tok);
 static Macro *find_macro(JCC *vm, Token *tok);
+static bool file_exists(char *path);
+static char *read_include_filename(JCC *vm, Token **rest, Token *tok, bool *is_dquote, int *out_len);
+static long eval_const_expr(JCC *vm, Token **rest, Token *tok);
 
 static bool is_hash(Token *tok) {
     return tok->at_bol && equal(tok, "#");
@@ -253,6 +256,35 @@ static Token *new_num_token(JCC *vm, int val, Token *tmpl) {
     return tokenize(vm, new_file(vm, tmpl->file->name, tmpl->file->file_no, buf));
 }
 
+// Generate comma-separated token sequence from binary data
+static Token *generate_embed_tokens(JCC *vm, unsigned char *data, size_t size, Token *tmpl) {
+    if (size == 0)
+        return NULL;
+
+    Token head = {};
+    Token *cur = &head;
+
+    for (size_t i = 0; i < size; i++) {
+        // Create numeric token for this byte
+        Token *num_stream = new_num_token(vm, data[i], tmpl);
+        // Only take the first token (the number), not EOF
+        Token *num = copy_token(vm, num_stream);
+        num->next = NULL;
+        cur = cur->next = num;
+
+        // Add comma separator (except after last byte)
+        if (i < size - 1) {
+            Token *comma = copy_token(vm, tmpl);
+            comma->kind = TK_PUNCT;
+            comma->len = 1;
+            comma->loc = ",";
+            cur = cur->next = comma;
+        }
+    }
+
+    return head.next;
+}
+
 static Token *read_const_expr(JCC *vm, Token **rest, Token *tok) {
     tok = copy_line(vm, rest, tok);
 
@@ -275,6 +307,49 @@ static Token *read_const_expr(JCC *vm, Token **rest, Token *tok) {
                 tok = skip(vm, tok, ")");
 
             cur = cur->next = new_num_token(vm, m ? 1 : 0, start);
+            continue;
+        }
+
+        // "__has_embed(filename)" returns 0 (not found), 1 (non-empty), or 2 (empty)
+        if (equal(tok, "__has_embed")) {
+            Token *start = tok;
+            tok = skip(vm, tok->next, "(");
+
+            // Parse filename
+            bool is_dquote;
+            int filename_len;
+            char *filename = read_include_filename(vm, &tok, tok, &is_dquote, &filename_len);
+
+            tok = skip(vm, tok, ")");
+
+            // Resolve file path
+            char *path = NULL;
+
+            if (filename[0] == '/') {
+                path = filename;
+            } else if (is_dquote) {
+                char *relative_path = format("%s/%s",
+                    dirname(strdup(start->file->name)), filename);
+                if (file_exists(relative_path)) {
+                    path = relative_path;
+                }
+            }
+
+            if (!path) {
+                path = search_include_paths(vm, filename, filename_len, !is_dquote);
+            }
+
+            // Determine result: 0 = not found, 1 = non-empty, 2 = empty
+            int result = 0;
+            if (path && file_exists(path)) {
+                size_t file_size;
+                unsigned char *data = read_binary_file(vm, path, &file_size);
+                if (data) {
+                    result = (file_size == 0) ? 2 : 1;
+                }
+            }
+
+            cur = cur->next = new_num_token(vm, result, start);
             continue;
         }
 
@@ -1029,6 +1104,133 @@ static Token *extract_pragma_macro(JCC *vm, Token *tok) {
     return body_end;
 }
 
+// Main #embed directive handler
+static Token *handle_embed_directive(JCC *vm, Token *tok, Token *directive_start) {
+    // Parse filename (quoted string or <angle brackets>)
+    bool is_dquote;
+    int filename_len;
+    char *filename;
+
+    if (tok->kind == TK_STR) {
+        // Pattern: #embed "foo.bin"
+        is_dquote = true;
+        filename_len = tok->len - 2;
+        filename = strndup(tok->loc + 1, tok->len - 2);
+        tok = tok->next;
+    } else if (equal(tok, "<")) {
+        // Pattern: #embed <foo.bin>
+        Token *start = tok;
+        tok = tok->next;
+
+        // Find closing ">"
+        Token *end = tok;
+        while (!equal(end, ">")) {
+            if (end->at_bol || end->kind == TK_EOF)
+                error_tok(vm, end, "expected '>'");
+            end = end->next;
+        }
+
+        is_dquote = false;
+        filename = join_tokens(vm, tok, end, &filename_len);
+        tok = end->next;
+    } else {
+        error_tok(vm, tok, "expected a filename");
+        return tok;
+    }
+
+    // Parse optional limit parameter
+    long limit = -1;  // -1 means no limit
+    bool has_limit = false;
+
+    if (equal(tok, "limit") || equal(tok, "__limit__")) {
+        has_limit = true;
+        Token *start = tok;
+        tok = skip(vm, tok->next, "(");
+
+        // For now, parse a simple numeric constant
+        // TODO: Full constant expression support
+        if (tok->kind != TK_PP_NUM && tok->kind != TK_NUM)
+            error_tok(vm, tok, "limit must be a number");
+
+        // Convert PP number to integer
+        if (tok->kind == TK_PP_NUM) {
+            char *endptr;
+            limit = strtol(tok->loc, &endptr, 0);
+        } else {
+            limit = tok->val;
+        }
+        tok = tok->next;
+
+        tok = skip(vm, tok, ")");
+
+        if (limit < 0)
+            error_tok(vm, start, "limit must be non-negative");
+    }
+
+    // Skip to next line (check for extraneous tokens)
+    tok = skip_line(vm, tok);
+
+    // Resolve file path
+    char *path = NULL;
+
+    if (filename[0] == '/') {
+        // Absolute path
+        path = filename;
+    } else if (is_dquote) {
+        // Try relative to current file first
+        char *relative_path = format("%s/%s",
+            dirname(strdup(directive_start->file->name)), filename);
+        if (file_exists(relative_path)) {
+            path = relative_path;
+        }
+    }
+
+    // Search include paths if not found
+    if (!path) {
+        path = search_include_paths(vm, filename, filename_len, !is_dquote);
+    }
+
+    if (!path || !file_exists(path)) {
+        error_tok(vm, directive_start, "file not found: %s", filename);
+    }
+
+    // Read binary file
+    size_t file_size;
+    unsigned char *data = read_binary_file(vm, path, &file_size);
+
+    if (!data) {
+        error_tok(vm, directive_start, "failed to read file: %s", path);
+    }
+
+    // Apply limit parameter
+    size_t embed_size = file_size;
+    if (has_limit && (long)file_size > limit) {
+        embed_size = (size_t)limit;
+    }
+
+    // Warn about large files
+    if (embed_size >= 10 * 1024 * 1024) {
+        warn_tok(vm, directive_start, "embedding large file: %s (%zu bytes)", path, embed_size);
+    }
+    if (embed_size >= 50 * 1024 * 1024) {
+        warn_tok(vm, directive_start, "embedding very large file: %s (%zu bytes)", path, embed_size);
+    }
+
+    // Generate token sequence
+    Token *embed_tokens = generate_embed_tokens(vm, data, embed_size, directive_start);
+
+    // Link to rest of token stream
+    if (embed_tokens) {
+        Token *last = embed_tokens;
+        while (last->next)
+            last = last->next;
+        last->next = tok;
+        return embed_tokens;
+    }
+
+    return tok;
+}
+
 // Visit all tokens in `tok` while evaluating preprocessing
 // macros and directives.
 static Token *preprocess2(JCC *vm, Token *tok) {
@@ -1224,6 +1426,11 @@ static Token *preprocess2(JCC *vm, Token *tok) {
             do {
                 tok = tok->next;
             } while (!tok->at_bol);
+            continue;
+        }
+
+        if (equal(tok, "embed")) {
+            tok = handle_embed_directive(vm, tok->next, start);
             continue;
         }
 

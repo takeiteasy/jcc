@@ -65,6 +65,7 @@ File *new_file(JCC *vm, char *name, int file_no, char *contents);
 Token *tokenize_string_literal(JCC *vm, Token *tok, Type *basety);
 Token *tokenize(JCC *vm, File *file);
 Token *tokenize_file(JCC *vm, char *filename);
+unsigned char *read_binary_file(JCC *vm, char *path, size_t *out_size);
 void cc_output_preprocessed(FILE *f, Token *tok);
 
 #define unreachable() \
