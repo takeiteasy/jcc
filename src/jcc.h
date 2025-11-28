@@ -1159,6 +1159,11 @@ struct JCC {
     HashMap included_headers;  // Track which standard headers have been included (for lazy stdlib loading)
     int include_next_idx;
 
+    // #embed directive limits
+    size_t embed_limit;           // Soft limit for #embed size (default: 10MB)
+    size_t embed_hard_limit;      // Secondary warning threshold (default: 50MB)
+    bool embed_hard_error;        // If true, exceeding limit is a hard error instead of warning
+
     // Pragma macro system
     struct PragmaMacro *pragma_macros;  // Linked list of compile-time macros
     bool compiling_pragma_macro;        // True when compiling a pragma macro (skip main() requirement)

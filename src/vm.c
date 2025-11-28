@@ -111,6 +111,11 @@ void cc_init(JCC *vm, uint32_t flags) {
     vm->poolsize = 256 * 1024;  // 256KB default
     vm->debug_vm = 0;
 
+    // Set #embed directive defaults
+    vm->embed_limit = 10 * 1024 * 1024;       // 10MB soft warning limit
+    vm->embed_hard_limit = 50 * 1024 * 1024;  // 50MB secondary warning
+    vm->embed_hard_error = false;              // Default to warnings, not errors
+
     // Return buffer pool will be allocated in data segment during codegen
     vm->return_buffer_size = 1024;
     vm->return_buffer_index = 0;

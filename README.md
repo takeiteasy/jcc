@@ -119,7 +119,9 @@ See [here](https://takeiteasy.github.io/jcc) for some basic documentation on the
   - `#embed <file.bin>` - Angle bracket form (searches system paths)
   - `limit(N)` parameter - Restricts number of bytes embedded
   - `__has_embed("file")` - Check file availability (returns 0=not found, 1=non-empty, 2=empty)
-  - Files >10MB trigger warnings (no hard limits)
+  - Files >10MB trigger warnings by default (50MB for secondary warning)
+  - `--embed-limit=SIZE` - Customize warning threshold (e.g., `--embed-limit=100MB`)
+  - `--embed-hard-limit` - Make limit violations hard errors instead of warnings
   - `prefix(...)`, `suffix(...)` - Pre/append parameters to data
   - `if_empty(...)` - Handle empty resources
 - String literal concatenation (adjacent strings automatically combined)
@@ -195,14 +197,6 @@ JCC has a custom standard library that is located in `include`. It is just a col
 
 - Blocks/closures (`^{}`) - Complex feature requiring variable capture and closure runtime
 - Nested functions - Requires static chain or trampolines for accessing parent scope
-- `#embed` directive for embedding binary data directly
-  - ~~`#embed "file.bin"`~~ **DONE**
-  - ~~`limit(...)`~~ **DONE**
-  - ~~`prefix(...)`~~ **DONE**
-  - ~~`suffix(...)`~~ **DONE**
-  - ~~`if_empty(...)`~~ **DONE**
-  - Modify limits from arguments, --embed-limit=100mb
-  - Error on limit from arguments, --embed-hard-limit (10mb will be default if --embed--limit is not set)
 
 ### JCC features (and ideas)
 

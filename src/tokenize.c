@@ -222,6 +222,13 @@ void warn_tok(JCC *vm, Token *tok, char *fmt, ...) {
     verror_at(vm, tok->file->name, tok->file->contents, tok->line_no, tok->loc, fmt, ap);
     va_end(ap);
 
+    // If error_jmp_buf is set but collect_errors is false, print the warning now
+    // (verror_at will have stored it in error_message without printing)
+    if (vm && vm->error_jmp_buf && !vm->collect_errors && !vm->warnings_as_errors && vm->error_message) {
+        fprintf(stderr, "%s", vm->error_message);
+        vm->error_message = NULL;
+    }
+
     // If warnings are treated as errors, call error_tok instead
     if (vm && vm->warnings_as_errors) {
         if (vm->error_message) {

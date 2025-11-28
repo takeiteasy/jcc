@@ -66,6 +66,9 @@ static void usage(const char *argv0, int exit_code) {
     printf("\t   --memory-poisoning        Poison allocated/freed memory (0xCD/0xDD patterns)\n");
     printf("\t-T/--memory-tagging          Temporal memory tagging (track pointer generation tags)\n");
     printf("\t-V/--vm-heap                 Route all malloc/free through VM heap (enables memory safety)\n");
+    printf("\nPreprocessor Options:\n");
+    printf("\t   --embed-limit=SIZE        Set #embed file size warning limit (e.g., 50MB, 100mb, default: 10MB)\n");
+    printf("\t   --embed-hard-limit        Make #embed limit a hard error instead of warning\n");
     printf("\nExample:\n");
     printf("\t%s -o hello hello.c\n", argv0);
     printf("\t%s -I ./include -D DEBUG -o prog prog.c\n", argv0);
@@ -141,6 +144,35 @@ static void parse_define(JCC *vm, char *arg) {
         cc_define(vm, arg, "1");
 }
 
+static size_t parse_size(const char *str, const char *flag_name) {
+    char *endptr;
+    double value = strtod(str, &endptr);
+
+    if (value < 0) {
+        fprintf(stderr, "error: %s must be non-negative\n", flag_name);
+        exit(1);
+    }
+
+    size_t multiplier = 1;
+    if (*endptr != '\0') {
+        // Parse suffix (KB, MB, GB, etc.)
+        if (strcasecmp(endptr, "kb") == 0 || strcasecmp(endptr, "k") == 0) {
+            multiplier = 1024;
+        } else if (strcasecmp(endptr, "mb") == 0 || strcasecmp(endptr, "m") == 0) {
+            multiplier = 1024 * 1024;
+        } else if (strcasecmp(endptr, "gb") == 0 || strcasecmp(endptr, "g") == 0) {
+            multiplier = 1024 * 1024 * 1024;
+        } else if (strcasecmp(endptr, "b") == 0) {
+            multiplier = 1;  // Bytes
+        } else {
+            fprintf(stderr, "error: invalid size suffix '%s' for %s (use KB, MB, GB, or B)\n", endptr, flag_name);
+            exit(1);
+        }
+    }
+
+    return (size_t)(value * multiplier);
+}
+
 
 int main(int argc, const char* argv[]) {
     int exit_code = 0;
@@ -167,6 +199,8 @@ int main(int argc, const char* argv[]) {
     int url_cache_clear = 0; // --url-cache-clear
     int max_errors = 20; // --max-errors (default: 20)
     int warnings_as_errors = 0; // --Werror
+    size_t embed_limit = 0; // --embed-limit (0 = use default)
+    int embed_hard_error = 0; // --embed-hard-limit
 
     if (argc <= 1)
         usage(argv[0], 1);
@@ -212,6 +246,8 @@ int main(int argc, const char* argv[]) {
         {"url-cache-clear", no_argument, 0, 1009},
         {"max-errors", required_argument, 0, 1010},
         {"Werror", no_argument, 0, 1011},
+        {"embed-limit", required_argument, 0, 1014},
+        {"embed-hard-limit", no_argument, 0, 1015},
         {0, 0, 0, 0}
     };
 
@@ -377,6 +413,12 @@ int main(int argc, const char* argv[]) {
         case 1011:
             warnings_as_errors = 1;
             break;
+        case 1014:  // --embed-limit
+            embed_limit = parse_size(optarg, "--embed-limit");
+            break;
+        case 1015:  // --embed-hard-limit
+            embed_hard_error = 1;
+            break;
         case '?':
             if (optopt)
                 fprintf(stderr, "error: option -%c requires an argument\n", optopt);
@@ -442,6 +484,15 @@ int main(int argc, const char* argv[]) {
     if (verbose)
         vm.debug_vm = 1;
 
+    // Configure #embed limits if specified
+    if (embed_limit > 0) {
+        vm.embed_limit = embed_limit;
+        vm.embed_hard_limit = embed_limit;  // Use same value for both warnings
+    }
+    if (embed_hard_error) {
+        vm.embed_hard_error = true;
+    }
+
     // If random canaries are enabled, regenerate the stack canary
     if (vm.flags & JCC_RANDOM_CANARIES) {
         vm.stack_canary = generate_random_canary();
@@ -503,11 +554,13 @@ int main(int argc, const char* argv[]) {
         }
     }
 
-    // Check for errors after preprocessing
-    if (cc_has_errors(&vm)) {
+    // Check for errors and warnings after preprocessing
+    if (cc_has_errors(&vm) || vm.warning_count > 0) {
         cc_print_all_errors(&vm);
-        exit_code = 1;
-        goto BAIL;
+        if (cc_has_errors(&vm)) {
+            exit_code = 1;
+            goto BAIL;
+        }
     }
 
     // Compile any pragma macros that were extracted during preprocessing
