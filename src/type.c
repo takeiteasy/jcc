@@ -44,8 +44,9 @@ Type *ty_ldouble = &(Type){TY_LDOUBLE, 16, 16};
 static Type ty_error_obj = {TY_ERROR, 0, 1};
 Type *ty_error = &ty_error_obj;
 
-static Type *new_type(TypeKind kind, int size, int align) {
-    Type *ty = calloc(1, sizeof(Type));
+static Type *new_type(JCC *vm, TypeKind kind, int size, int align) {
+    Type *ty = arena_alloc(&vm->parser_arena, sizeof(Type));
+    memset(ty, 0, sizeof(Type));
     ty->kind = kind;
     ty->size = size;
     ty->align = align;
@@ -121,53 +122,53 @@ bool is_compatible(Type *t1, Type *t2) {
     return false;
 }
 
-Type *copy_type(Type *ty) {
-    Type *ret = calloc(1, sizeof(Type));
+Type *copy_type(JCC *vm, Type *ty) {
+    Type *ret = arena_alloc(&vm->parser_arena, sizeof(Type));
     *ret = *ty;
     ret->origin = ty;
     // Note: is_const is preserved through memcpy (*ret = *ty)
     return ret;
 }
 
-Type *pointer_to(Type *base) {
-    Type *ty = new_type(TY_PTR, 8, 8);
+Type *pointer_to(JCC *vm, Type *base) {
+    Type *ty = new_type(vm, TY_PTR, 8, 8);
     ty->base = base;
     ty->is_unsigned = true;
     return ty;
 }
 
-Type *func_type(Type *return_ty) {
+Type *func_type(JCC *vm, Type *return_ty) {
     // The C spec disallows sizeof(<function type>), but
     // GCC allows that and the expression is evaluated to 1.
-    Type *ty = new_type(TY_FUNC, 1, 1);
+    Type *ty = new_type(vm, TY_FUNC, 1, 1);
     ty->return_ty = return_ty;
     return ty;
 }
 
-Type *array_of(Type *base, int len) {
-    Type *ty = new_type(TY_ARRAY, base->size * len, base->align);
+Type *array_of(JCC *vm, Type *base, int len) {
+    Type *ty = new_type(vm, TY_ARRAY, base->size * len, base->align);
     ty->base = base;
     ty->array_len = len;
     return ty;
 }
 
-Type *vla_of(Type *base, Node *len) {
-    Type *ty = new_type(TY_VLA, 8, 8);
+Type *vla_of(JCC *vm, Type *base, Node *len) {
+    Type *ty = new_type(vm, TY_VLA, 8, 8);
     ty->base = base;
     ty->vla_len = len;
     return ty;
 }
 
-Type *enum_type(void) {
-    return new_type(TY_ENUM, 4, 4);  // enums are int-sized (4 bytes)
+Type *enum_type(JCC *vm) {
+    return new_type(vm, TY_ENUM, 4, 4);  // enums are int-sized (4 bytes)
 }
 
-Type *struct_type(void) {
-    return new_type(TY_STRUCT, 0, 1);
+Type *struct_type(JCC *vm) {
+    return new_type(vm, TY_STRUCT, 0, 1);
 }
 
-Type *union_type(void) {
-    return new_type(TY_UNION, 0, 1);
+Type *union_type(JCC *vm) {
+    return new_type(vm, TY_UNION, 0, 1);
 }
 
 // Integer promotion: Convert types smaller than int to int (C99 6.3.1.1)
@@ -206,20 +207,20 @@ static int get_integer_rank(Type *ty) {
 }
 
 // Usual arithmetic conversions (C99 6.3.1.8)
-static Type *get_common_type(Type *ty1, Type *ty2) {
+static Type *get_common_type(JCC *vm, Type *ty1, Type *ty2) {
     // Handle error types - propagate error
     if (!ty1 || !ty2 || ty1->kind == TY_ERROR || ty2->kind == TY_ERROR)
         return ty_error;
 
     // Handle pointer arithmetic
     if (ty1->base)
-        return pointer_to(ty1->base);
+        return pointer_to(vm, ty1->base);
 
     // Handle function pointers
     if (ty1->kind == TY_FUNC)
-        return pointer_to(ty1);
+        return pointer_to(vm, ty1);
     if (ty2->kind == TY_FUNC)
-        return pointer_to(ty2);
+        return pointer_to(vm, ty2);
 
     // Step 1: If either operand has type long double, the other is converted to long double
     if (ty1->kind == TY_LDOUBLE || ty2->kind == TY_LDOUBLE)
@@ -264,7 +265,7 @@ static Type *get_common_type(Type *ty1, Type *ty2) {
 
     // Step 9: Otherwise, both operands are converted to the unsigned integer type corresponding
     // to the type of the operand with signed integer type
-    Type *result = copy_type(signed_ty);
+    Type *result = copy_type(vm, signed_ty);
     result->is_unsigned = true;
     return result;
 }
@@ -277,7 +278,7 @@ static Type *get_common_type(Type *ty1, Type *ty2) {
 //
 // This operation is called the "usual arithmetic conversion".
 static void usual_arith_conv(JCC *vm, Node **lhs, Node **rhs) {
-    Type *ty = get_common_type((*lhs)->ty, (*rhs)->ty);
+    Type *ty = get_common_type(vm, (*lhs)->ty, (*rhs)->ty);
     // Skip casting if we have error types - they propagate automatically
     if (ty->kind == TY_ERROR)
         return;
@@ -327,7 +328,7 @@ void add_type(JCC *vm, Node *node) {
             node->ty = node->lhs->ty;
             return;
         case ND_NEG: {
-            Type *ty = get_common_type(ty_int, node->lhs->ty);
+            Type *ty = get_common_type(vm, ty_int, node->lhs->ty);
             node->lhs = new_cast(vm, node->lhs, ty);
             node->ty = ty;
             return;
@@ -385,7 +386,7 @@ void add_type(JCC *vm, Node *node) {
             // Function-to-pointer decay: when a function name is used as a value,
             // it decays to a pointer to that function
             if (node->var->ty->kind == TY_FUNC) {
-                node->ty = pointer_to(node->var->ty);
+                node->ty = pointer_to(vm, node->var->ty);
             }
             return;
         case ND_COND:
@@ -403,16 +404,16 @@ void add_type(JCC *vm, Node *node) {
             node->ty = node->member->ty;
             // If the struct/union is const, propagate const to member access
             if (node->lhs && node->lhs->ty && node->lhs->ty->is_const) {
-                node->ty = copy_type(node->ty);
+                node->ty = copy_type(vm, node->ty);
                 node->ty->is_const = true;
             }
             return;
         case ND_ADDR: {
             Type *ty = node->lhs->ty;
             if (ty->kind == TY_ARRAY)
-                node->ty = pointer_to(ty->base);
+                node->ty = pointer_to(vm, ty->base);
             else
-                node->ty = pointer_to(ty);
+                node->ty = pointer_to(vm, ty);
             return;
         }
         case ND_DEREF:
@@ -449,7 +450,7 @@ void add_type(JCC *vm, Node *node) {
             error_tok(vm, node->tok, "statement expression returning void is not supported");
             return;
         case ND_LABEL_VAL:
-            node->ty = pointer_to(ty_void);
+            node->ty = pointer_to(vm, ty_void);
             return;
         case ND_CAS:
             add_type(vm, node->cas_addr);

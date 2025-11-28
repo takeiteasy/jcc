@@ -294,14 +294,14 @@ extern JCC* __jcc_get_vm(void);
 // ============================================================================
 
 /*! Create a pointer type. */
-#define AST_MAKE_POINTER(base) ast_make_pointer(base)
+#define AST_MAKE_POINTER(base) ast_make_pointer(_vm, base)
 
 /*! Create an array type. */
-#define AST_MAKE_ARRAY(base, length) ast_make_array(base, length)
+#define AST_MAKE_ARRAY(base, length) ast_make_array(_vm, base, length)
 
 /*! Create a function type. */
 #define AST_MAKE_FUNCTION(return_type, param_types, param_count, is_variadic) \
-    ast_make_function(return_type, param_types, param_count, is_variadic)
+    ast_make_function(_vm, return_type, param_types, param_count, is_variadic)
 
 #ifdef __cplusplus
 }

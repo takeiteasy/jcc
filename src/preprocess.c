@@ -285,6 +285,112 @@ static Token *generate_embed_tokens(JCC *vm, unsigned char *data, size_t size, T
     return head.next;
 }
 
+// Helper: Check if token list ends with a comma
+static bool ends_with_comma(Token *tok) {
+    if (!tok)
+        return false;
+
+    // Find last token
+    Token *last = tok;
+    while (last->next)
+        last = last->next;
+
+    return last->kind == TK_PUNCT && last->len == 1 && last->loc[0] == ',';
+}
+
+// Helper: Check if token list starts with a comma
+static bool starts_with_comma(Token *tok) {
+    if (!tok)
+        return false;
+
+    return tok->kind == TK_PUNCT && tok->len == 1 && tok->loc[0] == ',';
+}
+
+// Helper: Create a comma token
+static Token *make_comma_token(JCC *vm, Token *tmpl) {
+    Token *comma = copy_token(vm, tmpl);
+    comma->kind = TK_PUNCT;
+    comma->len = 1;
+    comma->loc = ",";
+    comma->next = NULL;
+    return comma;
+}
+
+// Helper: Append tokens to current position, updating file/line info
+static Token *append_tokens(JCC *vm, Token *cur, Token *tokens, Token *tmpl) {
+    for (Token *t = tokens; t; t = t->next) {
+        Token *copy = copy_token(vm, t);
+        if (tmpl) {
+            copy->file = tmpl->file;
+            copy->line_no = tmpl->line_no;
+        }
+        copy->next = NULL;
+        cur = cur->next = copy;
+    }
+    return cur;
+}
+
+// Helper: Copy entire token list with updated source location
+static Token *copy_token_list(JCC *vm, Token *tokens, Token *tmpl) {
+    if (!tokens)
+        return NULL;
+
+    Token head = {};
+    Token *cur = &head;
+
+    cur = append_tokens(vm, cur, tokens, tmpl);
+
+    return head.next;
+}
+
+// Generate #embed tokens with prefix, suffix, and if_empty support
+static Token *generate_embed_tokens_with_params(
+    JCC *vm,
+    unsigned char *data,
+    size_t size,
+    Token *prefix_tokens,
+    Token *suffix_tokens,
+    Token *if_empty_tokens,
+    Token *tmpl
+) {
+    // If empty, use if_empty tokens (ignore prefix/suffix)
+    if (size == 0) {
+        return if_empty_tokens ? copy_token_list(vm, if_empty_tokens, tmpl) : NULL;
+    }
+
+    // Non-empty: assemble prefix + bytes + suffix
+    Token head = {};
+    Token *cur = &head;
+
+    // Add prefix tokens
+    if (prefix_tokens) {
+        cur = append_tokens(vm, cur, prefix_tokens, tmpl);
+        // Add comma if prefix doesn't end with one
+        if (!ends_with_comma(prefix_tokens)) {
+            cur = cur->next = make_comma_token(vm, tmpl);
+        }
+    }
+
+    // Add byte tokens
+    Token *byte_tokens = generate_embed_tokens(vm, data, size, tmpl);
+    if (byte_tokens) {
+        for (Token *t = byte_tokens; t; t = t->next) {
+            cur = cur->next = t;
+        }
+    }
+
+    // Add suffix tokens
+    if (suffix_tokens) {
+        // Add comma if suffix doesn't start with one and bytes don't end with one
+        if (!starts_with_comma(suffix_tokens) && byte_tokens && !ends_with_comma(byte_tokens)) {
+            cur = cur->next = make_comma_token(vm, tmpl);
+        }
+        cur = append_tokens(vm, cur, suffix_tokens, tmpl);
+    }
+
+    return head.next;
+}
+
 static Token *read_const_expr(JCC *vm, Token **rest, Token *tok) {
     tok = copy_line(vm, rest, tok);
 
@@ -1104,6 +1210,33 @@ static Token *extract_pragma_macro(JCC *vm, Token *tok) {
     return body_end;
 }
 
+// Read a token sequence for #embed parameters (prefix, suffix, if_empty)
+// Similar to read_macro_arg_one but simplified for #embed use case
+static Token *read_embed_parameter(JCC *vm, Token **rest, Token *tok) {
+    Token head = {};
+    Token *cur = &head;
+    int level = 0;
+
+    for (;;) {
+        if (level == 0 && equal(tok, ")"))
+            break;
+
+        if (tok->kind == TK_EOF)
+            error_tok(vm, tok, "premature end of input");
+
+        if (equal(tok, "("))
+            level++;
+        else if (equal(tok, ")"))
+            level--;
+
+        cur = cur->next = copy_token(vm, tok);
+        tok = tok->next;
+    }
+
+    *rest = tok;
+    return head.next;  // NULL if empty parameter
+}
+
 // Main #embed directive handler
 static Token *handle_embed_directive(JCC *vm, Token *tok, Token *directive_start) {
     // Parse filename (quoted string or <angle brackets>)
@@ -1138,11 +1271,20 @@ static Token *handle_embed_directive(JCC *vm, Token *tok, Token *directive_start
         return tok;
     }
 
-    // Parse optional limit parameter
+    // Parse optional parameters
     long limit = -1;  // -1 means no limit
     bool has_limit = false;
+    Token *prefix_tokens = NULL;
+    Token *suffix_tokens = NULL;
+    Token *if_empty_tokens = NULL;
 
-    if (equal(tok, "limit") || equal(tok, "__limit__")) {
+    // Parse parameters in any order
+    while (equal(tok, "limit") || equal(tok, "__limit__") ||
+           equal(tok, "prefix") || equal(tok, "__prefix__") ||
+           equal(tok, "suffix") || equal(tok, "__suffix__") ||
+           equal(tok, "if_empty") || equal(tok, "__if_empty__")) {
+
+        if (equal(tok, "limit") || equal(tok, "__limit__")) {
         has_limit = true;
         Token *start = tok;
         tok = skip(vm, tok->next, "(");
@@ -1165,6 +1307,19 @@ static Token *handle_embed_directive(JCC *vm, Token *tok, Token *directive_start
 
         if (limit < 0)
             error_tok(vm, start, "limit must be non-negative");
+        } else if (equal(tok, "prefix") || equal(tok, "__prefix__")) {
+            tok = skip(vm, tok->next, "(");
+            prefix_tokens = read_embed_parameter(vm, &tok, tok);
+            tok = skip(vm, tok, ")");
+        } else if (equal(tok, "suffix") || equal(tok, "__suffix__")) {
+            tok = skip(vm, tok->next, "(");
+            suffix_tokens = read_embed_parameter(vm, &tok, tok);
+            tok = skip(vm, tok, ")");
+        } else if (equal(tok, "if_empty") || equal(tok, "__if_empty__")) {
+            tok = skip(vm, tok->next, "(");
+            if_empty_tokens = read_embed_parameter(vm, &tok, tok);
+            tok = skip(vm, tok, ")");
+        }
     }
 
     // Skip to next line (check for extraneous tokens)
@@ -1216,8 +1371,9 @@ static Token *handle_embed_directive(JCC *vm, Token *tok, Token *directive_start
         warn_tok(vm, directive_start, "embedding very large file: %s (%zu bytes)", path, embed_size);
     }
 
-    // Generate token sequence
-    Token *embed_tokens = generate_embed_tokens(vm, data, embed_size, directive_start);
+    // Generate token sequence with parameter support
+    Token *embed_tokens = generate_embed_tokens_with_params(
+        vm, data, embed_size, prefix_tokens, suffix_tokens, if_empty_tokens, directive_start);
 
     // Link to rest of token stream
     if (embed_tokens) {
@@ -1502,18 +1658,22 @@ static Token *timestamp_macro(JCC *vm, Token *tmpl) {
 }
 
 // __DATE__ is expanded to the current date, e.g. "May 17 2020".
-static char *format_date(struct tm *tm) {
+static char *format_date(JCC *vm, struct tm *tm) {
     static char mon[][4] = {
         "Jan", "Feb", "Mar", "Apr", "May", "Jun",
         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     };
 
-    return format("\"%s %2d %d\"", mon[tm->tm_mon], tm->tm_mday, tm->tm_year + 1900);
+    char *result = format("\"%s %2d %d\"", mon[tm->tm_mon], tm->tm_mday, tm->tm_year + 1900);
+    strarray_push(&vm->file_buffers, result);
+    return result;
 }
 
 // __TIME__ is expanded to the current time, e.g. "13:34:03".
-static char *format_time(struct tm *tm) {
-    return format("\"%02d:%02d:%02d\"", tm->tm_hour, tm->tm_min, tm->tm_sec);
+static char *format_time(JCC *vm, struct tm *tm) {
+    char *result = format("\"%02d:%02d:%02d\"", tm->tm_hour, tm->tm_min, tm->tm_sec);
+    strarray_push(&vm->file_buffers, result);
+    return result;
 }
 
 void init_macros(JCC *vm) {
@@ -1629,8 +1789,8 @@ void init_macros(JCC *vm) {
 
     time_t now = time(NULL);
     struct tm *tm = localtime(&now);
-    define_macro(vm, "__DATE__", format_date(tm));
-    define_macro(vm, "__TIME__", format_time(tm));
+    define_macro(vm, "__DATE__", format_date(vm, tm));
+    define_macro(vm, "__TIME__", format_time(vm, tm));
 }
 
 typedef enum {
@@ -1710,7 +1870,7 @@ static void join_adjacent_string_literals(JCC *vm, Token *tok) {
         }
 
         *tok1 = *copy_token(vm, tok1);
-        tok1->ty = array_of(tok1->ty->base, len);
+        tok1->ty = array_of(vm, tok1->ty->base, len);
         tok1->str = buf;
         tok1->next = tok2;
         tok1 = tok2;

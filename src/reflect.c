@@ -617,23 +617,23 @@ int ast_token_text(Token *tok, char *buffer, int bufsize) {
     return len;
 }
 
-Type *ast_make_pointer(Type *base) {
+Type *ast_make_pointer(JCC *vm, Type *base) {
     if (!base)
         return NULL;
-    return pointer_to(base);
+    return pointer_to(vm, base);
 }
 
-Type *ast_make_array(Type *base, int length) {
+Type *ast_make_array(JCC *vm, Type *base, int length) {
     if (!base || length < 0)
         return NULL;
-    return array_of(base, length);
+    return array_of(vm, base, length);
 }
 
-Type *ast_make_function(Type *return_type, Type **param_types, int param_count, bool is_variadic) {
+Type *ast_make_function(JCC *vm, Type *return_type, Type **param_types, int param_count, bool is_variadic) {
     if (!return_type)
         return NULL;
 
-    Type *ty = func_type(return_type);
+    Type *ty = func_type(vm, return_type);
 
     // Link parameter types
     if (param_types && param_count > 0) {
@@ -757,7 +757,7 @@ Node *ast_function(JCC *vm, const char *name, Type *return_type) {
     func->name = strdup(name);
     func->is_function = true;
     func->is_definition = true;
-    func->ty = func_type(return_type);
+    func->ty = func_type(vm, return_type);
     func->params = NULL;
     func->body = NULL;
     
@@ -832,7 +832,7 @@ Node *ast_struct(JCC *vm, const char *name) {
     if (!vm || !name)
         return NULL;
 
-    Type *ty = struct_type();
+    Type *ty = struct_type(vm);
     ty->kind = TY_STRUCT;
 
     // Create a synthetic token for the struct name

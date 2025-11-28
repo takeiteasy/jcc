@@ -118,13 +118,13 @@ bool ast_is_union(Type *ty);
 bool ast_is_enum(Type *ty);
 
 /*! Create a pointer type to base. */
-Type *ast_make_pointer(Type *base);
+Type *ast_make_pointer(JCC *vm, Type *base);
 
 /*! Create an array type with specified length. */
-Type *ast_make_array(Type *base, int length);
+Type *ast_make_array(JCC *vm, Type *base, int length);
 
 /*! Create a function type. */
-Type *ast_make_function(Type *return_type, Type **param_types, int param_count, bool is_variadic);
+Type *ast_make_function(JCC *vm, Type *return_type, Type **param_types, int param_count, bool is_variadic);
 
 // ============================================================================
 // Enum Reflection

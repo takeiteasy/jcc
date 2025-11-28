@@ -118,6 +118,10 @@ void cc_init(JCC *vm, uint32_t flags) {
         vm->return_buffer_pool[i] = NULL;  // Will be set to data segment locations
     }
 
+    // Initialize parser arena BEFORE init_macros to avoid orphaning blocks
+    // (init_macros allocates from the arena, so arena must be initialized first)
+    arena_init(&vm->parser_arena, 0);  // 0 = use default (1MB)
+
     init_macros(vm);
     cc_init_parser(vm);
 
@@ -200,9 +204,6 @@ void cc_init(JCC *vm, uint32_t flags) {
 #ifdef JCC_HAS_FFI
     cc_define(vm, "JCC_HAS_FFI", "1");
 #endif
-
-    // Initialize parser arena (1MB default block size)
-    arena_init(&vm->parser_arena, 0);  // 0 = use default (1MB)
 
     // Initialize error collection fields
     vm->errors = NULL;
