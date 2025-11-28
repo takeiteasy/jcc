@@ -1363,12 +1363,22 @@ static Token *handle_embed_directive(JCC *vm, Token *tok, Token *directive_start
         embed_size = (size_t)limit;
     }
 
-    // Warn about large files
-    if (embed_size >= 10 * 1024 * 1024) {
-        warn_tok(vm, directive_start, "embedding large file: %s (%zu bytes)", path, embed_size);
+    // Check against configured limits
+    if (embed_size >= vm->embed_limit) {
+        if (vm->embed_hard_error) {
+            error_tok(vm, directive_start, "embedding large file exceeds limit: %s (%zu bytes, limit: %zu bytes)",
+                      path, embed_size, vm->embed_limit);
+        } else {
+            warn_tok(vm, directive_start, "embedding large file: %s (%zu bytes)", path, embed_size);
+        }
     }
-    if (embed_size >= 50 * 1024 * 1024) {
-        warn_tok(vm, directive_start, "embedding very large file: %s (%zu bytes)", path, embed_size);
+    if (embed_size >= vm->embed_hard_limit) {
+        if (vm->embed_hard_error) {
+            error_tok(vm, directive_start, "embedding very large file exceeds limit: %s (%zu bytes, limit: %zu bytes)",
+                      path, embed_size, vm->embed_hard_limit);
+        } else {
+            warn_tok(vm, directive_start, "embedding very large file: %s (%zu bytes)", path, embed_size);
+        }
     }
 
     // Generate token sequence with parameter support
