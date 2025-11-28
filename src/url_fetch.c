@@ -17,14 +17,18 @@
  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-#include "internal.h"
+#include "./internal.h"
+
+bool is_url(const char *filename) {
+    return (strncmp(filename, "http://", 7) == 0) ||
+           (strncmp(filename, "https://", 8) == 0);
+}
+
+#ifdef JCC_HAS_CURL
 #include <sys/stat.h>
 #include <unistd.h>
 #include <dirent.h>
-
-#ifdef JCC_HAS_CURL
 #include <curl/curl.h>
-#endif
 
 // Maximum size for downloaded headers (10MB)
 // TODO: Make this configurable
@@ -33,11 +37,6 @@
 // Network timeout in seconds
 // TODO: Make this configurable
 #define URL_TIMEOUT 30
-
-bool is_url(const char *filename) {
-    return (strncmp(filename, "http://", 7) == 0) ||
-           (strncmp(filename, "https://", 8) == 0);
-}
 
 void init_url_cache(JCC *vm) {
     if (!vm->url_cache_dir) {
@@ -200,3 +199,4 @@ char *fetch_url_to_cache(JCC *vm, const char *url) {
     return NULL; // URL support not compiled in
 }
 #endif
+#endif // JCC_HAS_CURL

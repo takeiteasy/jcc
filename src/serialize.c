@@ -2,14 +2,7 @@
 // Converts AST nodes back to C source text for -E pragma macro expansion
 
 #include "jcc.h"
-#include "internal.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-// Forward declarations
-static char *serialize_node_impl(JCC *vm, Node *node, int parent_prec);
-static char *strdup_printf(const char *fmt, ...);
+#include "./internal.h"
 
 // Operator precedence (higher = binds tighter)
 // Based on C operator precedence table

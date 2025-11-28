@@ -260,6 +260,21 @@ This will run all test files and report:
 - Number of failed tests
 - List of any failed tests
 
+**Test runner options:**
+
+```bash
+# Run only tests matching a pattern
+./run_tests --match "*embed*"     # Runs test_embed_basic.c, test_embed_empty.c, etc.
+./run_tests --match "test_ptr*"   # Runs test_ptr_arithmetic.c, test_ptr_deref.c, etc.
+
+# Enable memory leak detection (platform-specific: leaks on macOS, valgrind on Linux, drmemory on Windows)
+./run_tests --leaks
+
+# Pass additional flags to jcc (all non-option arguments are forwarded)
+./run_tests -2                    # Run tests with standard safety level
+./run_tests --vm-heap             # Run tests with VM heap enabled
+```
+
 Individual tests can be run directly:
 
 ```bash

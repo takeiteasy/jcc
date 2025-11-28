@@ -447,6 +447,7 @@ int main(int argc, const char* argv[]) {
         vm.stack_canary = generate_random_canary();
     }
 
+#ifdef JCC_HAS_CURL
     // Configure URL cache if needed
     if (url_cache_dir) {
         vm.url_cache_dir = url_cache_dir;
@@ -454,6 +455,7 @@ int main(int argc, const char* argv[]) {
     if (url_cache_clear) {
         clear_url_cache(&vm);
     }
+#endif
 
     // Enable error collection for better error reporting
     vm.collect_errors = true;
@@ -534,7 +536,7 @@ int main(int argc, const char* argv[]) {
         }
         goto BAIL;
     }
-    
+
     input_progs = calloc(input_files_count, sizeof(Obj*));
     for (int i = 0; i < input_files_count; i++) {
         input_progs[i] = cc_parse(&vm, input_tokens[i]);
@@ -619,7 +621,7 @@ int main(int argc, const char* argv[]) {
 
     // Run the program
     exit_code = cc_run(&vm, argc, (char**)argv);
-    
+
 BAIL:
     cc_destroy(&vm);
     if (input_tokens)
