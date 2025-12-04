@@ -1068,6 +1068,134 @@ typedef struct Debugger {
     int num_watchpoints;
 } Debugger;
 
+#ifndef MAX_CALLS
+#define MAX_CALLS 1024
+#endif
+
+#ifndef MAX_LABELS
+#define MAX_LABELS 256
+#endif
+
+#ifndef MAX_SPARSE_CASES
+#define MAX_SPARSE_CASES 256
+#endif
+
+#define RETURN_BUFFER_POOL_SIZE 8
+
+/*!
+ @struct Compiler
+ @abstract Encapsulates all compiler frontend state: preprocessor, parser, and code generator.
+ @discussion Contains state for preprocessing (#include, #define, #if), parsing (AST construction,
+             scope management), and code generation (labels, patches, FFI). Separated from VM
+             runtime state to clarify the compilation/execution boundary.
+*/
+typedef struct Compiler {
+    // Preprocessor state
+    bool skip_preprocess;               // Skip preprocessing step
+    HashMap macros;                     // Macro definitions
+    CondIncl *cond_incl;                // Conditional inclusion stack
+    HashMap pragma_once;                // #pragma once tracking
+    HashMap included_headers;           // Track included headers for lazy stdlib loading
+    int include_next_idx;               // Index for #include_next
+
+    // #embed directive limits
+    size_t embed_limit;                 // Soft limit for #embed size (default: 10MB)
+    size_t embed_hard_limit;            // Secondary warning threshold (default: 50MB)
+    bool embed_hard_error;              // If true, exceeding limit is a hard error
+
+    // Tokenization state
+    File *current_file;                 // Input file
+    File **input_files;                 // A list of all input files
+    bool at_bol;                        // True if at beginning of line
+    bool has_space;                     // True if follows a space character
+
+    // Parser state
+    Obj *locals;                        // All local variable instances during parsing
+    Obj *globals;                       // Global variables accumulated list
+    Scope *scope;                       // Current scope
+    Obj *initializing_var;              // Variable being initialized (for const initialization)
+    Obj *current_fn;                    // Function being parsed
+    Node *gotos;                        // Goto statements in current function
+    Node *labels;                       // Labels in current function
+    char *brk_label;                    // Current break jump target
+    char *cont_label;                   // Current continue jump target
+    Node *current_switch;               // Switch statement being parsed (NULL if none)
+    Obj *builtin_alloca;                // Builtin alloca function
+    Obj *builtin_setjmp;                // Builtin setjmp function
+    Obj *builtin_longjmp;               // Builtin longjmp function
+
+    // Arena allocator for parser frontend (tokens, AST, preprocessor state)
+    Arena parser_arena;                 // Fast bump-pointer allocator
+
+    StringArray include_paths;          // Quote include search paths
+    StringArray system_include_paths;   // System header search paths for <...>
+    HashMap include_cache;              // Cache for search_include_paths
+    StringArray file_buffers;           // Track allocated file buffers for cleanup
+
+    // URL include cache (only used when JCC_HAS_CURL is enabled)
+    char *url_cache_dir;                // Directory for caching downloaded headers
+    HashMap url_to_path;                // Maps URLs to cached file paths
+
+    // Code generation state
+    int label_counter;                  // For generating unique labels
+    int local_offset;                   // Current local variable offset
+
+    struct {
+        long long *location;            // Location in text segment to patch
+        Obj *function;                  // Function to call
+    } call_patches[MAX_CALLS];
+    int num_call_patches;
+
+    // Function address patches for function pointers
+    struct {
+        long long *location;            // Location of IMM operand to patch
+        Obj *function;                  // Function whose address to use
+    } func_addr_patches[MAX_CALLS];
+    int num_func_addr_patches;
+
+    LabelEntry label_table[MAX_LABELS];
+    int num_labels;
+    GotoPatch goto_patches[MAX_LABELS];
+    int num_goto_patches;
+
+    // Switch statement code generation (for dense switches)
+    long long *current_switch_table;    // Jump table being filled
+    long current_switch_min;            // Minimum case value
+    long current_switch_size;           // Jump table size
+    Node *current_switch_default;       // Default case node
+
+    // Switch statement code generation (for sparse switches)
+    long long *current_sparse_case_table;   // Array of jump addresses
+    int current_sparse_num;                 // Number of case entries
+    Node *sparse_case_nodes[MAX_SPARSE_CASES];          // Case nodes
+    long long *sparse_jump_addrs[MAX_SPARSE_CASES];     // Jump address pointers
+
+    // Inline assembly callback
+    JCCAsmCallback asm_callback;        // User-provided callback for asm statements
+    void *asm_user_data;                // User-provided context for callback
+
+    // Foreign Function Interface (FFI)
+    ForeignFunc *ffi_table;             // Registry of foreign C functions
+    int ffi_count;                      // Number of registered functions
+    int ffi_capacity;                   // Capacity of ffi_table array
+
+    // Current function being compiled (for VLA cleanup)
+    Obj *current_codegen_fn;
+
+    // Struct/union return buffer pool (copy-before-return approach)
+    char *return_buffer_pool[RETURN_BUFFER_POOL_SIZE];  // Pool of return buffers
+    int return_buffer_index;            // Current buffer index (rotates 0-7)
+    int return_buffer_size;             // Size of each buffer (1024 bytes)
+
+    // Linked programs for extern offset propagation
+    Obj **link_progs;                   // Array of original program lists
+    int link_prog_count;                // Number of programs
+
+    // Per-instance state (moved from static globals for thread-safety)
+    int unique_name_counter;            // Counter for new_unique_name()
+    int counter_macro_value;            // __COUNTER__ macro value
+} Compiler;
+
 /*!
  @struct JCC
  @abstract Encapsulates all state for the JCC compiler and virtual
@@ -1147,124 +1275,8 @@ struct JCC {
     // Debugger state (enable via JCC_ENABLE_DEBUGGER flag)
     Debugger dbg;
 
-    // Preprocessor state
-    bool skip_preprocess;  // Skip preprocessing step
-    HashMap macros;
-    CondIncl *cond_incl;
-    HashMap pragma_once;
-    HashMap included_headers;  // Track which standard headers have been included (for lazy stdlib loading)
-    int include_next_idx;
-
-    // #embed directive limits
-    size_t embed_limit;           // Soft limit for #embed size (default: 10MB)
-    size_t embed_hard_limit;      // Secondary warning threshold (default: 50MB)
-    bool embed_hard_error;        // If true, exceeding limit is a hard error instead of warning
-
-    // Tokenization state
-    File *current_file;         // Input file
-    File **input_files;         // A list of all input files.
-    bool at_bol;                // True if the current position is at the beginning of a line
-    bool has_space;             // True if the current position follows a space character
-
-    // Parser state
-    // All local variable instances created during parsing are
-    Obj *locals;                // accumulated to this list.
-    // Likewise, global variables are accumulated to this list.
-    Obj *globals;
-    Scope *scope;
-    // Track variable being initialized (for const initialization)
-    Obj *initializing_var;
-    // Points to the function object the parser is currently parsing.
-    Obj *current_fn;
-    // Lists of all goto statements and labels in the curent function.
-    Node *gotos;
-    Node *labels;
-    // Current "goto" and "continue" jump targets.
-    char *brk_label;
-    char *cont_label;
-    // Points to a node representing a switch if we are parsing
-    // a switch statement. Otherwise, NULL.
-    Node *current_switch;
-    Obj *builtin_alloca;
-    Obj *builtin_setjmp;
-    Obj *builtin_longjmp;
-
-    // Arena allocator for parser frontend (tokens, AST, preprocessor state)
-    Arena parser_arena;             // Fast bump-pointer allocator for compilation-time allocations
-
-    StringArray include_paths;
-    StringArray system_include_paths;  // System header search paths for <...>
-    HashMap include_cache;             // Cache for search_include_paths
-    StringArray file_buffers;          // Track allocated file buffers for cleanup
-
-    // URL include cache (only used when JCC_HAS_CURL is enabled)
-    char *url_cache_dir;               // Directory for caching downloaded headers
-    HashMap url_to_path;               // Maps URLs to cached file paths (for error reporting)
-
-    // Code generation state
-    int label_counter;          // For generating unique labels
-    int local_offset;           // Current local variable offset
-
-#ifndef MAX_CALLS
-#define MAX_CALLS 1024
-#endif
-    struct {
-        long long *location; // Location in text segment to patch
-        Obj *function;       // Function to call
-    } call_patches[MAX_CALLS];
-    int num_call_patches;
-
-    // Function address patches for function pointers
-    struct {
-        long long *location; // Location of IMM operand to patch with function address
-        Obj *function;       // Function whose address to use
-    } func_addr_patches[MAX_CALLS];
-    int num_func_addr_patches;
-
-#ifndef MAX_LABELS
-#define MAX_LABELS 256
-#endif
-    LabelEntry label_table[MAX_LABELS];
-    int num_labels;
-    GotoPatch goto_patches[MAX_LABELS];
-    int num_goto_patches;
-
-    // Switch statement code generation (for dense switches)
-    long long *current_switch_table;  // Jump table being filled
-    long current_switch_min;           // Minimum case value
-    long current_switch_size;          // Jump table size
-    Node *current_switch_default;      // Default case node (to avoid filling jump table)
-
-    // Switch statement code generation (for sparse switches)
-    long long *current_sparse_case_table;  // Array of jump addresses
-    int current_sparse_num;                  // Number of case entries
-    #ifndef MAX_SPARSE_CASES
-    #define MAX_SPARSE_CASES 256
-    #endif
-    Node *sparse_case_nodes[MAX_SPARSE_CASES];    // Case nodes
-    long long *sparse_jump_addrs[MAX_SPARSE_CASES];  // Jump address pointers
-
-    // Inline assembly callback
-    JCCAsmCallback asm_callback;  // User-provided callback for asm statements
-    void *asm_user_data;               // User-provided context for callback
-
-    // Foreign Function Interface (FFI)
-    ForeignFunc *ffi_table;            // Registry of foreign C functions
-    int ffi_count;                     // Number of registered functions
-    int ffi_capacity;                  // Capacity of ffi_table array
-
-    // Current function being compiled (for VLA cleanup)
-    Obj *current_codegen_fn;
-
-    // Struct/union return buffer pool (copy-before-return approach)
-    #define RETURN_BUFFER_POOL_SIZE 8
-    char *return_buffer_pool[RETURN_BUFFER_POOL_SIZE];  // Pool of return buffers
-    int return_buffer_index;           // Current buffer index (rotates 0-7)
-    int return_buffer_size;            // Size of each buffer (1024 bytes)
-
-    // Linked programs for extern offset propagation
-    Obj **link_progs;                 // Array of original program lists
-    int link_prog_count;               // Number of programs
+    // Compiler state (preprocessor, parser, codegen)
+    Compiler compiler;
 
     // Error handling (setjmp/longjmp for exception-like behavior)
     jmp_buf *error_jmp_buf;            // Jump buffer for error handling (NULL = use exit())
@@ -1278,10 +1290,6 @@ struct JCC {
     int max_errors;                    // Maximum errors before stopping (default: 20)
     bool collect_errors;               // Enable error collection mode
     bool warnings_as_errors;           // Treat warnings as errors (--Werror)
-
-    // Per-instance state (moved from static globals for thread-safety/multi-VM support)
-    int unique_name_counter;           // Counter for new_unique_name() (was static in parse.c)
-    int counter_macro_value;           // __COUNTER__ macro value (was static in preprocess.c)
 };
 
 /*!

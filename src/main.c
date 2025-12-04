@@ -490,11 +490,11 @@ int main(int argc, const char* argv[]) {
 
     // Configure #embed limits if specified
     if (embed_limit > 0) {
-        vm.embed_limit = embed_limit;
-        vm.embed_hard_limit = embed_limit;  // Use same value for both warnings
+        vm.compiler.embed_limit = embed_limit;
+        vm.compiler.embed_hard_limit = embed_limit;  // Use same value for both warnings
     }
     if (embed_hard_error) {
-        vm.embed_hard_error = true;
+        vm.compiler.embed_hard_error = true;
     }
 
     // If random canaries are enabled, regenerate the stack canary
@@ -505,7 +505,7 @@ int main(int argc, const char* argv[]) {
 #ifdef JCC_HAS_CURL
     // Configure URL cache if needed
     if (url_cache_dir) {
-        vm.url_cache_dir = url_cache_dir;
+        vm.compiler.url_cache_dir = url_cache_dir;
     }
     if (url_cache_clear) {
         clear_url_cache(&vm);
@@ -547,7 +547,7 @@ int main(int argc, const char* argv[]) {
     for (int i = 0; i < undefs_count; i++)
         cc_undef(&vm, (char *)undefs[i]);
 
-    vm.skip_preprocess = skip_preprocess;
+    vm.compiler.skip_preprocess = skip_preprocess;
     Obj **input_progs = NULL;
     Token **input_tokens = calloc(input_files_count, sizeof(Token*));
     for (int i = 0; i < input_files_count; i++) {

@@ -170,19 +170,19 @@ static int align_down(int n, int align) {
 }
 
 static void enter_scope(JCC *vm) {
-    Scope *sc = arena_alloc(&vm->parser_arena, sizeof(Scope));
+    Scope *sc = arena_alloc(&vm->compiler.parser_arena, sizeof(Scope));
     memset(sc, 0, sizeof(Scope));
-    sc->next = vm->scope;
-    vm->scope = sc;
+    sc->next = vm->compiler.scope;
+    vm->compiler.scope = sc;
 }
 
 static void leave_scope(JCC *vm) {
-    vm->scope = vm->scope->next;
+    vm->compiler.scope = vm->compiler.scope->next;
 }
 
 // Find a variable by name.
 static VarScope *find_var(JCC *vm, Token *tok) {
-    for (Scope *sc = vm->scope; sc; sc = sc->next) {
+    for (Scope *sc = vm->compiler.scope; sc; sc = sc->next) {
         // Linear search through linked list (typically 1-10 entries per scope)
         for (VarScopeNode *node = sc->vars; node; node = node->next) {
             if (node->name_len == tok->len &&
@@ -196,7 +196,7 @@ static VarScope *find_var(JCC *vm, Token *tok) {
 }
 
 static Type *find_tag(JCC *vm, Token *tok) {
-    for (Scope *sc = vm->scope; sc; sc = sc->next) {
+    for (Scope *sc = vm->compiler.scope; sc; sc = sc->next) {
         // Linear search through linked list (typically 1-10 entries per scope)
         for (TagScopeNode *node = sc->tags; node; node = node->next) {
             if (node->name_len == tok->len &&
@@ -209,7 +209,7 @@ static Type *find_tag(JCC *vm, Token *tok) {
 }
 
 static Node *new_node(JCC *vm, NodeKind kind, Token *tok) {
-    Node *node = arena_alloc(&vm->parser_arena, sizeof(Node));
+    Node *node = arena_alloc(&vm->compiler.parser_arena, sizeof(Node));
     memset(node, 0, sizeof(Node));
     node->kind = kind;
     node->tok = tok;
@@ -264,7 +264,7 @@ static Node *new_vla_ptr(JCC *vm, Obj *var, Token *tok) {
 
 Node *new_cast(JCC *vm, Node *expr, Type *ty) {
     add_type(vm, expr);
-    Node *node = arena_alloc(&vm->parser_arena, sizeof(Node));
+    Node *node = arena_alloc(&vm->compiler.parser_arena, sizeof(Node));
     memset(node, 0, sizeof(Node));
     node->kind = ND_CAST;
     node->tok = expr->tok;
@@ -274,19 +274,19 @@ Node *new_cast(JCC *vm, Node *expr, Type *ty) {
 }
 
 static VarScope *push_scope(JCC *vm, char *name, int name_len) {
-    VarScopeNode *node = arena_alloc(&vm->parser_arena, sizeof(VarScopeNode));
+    VarScopeNode *node = arena_alloc(&vm->compiler.parser_arena, sizeof(VarScopeNode));
     memset(node, 0, sizeof(VarScopeNode));
     node->name = name;
     node->name_len = name_len;
     // Insert at head of linked list
-    node->next = vm->scope->vars;
-    vm->scope->vars = node;
+    node->next = vm->compiler.scope->vars;
+    vm->compiler.scope->vars = node;
     // Return pointer to VarScope fields within the node
     return (VarScope *)node;
 }
 
 static Initializer *new_initializer(JCC *vm, Type *ty, bool is_flexible) {
-    Initializer *init = arena_alloc(&vm->parser_arena, sizeof(Initializer));
+    Initializer *init = arena_alloc(&vm->compiler.parser_arena, sizeof(Initializer));
     memset(init, 0, sizeof(Initializer));
     init->ty = ty;
 
@@ -296,7 +296,7 @@ static Initializer *new_initializer(JCC *vm, Type *ty, bool is_flexible) {
             return init;
         }
 
-        init->children = arena_alloc(&vm->parser_arena, ty->array_len * sizeof(Initializer *));
+        init->children = arena_alloc(&vm->compiler.parser_arena, ty->array_len * sizeof(Initializer *));
         memset(init->children, 0, ty->array_len * sizeof(Initializer *));
         for (int i = 0; i < ty->array_len; i++)
             init->children[i] = new_initializer(vm, ty->base, false);
@@ -315,12 +315,12 @@ static Initializer *new_initializer(JCC *vm, Type *ty, bool is_flexible) {
         for (Member *mem = ty->members; mem; mem = mem->next)
             len++;
 
-        init->children = arena_alloc(&vm->parser_arena, len * sizeof(Initializer *));
+        init->children = arena_alloc(&vm->compiler.parser_arena, len * sizeof(Initializer *));
         memset(init->children, 0, len * sizeof(Initializer *));
 
         for (Member *mem = ty->members; mem; mem = mem->next) {
             if (is_flexible && ty->is_flexible && !mem->next) {
-                Initializer *child = arena_alloc(&vm->parser_arena, sizeof(Initializer));
+                Initializer *child = arena_alloc(&vm->compiler.parser_arena, sizeof(Initializer));
                 memset(child, 0, sizeof(Initializer));
                 child->ty = mem->ty;
                 child->is_flexible = true;
@@ -336,7 +336,7 @@ static Initializer *new_initializer(JCC *vm, Type *ty, bool is_flexible) {
 }
 
 static Obj *new_var(JCC *vm, char *name, int name_len, Type *ty) {
-    Obj *var = arena_alloc(&vm->parser_arena, sizeof(Obj));
+    Obj *var = arena_alloc(&vm->compiler.parser_arena, sizeof(Obj));
     memset(var, 0, sizeof(Obj));
     var->name = name;
     var->ty = ty;
@@ -348,23 +348,23 @@ static Obj *new_var(JCC *vm, char *name, int name_len, Type *ty) {
 static Obj *new_lvar(JCC *vm, char *name, int name_len, Type *ty) {
     Obj *var = new_var(vm, name, name_len, ty);
     var->is_local = true;
-    var->next = vm->locals;
-    vm->locals = var;
+    var->next = vm->compiler.locals;
+    vm->compiler.locals = var;
     return var;
 }
 
 static Obj *new_gvar(JCC *vm, char *name, int name_len, Type *ty) {
     Obj *var = new_var(vm, name, name_len, ty);
-    var->next = vm->globals;
+    var->next = vm->compiler.globals;
     var->is_static = true;
     var->is_definition = true;
-    vm->globals = var;
+    vm->compiler.globals = var;
     return var;
 }
 
 static char *new_unique_name(JCC *vm) {
-    char *name = format(".L..%d", vm->unique_name_counter++);
-    strarray_push(&vm->file_buffers, name);
+    char *name = format(".L..%d", vm->compiler.unique_name_counter++);
+    strarray_push(&vm->compiler.file_buffers, name);
     return name;
 }
 
@@ -382,7 +382,7 @@ static Obj *new_string_literal(JCC *vm, char *p, Type *ty) {
 static char *get_ident(JCC *vm, Token *tok) {
     if (tok->kind != TK_IDENT)
         error_tok(vm, tok, "expected an identifier");
-    char *s = arena_alloc(&vm->parser_arena, tok->len + 1);
+    char *s = arena_alloc(&vm->compiler.parser_arena, tok->len + 1);
     memcpy(s, tok->loc, tok->len);
     s[tok->len] = '\0';
     return s;
@@ -442,13 +442,13 @@ static Type *find_typedef(JCC *vm, Token *tok) {
 }
 
 static void push_tag_scope(JCC *vm, Token *tok, Type *ty) {
-    TagScopeNode *node = arena_alloc(&vm->parser_arena, sizeof(TagScopeNode));
+    TagScopeNode *node = arena_alloc(&vm->compiler.parser_arena, sizeof(TagScopeNode));
     node->name = tok->loc;
     node->name_len = tok->len;
     node->ty = ty;
     // Insert at head of linked list
-    node->next = vm->scope->tags;
-    vm->scope->tags = node;
+    node->next = vm->compiler.scope->tags;
+    vm->compiler.scope->tags = node;
 }
 
 // declspec = ("void" | "_Bool" | "char" | "short" | "int" | "long"
@@ -932,7 +932,7 @@ static Type *enum_specifier(JCC *vm, Token **rest, Token *tok) {
         sc->enum_val = val;
 
         // Store enum constant in Type structure for code emission
-        struct EnumConstant *ec = arena_alloc(&vm->parser_arena, sizeof(struct EnumConstant));
+        struct EnumConstant *ec = arena_alloc(&vm->compiler.parser_arena, sizeof(struct EnumConstant));
         memset(ec, 0, sizeof(struct EnumConstant));
         ec->name = name;
         ec->value = val;
@@ -1008,9 +1008,9 @@ static Node *compute_vla_size(JCC *vm, Type *ty, Token *tok) {
 }
 
 static Node *new_alloca(JCC *vm, Node *sz) {
-    Node *node = new_unary(vm, ND_FUNCALL, new_var_node(vm, vm->builtin_alloca, sz->tok), sz->tok);
-    node->func_ty = vm->builtin_alloca->ty;
-    node->ty = vm->builtin_alloca->ty->return_ty;
+    Node *node = new_unary(vm, ND_FUNCALL, new_var_node(vm, vm->compiler.builtin_alloca, sz->tok), sz->tok);
+    node->func_ty = vm->compiler.builtin_alloca->ty;
+    node->ty = vm->compiler.builtin_alloca->ty->return_ty;
     node->args = sz;
     add_type(vm, sz);
     return node;
@@ -1098,7 +1098,7 @@ static Node *declaration(JCC *vm, Token **rest, Token *tok, Type *basety, VarAtt
             // NOTE: Don't clear this until after add_type is called on the function body
             // For now, just set it and it will be cleared when next variable is initialized
             // This works because initializations happen sequentially
-            vm->initializing_var = var;
+            vm->compiler.initializing_var = var;
             Node *expr = lvar_initializer(vm, &tok, tok->next, var);
             cur = cur->next = new_unary(vm, ND_EXPR_STMT, expr, tok);
             // Don't clear here - will be cleared by next init or at end of parsing
@@ -1328,7 +1328,7 @@ static void array_initializer1(JCC *vm, Token **rest, Token *tok, Initializer *i
         // For VLA, keep the VLA type but allocate children for initializer elements
         if (init->ty->kind == TY_VLA) {
             init->is_flexible = false;
-            init->children = arena_alloc(&vm->parser_arena, len * sizeof(Initializer *));
+            init->children = arena_alloc(&vm->compiler.parser_arena, len * sizeof(Initializer *));
             memset(init->children, 0, len * sizeof(Initializer *));
             for (int i = 0; i < len; i++)
                 init->children[i] = new_initializer(vm, init->ty->base, false);
@@ -1379,7 +1379,7 @@ static void array_initializer2(JCC *vm, Token **rest, Token *tok, Initializer *i
         // For VLA, keep the VLA type but allocate children for initializer elements
         if (init->ty->kind == TY_VLA) {
             init->is_flexible = false;
-            init->children = arena_alloc(&vm->parser_arena, len * sizeof(Initializer *));
+            init->children = arena_alloc(&vm->compiler.parser_arena, len * sizeof(Initializer *));
             memset(init->children, 0, len * sizeof(Initializer *));
             for (int j = 0; j < len; j++)
                 init->children[j] = new_initializer(vm, init->ty->base, false);
@@ -1562,7 +1562,7 @@ static Type *copy_struct_type(JCC *vm, Type *ty) {
     Member head = {};
     Member *cur = &head;
     for (Member *mem = ty->members; mem; mem = mem->next) {
-        Member *m = arena_alloc(&vm->parser_arena, sizeof(Member));
+        Member *m = arena_alloc(&vm->compiler.parser_arena, sizeof(Member));
         memset(m, 0, sizeof(Member));
         *m = *mem;
         cur = cur->next = m;
@@ -1786,7 +1786,7 @@ write_gvar_data(JCC *vm, Relocation *cur, Initializer *init, Type *ty, char *buf
         return cur;
     }
 
-    Relocation *rel = arena_alloc(&vm->parser_arena, sizeof(Relocation));
+    Relocation *rel = arena_alloc(&vm->compiler.parser_arena, sizeof(Relocation));
     memset(rel, 0, sizeof(Relocation));
     rel->offset = offset;
     rel->label = label;
@@ -1808,7 +1808,7 @@ static void gvar_initializer(JCC *vm, Token **rest, Token *tok, Obj *var) {
     }
 
     Relocation head = {};
-    char *buf = arena_alloc(&vm->parser_arena, var->ty->size);
+    char *buf = arena_alloc(&vm->compiler.parser_arena, var->ty->size);
     memset(buf, 0, var->ty->size);
     write_gvar_data(vm, &head, init, var->ty, buf, 0);
     var->init_data = buf;
@@ -1889,9 +1889,9 @@ static Node *stmt(JCC *vm, Token **rest, Token *tok) {
         *rest = skip(vm, tok, ";");
 
         add_type(vm, exp);
-        Type *ty = vm->current_fn->ty->return_ty;
+        Type *ty = vm->compiler.current_fn->ty->return_ty;
         if (ty->kind != TY_STRUCT && ty->kind != TY_UNION)
-            exp = new_cast(vm, exp, vm->current_fn->ty->return_ty);
+            exp = new_cast(vm, exp, vm->compiler.current_fn->ty->return_ty);
 
         node->lhs = exp;
         return node;
@@ -1915,21 +1915,21 @@ static Node *stmt(JCC *vm, Token **rest, Token *tok) {
         node->cond = expr(vm, &tok, tok);
         tok = skip(vm, tok, ")");
 
-        Node *sw = vm->current_switch;
-        vm->current_switch = node;
+        Node *sw = vm->compiler.current_switch;
+        vm->compiler.current_switch = node;
 
-        char *brk = vm->brk_label;
-        vm->brk_label = node->brk_label = new_unique_name(vm);
+        char *brk = vm->compiler.brk_label;
+        vm->compiler.brk_label = node->brk_label = new_unique_name(vm);
 
         node->then = stmt(vm, rest, tok);
 
-        vm->current_switch = sw;
-        vm->brk_label = brk;
+        vm->compiler.current_switch = sw;
+        vm->compiler.brk_label = brk;
         return node;
     }
 
     if (equal(tok, "case")) {
-        if (!vm->current_switch) {
+        if (!vm->compiler.current_switch) {
             if (!error_tok_recover(vm, tok, "stray case")) {
                 *rest = tok->next;
                 return new_node(vm, ND_NULL_EXPR, tok);
@@ -1958,13 +1958,13 @@ static Node *stmt(JCC *vm, Token **rest, Token *tok) {
         node->lhs = stmt(vm, rest, tok);
         node->begin = begin;
         node->end = end;
-        node->case_next = vm->current_switch->case_next;
-        vm->current_switch->case_next = node;
+        node->case_next = vm->compiler.current_switch->case_next;
+        vm->compiler.current_switch->case_next = node;
         return node;
     }
 
     if (equal(tok, "default")) {
-        if (!vm->current_switch) {
+        if (!vm->compiler.current_switch) {
             if (!error_tok_recover(vm, tok, "stray default")) {
                 *rest = tok->next;
                 return new_node(vm, ND_NULL_EXPR, tok);
@@ -1979,7 +1979,7 @@ static Node *stmt(JCC *vm, Token **rest, Token *tok) {
         tok = skip(vm, tok->next, ":");
         node->label = new_unique_name(vm);
         node->lhs = stmt(vm, rest, tok);
-        vm->current_switch->default_case = node;
+        vm->compiler.current_switch->default_case = node;
         return node;
     }
 
@@ -1989,10 +1989,10 @@ static Node *stmt(JCC *vm, Token **rest, Token *tok) {
 
         enter_scope(vm);
 
-        char *brk = vm->brk_label;
-        char *cont = vm->cont_label;
-        vm->brk_label = node->brk_label = new_unique_name(vm);
-        vm->cont_label = node->cont_label = new_unique_name(vm);
+        char *brk = vm->compiler.brk_label;
+        char *cont = vm->compiler.cont_label;
+        vm->compiler.brk_label = node->brk_label = new_unique_name(vm);
+        vm->compiler.cont_label = node->cont_label = new_unique_name(vm);
 
         if (is_typename(vm, tok)) {
             Type *basety = declspec(vm, &tok, tok, NULL);
@@ -2012,8 +2012,8 @@ static Node *stmt(JCC *vm, Token **rest, Token *tok) {
         node->then = stmt(vm, rest, tok);
 
         leave_scope(vm);
-        vm->brk_label = brk;
-        vm->cont_label = cont;
+        vm->compiler.brk_label = brk;
+        vm->compiler.cont_label = cont;
         return node;
     }
 
@@ -2023,30 +2023,30 @@ static Node *stmt(JCC *vm, Token **rest, Token *tok) {
         node->cond = expr(vm, &tok, tok);
         tok = skip(vm, tok, ")");
 
-        char *brk = vm->brk_label;
-        char *cont = vm->cont_label;
-        vm->brk_label = node->brk_label = new_unique_name(vm);
-        vm->cont_label = node->cont_label = new_unique_name(vm);
+        char *brk = vm->compiler.brk_label;
+        char *cont = vm->compiler.cont_label;
+        vm->compiler.brk_label = node->brk_label = new_unique_name(vm);
+        vm->compiler.cont_label = node->cont_label = new_unique_name(vm);
 
         node->then = stmt(vm, rest, tok);
 
-        vm->brk_label = brk;
-        vm->cont_label = cont;
+        vm->compiler.brk_label = brk;
+        vm->compiler.cont_label = cont;
         return node;
     }
 
     if (equal(tok, "do")) {
         Node *node = new_node(vm, ND_DO, tok);
 
-        char *brk = vm->brk_label;
-        char *cont = vm->cont_label;
-        vm->brk_label = node->brk_label = new_unique_name(vm);
-        vm->cont_label = node->cont_label = new_unique_name(vm);
+        char *brk = vm->compiler.brk_label;
+        char *cont = vm->compiler.cont_label;
+        vm->compiler.brk_label = node->brk_label = new_unique_name(vm);
+        vm->compiler.cont_label = node->cont_label = new_unique_name(vm);
 
         node->then = stmt(vm, &tok, tok->next);
 
-        vm->brk_label = brk;
-        vm->cont_label = cont;
+        vm->compiler.brk_label = brk;
+        vm->compiler.cont_label = cont;
 
         tok = skip(vm, tok, "while");
         tok = skip(vm, tok, "(");
@@ -2070,14 +2070,14 @@ static Node *stmt(JCC *vm, Token **rest, Token *tok) {
 
         Node *node = new_node(vm, ND_GOTO, tok);
         node->label = get_ident(vm, tok->next);
-        node->goto_next = vm->gotos;
-        vm->gotos = node;
+        node->goto_next = vm->compiler.gotos;
+        vm->compiler.gotos = node;
         *rest = skip(vm, tok->next->next, ";");
         return node;
     }
 
     if (equal(tok, "break")) {
-        if (!vm->brk_label) {
+        if (!vm->compiler.brk_label) {
             if (!error_tok_recover(vm, tok, "stray break")) {
                 *rest = tok->next;
                 return new_node(vm, ND_NULL_EXPR, tok);
@@ -2088,13 +2088,13 @@ static Node *stmt(JCC *vm, Token **rest, Token *tok) {
             return new_node(vm, ND_NULL_EXPR, tok);
         }
         Node *node = new_node(vm, ND_GOTO, tok);
-        node->unique_label = vm->brk_label;
+        node->unique_label = vm->compiler.brk_label;
         *rest = skip(vm, tok->next, ";");
         return node;
     }
 
     if (equal(tok, "continue")) {
-        if (!vm->cont_label) {
+        if (!vm->compiler.cont_label) {
             if (!error_tok_recover(vm, tok, "stray continue")) {
                 *rest = tok->next;
                 return new_node(vm, ND_NULL_EXPR, tok);
@@ -2105,7 +2105,7 @@ static Node *stmt(JCC *vm, Token **rest, Token *tok) {
             return new_node(vm, ND_NULL_EXPR, tok);
         }
         Node *node = new_node(vm, ND_GOTO, tok);
-        node->unique_label = vm->cont_label;
+        node->unique_label = vm->compiler.cont_label;
         *rest = skip(vm, tok->next, ";");
         return node;
     }
@@ -2115,8 +2115,8 @@ static Node *stmt(JCC *vm, Token **rest, Token *tok) {
         node->label = strndup(tok->loc, tok->len);
         node->unique_label = new_unique_name(vm);
         node->lhs = stmt(vm, rest, tok->next->next);
-        node->goto_next = vm->labels;
-        vm->labels = node;
+        node->goto_next = vm->compiler.labels;
+        vm->compiler.labels = node;
         return node;
     }
 
@@ -2158,14 +2158,14 @@ static Node *compound_stmt(JCC *vm, Token **rest, Token *tok) {
         } else {
             // Clear initializing_var when we start parsing statements (non-declarations)
             // This ensures const variables can be initialized but not assigned later
-            vm->initializing_var = NULL;
+            vm->compiler.initializing_var = NULL;
             cur = cur->next = stmt(vm, &tok, tok);
         }
         add_type(vm, cur);
     }
 
     // Also clear at end in case there are no statements after declarations
-    vm->initializing_var = NULL;
+    vm->compiler.initializing_var = NULL;
 
     leave_scope(vm);
 
@@ -2986,8 +2986,8 @@ static Node *unary(JCC *vm, Token **rest, Token *tok) {
     if (equal(tok, "&&")) {
         Node *node = new_node(vm, ND_LABEL_VAL, tok);
         node->label = get_ident(vm, tok->next);
-        node->goto_next = vm->gotos;
-        vm->gotos = node;
+        node->goto_next = vm->compiler.gotos;
+        vm->compiler.gotos = node;
         *rest = tok->next->next;
         return node;
     }
@@ -3009,7 +3009,7 @@ static void struct_members(JCC *vm, Token **rest, Token *tok, Type *ty) {
         // Anonymous struct member
         if ((basety->kind == TY_STRUCT || basety->kind == TY_UNION) &&
             consume(vm, &tok, tok, ";")) {
-            Member *mem = arena_alloc(&vm->parser_arena, sizeof(Member));
+            Member *mem = arena_alloc(&vm->compiler.parser_arena, sizeof(Member));
             memset(mem, 0, sizeof(Member));
             mem->ty = basety;
             mem->idx = idx++;
@@ -3024,7 +3024,7 @@ static void struct_members(JCC *vm, Token **rest, Token *tok, Type *ty) {
                 tok = skip(vm, tok, ",");
             first = false;
 
-            Member *mem = arena_alloc(&vm->parser_arena, sizeof(Member));
+            Member *mem = arena_alloc(&vm->compiler.parser_arena, sizeof(Member));
             memset(mem, 0, sizeof(Member));
             mem->ty = declarator(vm, &tok, tok, basety);
             mem->name = mem->ty->name;
@@ -3196,7 +3196,7 @@ static Type *struct_union_decl(JCC *vm, Token **rest, Token *tok) {
         // Otherwise, register the struct type.
         // Linear search in current scope only
         Type *ty2 = NULL;
-        for (TagScopeNode *node = vm->scope->tags; node; node = node->next) {
+        for (TagScopeNode *node = vm->compiler.scope->tags; node; node = node->next) {
             if (node->name_len == tag->len &&
                 strncmp(node->name, tag->loc, tag->len) == 0) {
                 ty2 = node->ty;
@@ -3377,7 +3377,7 @@ static Node *postfix(JCC *vm, Token **rest, Token *tok) {
         Type *ty = typename(vm, &tok, tok->next);
         tok = skip(vm, tok, ")");
 
-        if (vm->scope->next == NULL) {
+        if (vm->compiler.scope->next == NULL) {
             Obj *var = new_anon_gvar(vm, ty);
             gvar_initializer(vm, rest, tok, var);
             return new_var_node(vm, var, start);
@@ -3681,8 +3681,8 @@ static Node *primary(JCC *vm, Token **rest, Token *tok) {
 
         // For "static inline" function
         if (sc && sc->var && sc->var->is_function) {
-            if (vm->current_fn)
-                strarray_push(&vm->current_fn->refs, sc->var->name);
+            if (vm->compiler.current_fn)
+                strarray_push(&vm->compiler.current_fn->refs, sc->var->name);
             else
                 sc->var->is_root = true;
         }
@@ -3784,8 +3784,8 @@ static void create_param_lvars(JCC *vm, Type *param) {
 // can refer a label that appears later in the function.
 // So, we need to do this after we parse the entire function.
 static void resolve_goto_labels(JCC *vm) {
-    for (Node *x = vm->gotos; x; x = x->goto_next) {
-        for (Node *y = vm->labels; y; y = y->goto_next) {
+    for (Node *x = vm->compiler.gotos; x; x = x->goto_next) {
+        for (Node *y = vm->compiler.labels; y; y = y->goto_next) {
             if (!strcmp(x->label, y->label)) {
                 x->unique_label = y->unique_label;
                 break;
@@ -3796,11 +3796,11 @@ static void resolve_goto_labels(JCC *vm) {
             error_tok(vm, x->tok->next, "use of undeclared label");
     }
 
-    vm->gotos = vm->labels = NULL;
+    vm->compiler.gotos = vm->compiler.labels = NULL;
 }
 
 static Obj *find_func(JCC *vm, char *name, int name_len) {
-    Scope *sc = vm->scope;
+    Scope *sc = vm->compiler.scope;
     while (sc->next)
         sc = sc->next;
 
@@ -3859,8 +3859,8 @@ static Token *function(JCC *vm, Token *tok, Type *basety, VarAttr *attr) {
     if (consume(vm, &tok, tok, ";"))
         return tok;
 
-    vm->current_fn = fn;
-    vm->locals = NULL;
+    vm->compiler.current_fn = fn;
+    vm->compiler.locals = NULL;
     enter_scope(vm);
     create_param_lvars(vm, ty->params);
 
@@ -3871,7 +3871,7 @@ static Token *function(JCC *vm, Token *tok, Type *basety, VarAttr *attr) {
     // if ((rty->kind == TY_STRUCT || rty->kind == TY_UNION) && rty->size > 16)
     //     new_lvar(vm, "", pointer_to(rty));
 
-    fn->params = vm->locals;
+    fn->params = vm->compiler.locals;
 
     if (ty->is_variadic)
         fn->va_area = new_lvar(vm, "__va_area__", 11, array_of(vm, ty_char, 136));
@@ -3890,7 +3890,7 @@ static Token *function(JCC *vm, Token *tok, Type *basety, VarAttr *attr) {
     new_string_literal(vm, fn->name, array_of(vm, ty_char, strlen(fn->name) + 1));
 
     fn->body = compound_stmt(vm, &tok, tok);
-    fn->locals = vm->locals;
+    fn->locals = vm->compiler.locals;
     leave_scope(vm);
     resolve_goto_labels(vm);
     return tok;
@@ -3940,14 +3940,14 @@ static void scan_globals(JCC *vm) {
     Obj head;
     Obj *cur = &head;
 
-    for (Obj *var = vm->globals; var; var = var->next) {
+    for (Obj *var = vm->compiler.globals; var; var = var->next) {
         if (!var->is_tentative) {
             cur = cur->next = var;
             continue;
         }
 
         // Find another definition of the same identifier.
-        Obj *var2 = vm->globals;
+        Obj *var2 = vm->compiler.globals;
         for (; var2; var2 = var2->next)
             if (var != var2 && var2->is_definition && !strcmp(var->name, var2->name))
                 break;
@@ -3959,29 +3959,29 @@ static void scan_globals(JCC *vm) {
     }
 
     cur->next = NULL;
-    vm->globals = head.next;
+    vm->compiler.globals = head.next;
 }
 
 static void declare_builtin_functions(JCC *vm) {
     // alloca(size) -> void*
     Type *ty = func_type(vm, pointer_to(vm, ty_void));
     ty->params = copy_type(vm, ty_int);
-    vm->builtin_alloca = new_gvar(vm, "alloca", 6, ty);
-    vm->builtin_alloca->is_definition = false;
+    vm->compiler.builtin_alloca = new_gvar(vm, "alloca", 6, ty);
+    vm->compiler.builtin_alloca->is_definition = false;
 
     // setjmp(jmp_buf) -> int
     // jmp_buf is an array type, but we'll treat it as a pointer for now
     Type *setjmp_ty = func_type(vm, ty_int);
     setjmp_ty->params = pointer_to(vm, ty_long);  // jmp_buf is long long[5]
-    vm->builtin_setjmp = new_gvar(vm, "setjmp", 6, setjmp_ty);
-    vm->builtin_setjmp->is_definition = false;
+    vm->compiler.builtin_setjmp = new_gvar(vm, "setjmp", 6, setjmp_ty);
+    vm->compiler.builtin_setjmp->is_definition = false;
 
     // longjmp(jmp_buf, int) -> void (noreturn)
     Type *longjmp_ty = func_type(vm, ty_void);
     longjmp_ty->params = pointer_to(vm, ty_long);
     longjmp_ty->params->next = copy_type(vm, ty_int);
-    vm->builtin_longjmp = new_gvar(vm, "longjmp", 7, longjmp_ty);
-    vm->builtin_longjmp->is_definition = false;
+    vm->compiler.builtin_longjmp = new_gvar(vm, "longjmp", 7, longjmp_ty);
+    vm->compiler.builtin_longjmp->is_definition = false;
 }
 
 // program = (typedef | function-definition | global-variable)*
@@ -3993,7 +3993,7 @@ Obj *parse(JCC *vm, Token *tok) {
     enter_scope(vm);
 
     declare_builtin_functions(vm);
-    vm->globals = NULL;
+    vm->compiler.globals = NULL;
 
     while (tok->kind != TK_EOF) {
         // _Static_assert or static_assert (C23) - check before declspec
@@ -4029,13 +4029,13 @@ Obj *parse(JCC *vm, Token *tok) {
         tok = global_variable(vm, tok, basety, &attr);
     }
 
-    for (Obj *var = vm->globals; var; var = var->next)
+    for (Obj *var = vm->compiler.globals; var; var = var->next)
         if (var->is_root)
             mark_live(vm, var);
 
     // Remove redundant tentative definitions.
     scan_globals(vm);
-    return vm->globals;
+    return vm->compiler.globals;
 }
 
 // Exposed parsing functions for K's ast_parse API

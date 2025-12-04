@@ -45,7 +45,7 @@ static Type ty_error_obj = {TY_ERROR, 0, 1};
 Type *ty_error = &ty_error_obj;
 
 static Type *new_type(JCC *vm, TypeKind kind, int size, int align) {
-    Type *ty = arena_alloc(&vm->parser_arena, sizeof(Type));
+    Type *ty = arena_alloc(&vm->compiler.parser_arena, sizeof(Type));
     memset(ty, 0, sizeof(Type));
     ty->kind = kind;
     ty->size = size;
@@ -123,7 +123,7 @@ bool is_compatible(Type *t1, Type *t2) {
 }
 
 Type *copy_type(JCC *vm, Type *ty) {
-    Type *ret = arena_alloc(&vm->parser_arena, sizeof(Type));
+    Type *ret = arena_alloc(&vm->compiler.parser_arena, sizeof(Type));
     *ret = *ty;
     ret->origin = ty;
     // Note: is_const is preserved through memcpy (*ret = *ty)
@@ -345,7 +345,7 @@ void add_type(JCC *vm, Node *node) {
             // Check for const-correctness
             // Allow initialization (when initializing_var is set and matches)
             bool is_initialization = false;
-            if (node->lhs->kind == ND_VAR && node->lhs->var == vm->initializing_var)
+            if (node->lhs->kind == ND_VAR && node->lhs->var == vm->compiler.initializing_var)
                 is_initialization = true;
 
             if (node->lhs->ty->is_const && !is_initialization) {

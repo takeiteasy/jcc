@@ -399,7 +399,7 @@ void cc_compile(JCC *vm, Obj *prog) {
         vm->free_list = NULL;  // Initialize free list to empty
         
         // Initialize codegen state
-        vm->current_codegen_fn = NULL;
+        vm->compiler.current_codegen_fn = NULL;
 
         // Initialize source map for debugger (if enabled)
         if (vm->flags & JCC_ENABLE_DEBUGGER) {
@@ -417,7 +417,7 @@ void cc_compile(JCC *vm, Obj *prog) {
     }
 
     // Store the merged program for variable lookup during codegen
-    vm->globals = prog;
+    vm->compiler.globals = prog;
     
     // Generate bytecode from AST
     codegen(vm, prog);
