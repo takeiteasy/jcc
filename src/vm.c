@@ -39,16 +39,16 @@ static int eval1(JCC *vm) {
             cc_debug_repl(vm);
         }
 
-        if (vm->single_step)
+        if (vm->dbg.single_step)
             cc_debug_repl(vm);
 
-        if (vm->step_over && vm->pc == vm->step_over_return_addr) {
-            vm->step_over = 0;
+        if (vm->dbg.step_over && vm->pc == vm->dbg.step_over_return_addr) {
+            vm->dbg.step_over = 0;
             cc_debug_repl(vm);
         }
 
-        if (vm->step_out && vm->bp != vm->step_out_bp) {
-            vm->step_out = 0;
+        if (vm->dbg.step_out && vm->bp != vm->dbg.step_out_bp) {
+            vm->dbg.step_out = 0;
             cc_debug_repl(vm);
         }
     }
@@ -420,9 +420,9 @@ void cc_destroy(JCC *vm) {
 
     // Free watchpoint expressions
     for (int i = 0; i < MAX_WATCHPOINTS; i++) {
-        if (vm->watchpoints[i].expr) {
-            free(vm->watchpoints[i].expr);
-            vm->watchpoints[i].expr = NULL;
+        if (vm->dbg.watchpoints[i].expr) {
+            free(vm->dbg.watchpoints[i].expr);
+            vm->dbg.watchpoints[i].expr = NULL;
         }
     }
 

@@ -1030,6 +1030,45 @@ typedef struct Arena {
 } Arena;
 
 /*!
+ @struct Debugger
+ @abstract Encapsulates all debugger state for the JCC VM.
+ @discussion Contains breakpoints, stepping control, source mapping,
+             debug symbols, and watchpoints. Enabled via JCC_ENABLE_DEBUGGER flag.
+*/
+#ifndef MAX_DEBUG_SYMBOLS
+#define MAX_DEBUG_SYMBOLS 4096
+#endif
+typedef struct Debugger {
+    // Breakpoints
+    Breakpoint breakpoints[MAX_BREAKPOINTS];
+    int num_breakpoints;
+
+    // Stepping control
+    int single_step;                    // Single-step mode (stop after each instruction)
+    int step_over;                      // Step over mode (skip function calls)
+    int step_out;                       // Step out mode (run until function returns)
+    long long *step_over_return_addr;   // Return address for step over
+    long long *step_out_bp;             // Base pointer for step out
+    int debugger_attached;              // Debugger REPL is active
+
+    // Source mapping (bytecode ↔ source lines)
+    SourceMap *source_map;              // Array of PC to source location mappings
+    int source_map_count;               // Number of source map entries
+    int source_map_capacity;            // Allocated capacity
+    File *last_debug_file;              // Last file during debug info emission
+    int last_debug_line;                // Last line number during debug info emission
+    int last_debug_col;                 // Last column number during debug info emission
+
+    // Debug symbols for expression evaluation
+    DebugSymbol debug_symbols[MAX_DEBUG_SYMBOLS];
+    int num_debug_symbols;
+
+    // Watchpoints (data breakpoints)
+    Watchpoint watchpoints[MAX_WATCHPOINTS];
+    int num_watchpoints;
+} Debugger;
+
+/*!
  @struct JCC
  @abstract Encapsulates all state for the JCC compiler and virtual
            machine. Instances are independent and support embedding.
@@ -1106,33 +1145,7 @@ struct JCC {
 
 
     // Debugger state (enable via JCC_ENABLE_DEBUGGER flag)
-    Breakpoint breakpoints[MAX_BREAKPOINTS]; // Breakpoint table
-    int num_breakpoints;                // Number of active breakpoints
-    int single_step;                    // Single-step mode (stop after each instruction)
-    int step_over;                      // Step over mode (skip function calls)
-    int step_out;                       // Step out mode (run until function returns)
-    long long *step_over_return_addr;   // Return address for step over
-    long long *step_out_bp;             // Base pointer for step out
-    int debugger_attached;              // Debugger REPL is active
-
-    // Source mapping for debugger (bytecode ↔ source lines)
-    SourceMap *source_map;              // Array of PC to source location mappings
-    int source_map_count;               // Number of source map entries
-    int source_map_capacity;            // Allocated capacity
-    File *last_debug_file;              // Last file during debug info emission
-    int last_debug_line;                // Last line number during debug info emission
-    int last_debug_col;                 // Last column number during debug info emission
-
-    // Debug symbols for expression evaluation
-#ifndef MAX_DEBUG_SYMBOLS
-#define MAX_DEBUG_SYMBOLS 4096
-#endif
-    DebugSymbol debug_symbols[MAX_DEBUG_SYMBOLS]; // Symbol table for debugger
-    int num_debug_symbols;              // Number of symbols
-
-    // Watchpoints (data breakpoints)
-    Watchpoint watchpoints[MAX_WATCHPOINTS]; // Watchpoint table
-    int num_watchpoints;                // Number of active watchpoints
+    Debugger dbg;
 
     // Preprocessor state
     bool skip_preprocess;  // Skip preprocessing step

@@ -27,44 +27,44 @@ static int is_valid_vm_address(JCC *vm, void *addr) {
 
 void debugger_init(JCC *vm) {
     vm->flags |= JCC_ENABLE_DEBUGGER;  // Make sure it's enabled
-    vm->num_breakpoints = 0;
-    vm->num_watchpoints = 0;  // Initialize watchpoint counter
-    vm->single_step = 0;
-    vm->step_over = 0;
-    vm->step_out = 0;
-    vm->step_over_return_addr = NULL;
-    vm->step_out_bp = NULL;
-    vm->debugger_attached = 0;
+    vm->dbg.num_breakpoints = 0;
+    vm->dbg.num_watchpoints = 0;  // Initialize watchpoint counter
+    vm->dbg.single_step = 0;
+    vm->dbg.step_over = 0;
+    vm->dbg.step_out = 0;
+    vm->dbg.step_over_return_addr = NULL;
+    vm->dbg.step_out_bp = NULL;
+    vm->dbg.debugger_attached = 0;
 
     // Initialize all breakpoints
     for (int i = 0; i < MAX_BREAKPOINTS; i++) {
-        vm->breakpoints[i].pc = NULL;
-        vm->breakpoints[i].enabled = 0;
-        vm->breakpoints[i].hit_count = 0;
-        vm->breakpoints[i].condition = NULL;
+        vm->dbg.breakpoints[i].pc = NULL;
+        vm->dbg.breakpoints[i].enabled = 0;
+        vm->dbg.breakpoints[i].hit_count = 0;
+        vm->dbg.breakpoints[i].condition = NULL;
     }
 
     // Initialize all watchpoints
     for (int i = 0; i < MAX_WATCHPOINTS; i++) {
-        vm->watchpoints[i].address = NULL;
-        vm->watchpoints[i].enabled = 0;
-        vm->watchpoints[i].size = 0;
-        vm->watchpoints[i].type = 0;
-        vm->watchpoints[i].expr = NULL;
-        vm->watchpoints[i].hit_count = 0;
-        vm->watchpoints[i].old_value = 0;
+        vm->dbg.watchpoints[i].address = NULL;
+        vm->dbg.watchpoints[i].enabled = 0;
+        vm->dbg.watchpoints[i].size = 0;
+        vm->dbg.watchpoints[i].type = 0;
+        vm->dbg.watchpoints[i].expr = NULL;
+        vm->dbg.watchpoints[i].hit_count = 0;
+        vm->dbg.watchpoints[i].old_value = 0;
     }
 }
 
 int cc_add_breakpoint(JCC *vm, long long *pc) {
-    if (vm->num_breakpoints >= MAX_BREAKPOINTS) {
+    if (vm->dbg.num_breakpoints >= MAX_BREAKPOINTS) {
         printf("Error: Maximum number of breakpoints (%d) reached\n", MAX_BREAKPOINTS);
         return -1;
     }
 
     // Check if breakpoint already exists at this PC
     for (int i = 0; i < MAX_BREAKPOINTS; i++) {
-        if (vm->breakpoints[i].enabled && vm->breakpoints[i].pc == pc) {
+        if (vm->dbg.breakpoints[i].enabled && vm->dbg.breakpoints[i].pc == pc) {
             printf("Breakpoint already exists at PC %p\n", (void*)pc);
             return i;
         }
@@ -72,12 +72,12 @@ int cc_add_breakpoint(JCC *vm, long long *pc) {
 
     // Find first available slot
     for (int i = 0; i < MAX_BREAKPOINTS; i++) {
-        if (!vm->breakpoints[i].enabled) {
-            vm->breakpoints[i].pc = pc;
-            vm->breakpoints[i].enabled = 1;
-            vm->breakpoints[i].hit_count = 0;
-            vm->breakpoints[i].condition = NULL;
-            vm->num_breakpoints++;
+        if (!vm->dbg.breakpoints[i].enabled) {
+            vm->dbg.breakpoints[i].pc = pc;
+            vm->dbg.breakpoints[i].enabled = 1;
+            vm->dbg.breakpoints[i].hit_count = 0;
+            vm->dbg.breakpoints[i].condition = NULL;
+            vm->dbg.num_breakpoints++;
 
             // Calculate offset from text_seg for display
             long long offset = (long long)pc - (long long)vm->text_seg;
@@ -95,19 +95,19 @@ void cc_remove_breakpoint(JCC *vm, int index) {
         return;
     }
 
-    if (!vm->breakpoints[index].enabled) {
+    if (!vm->dbg.breakpoints[index].enabled) {
         printf("Error: No breakpoint at index %d\n", index);
         return;
     }
 
-    vm->breakpoints[index].enabled = 0;
-    vm->breakpoints[index].pc = NULL;
-    vm->breakpoints[index].hit_count = 0;
-    if (vm->breakpoints[index].condition) {
-        free(vm->breakpoints[index].condition);
-        vm->breakpoints[index].condition = NULL;
+    vm->dbg.breakpoints[index].enabled = 0;
+    vm->dbg.breakpoints[index].pc = NULL;
+    vm->dbg.breakpoints[index].hit_count = 0;
+    if (vm->dbg.breakpoints[index].condition) {
+        free(vm->dbg.breakpoints[index].condition);
+        vm->dbg.breakpoints[index].condition = NULL;
     }
-    vm->num_breakpoints--;
+    vm->dbg.num_breakpoints--;
 
     printf("Breakpoint #%d removed\n", index);
 }
@@ -121,9 +121,9 @@ int debugger_check_breakpoint(JCC *vm) {
     }
 
     for (int i = 0; i < MAX_BREAKPOINTS; i++) {
-        if (vm->breakpoints[i].enabled && vm->breakpoints[i].pc == vm->pc) {
+        if (vm->dbg.breakpoints[i].enabled && vm->dbg.breakpoints[i].pc == vm->pc) {
             // Check condition if one exists
-            char *cond = vm->breakpoints[i].condition;
+            char *cond = vm->dbg.breakpoints[i].condition;
             if (cond != NULL) {
                 if (!debugger_eval_condition(vm, cond)) {
                     // Condition not met, don't trigger breakpoint
@@ -131,7 +131,7 @@ int debugger_check_breakpoint(JCC *vm) {
                 }
             }
 
-            vm->breakpoints[i].hit_count++;
+            vm->dbg.breakpoints[i].hit_count++;
             return 1;
         }
     }
@@ -139,7 +139,7 @@ int debugger_check_breakpoint(JCC *vm) {
 }
 
 void debugger_list_breakpoints(JCC *vm) {
-    if (vm->num_breakpoints == 0) {
+    if (vm->dbg.num_breakpoints == 0) {
         printf("No breakpoints set.\n");
         return;
     }
@@ -149,17 +149,17 @@ void debugger_list_breakpoints(JCC *vm) {
     printf("%-5s %-18s %-12s %-10s %-20s\n", "---", "-------", "------", "---------", "---------");
 
     for (int i = 0; i < MAX_BREAKPOINTS; i++) {
-        if (vm->breakpoints[i].enabled) {
-            long long offset = (long long)vm->breakpoints[i].pc - (long long)vm->text_seg;
+        if (vm->dbg.breakpoints[i].enabled) {
+            long long offset = (long long)vm->dbg.breakpoints[i].pc - (long long)vm->text_seg;
             printf("%-5d 0x%-16llx %-12lld %-10d",
                    i,
-                   (long long)vm->breakpoints[i].pc,
+                   (long long)vm->dbg.breakpoints[i].pc,
                    offset,
-                   vm->breakpoints[i].hit_count);
+                   vm->dbg.breakpoints[i].hit_count);
 
             // Print condition if it exists
-            if (vm->breakpoints[i].condition) {
-                printf(" if %s", vm->breakpoints[i].condition);
+            if (vm->dbg.breakpoints[i].condition) {
+                printf(" if %s", vm->dbg.breakpoints[i].condition);
             }
             printf("\n");
         }
@@ -323,7 +323,7 @@ void cc_debug_repl(JCC *vm) {
     char line[256];
     char cmd[64];
 
-    vm->debugger_attached = 1;
+    vm->dbg.debugger_attached = 1;
 
     printf("\n========================================\n");
     printf("    JCC Debugger\n");
@@ -361,35 +361,35 @@ void cc_debug_repl(JCC *vm) {
         }
         // Continue
         else if (strcmp(cmd, "continue") == 0 || strcmp(cmd, "c") == 0) {
-            vm->single_step = 0;
-            vm->step_over = 0;
-            vm->step_out = 0;
+            vm->dbg.single_step = 0;
+            vm->dbg.step_over = 0;
+            vm->dbg.step_out = 0;
             break;
         }
         // Single step
         else if (strcmp(cmd, "step") == 0 || strcmp(cmd, "s") == 0) {
-            vm->single_step = 1;
-            vm->step_over = 0;
-            vm->step_out = 0;
+            vm->dbg.single_step = 1;
+            vm->dbg.step_over = 0;
+            vm->dbg.step_out = 0;
             break;
         }
         // Step over
         else if (strcmp(cmd, "next") == 0 || strcmp(cmd, "n") == 0) {
-            vm->single_step = 0;
-            vm->step_over = 1;
-            vm->step_out = 0;
+            vm->dbg.single_step = 0;
+            vm->dbg.step_over = 1;
+            vm->dbg.step_out = 0;
             // Save current return address (on top of stack after CALL)
             if (vm->sp < vm->stack_seg) {
-                vm->step_over_return_addr = (long long *)*vm->sp;
+                vm->dbg.step_over_return_addr = (long long *)*vm->sp;
             }
             break;
         }
         // Step out
         else if (strcmp(cmd, "finish") == 0 || strcmp(cmd, "f") == 0) {
-            vm->single_step = 0;
-            vm->step_over = 0;
-            vm->step_out = 1;
-            vm->step_out_bp = vm->bp;
+            vm->dbg.single_step = 0;
+            vm->dbg.step_over = 0;
+            vm->dbg.step_out = 1;
+            vm->dbg.step_out_bp = vm->bp;
             break;
         }
         // Print registers
@@ -483,7 +483,7 @@ void cc_debug_repl(JCC *vm) {
                     int bp_idx = cc_add_breakpoint(vm, bp_pc);
                     // Set condition if provided
                     if (bp_idx >= 0 && condition) {
-                        vm->breakpoints[bp_idx].condition = condition;
+                        vm->dbg.breakpoints[bp_idx].condition = condition;
                         printf("Condition: %s\n", condition);
                         condition = NULL;  // Prevent double-free
                     }
@@ -602,16 +602,16 @@ void cc_debug_repl(JCC *vm) {
         else if (strcmp(cmd, "info") == 0) {
             char subcmd[64];
             if (sscanf(line, "%*s %63s", subcmd) == 1 && strcmp(subcmd, "watch") == 0) {
-                if (vm->num_watchpoints == 0) {
+                if (vm->dbg.num_watchpoints == 0) {
                     printf("No watchpoints set.\n");
                 } else {
                     printf("\nWatchpoints:\n");
                     printf("%-4s %-10s %-18s %-8s %s\n", "Num", "Type", "Address", "Hits", "Expression");
                     printf("------------------------------------------------------------\n");
                     for (int i = 0; i < MAX_WATCHPOINTS; i++) {
-                        if (vm->watchpoints[i].enabled) {
+                        if (vm->dbg.watchpoints[i].enabled) {
                             const char *type_str = "";
-                            int type = vm->watchpoints[i].type;
+                            int type = vm->dbg.watchpoints[i].type;
                             if ((type & WATCH_READ) && (type & WATCH_WRITE)) {
                                 type_str = "access";
                             } else if (type & WATCH_WRITE) {
@@ -620,9 +620,9 @@ void cc_debug_repl(JCC *vm) {
                                 type_str = "read";
                             }
                             printf("%-4d %-10s %p       %-8d %s\n",
-                                   i, type_str, vm->watchpoints[i].address,
-                                   vm->watchpoints[i].hit_count,
-                                   vm->watchpoints[i].expr ? vm->watchpoints[i].expr : "");
+                                   i, type_str, vm->dbg.watchpoints[i].address,
+                                   vm->dbg.watchpoints[i].hit_count,
+                                   vm->dbg.watchpoints[i].expr ? vm->dbg.watchpoints[i].expr : "");
                         }
                     }
                     printf("\n");
@@ -642,7 +642,7 @@ void cc_debug_repl(JCC *vm) {
         }
     }
 
-    vm->debugger_attached = 0;
+    vm->dbg.debugger_attached = 0;
 }
 
 int debugger_run(JCC *vm, int argc, char **argv) {
@@ -704,7 +704,7 @@ int debugger_run(JCC *vm, int argc, char **argv) {
 // ============================================================================
 
 int cc_get_source_location(JCC *vm, long long *pc, File **out_file, int *out_line, int *out_col) {
-    if (!(vm->flags & JCC_ENABLE_DEBUGGER) || !vm->source_map || vm->source_map_count == 0) {
+    if (!(vm->flags & JCC_ENABLE_DEBUGGER) || !vm->dbg.source_map || vm->dbg.source_map_count == 0) {
         return 0;
     }
 
@@ -713,12 +713,12 @@ int cc_get_source_location(JCC *vm, long long *pc, File **out_file, int *out_lin
     // Binary search for the source mapping
     // Find the largest offset <= pc_offset
     int left = 0;
-    int right = vm->source_map_count - 1;
+    int right = vm->dbg.source_map_count - 1;
     int best_idx = -1;
 
     while (left <= right) {
         int mid = left + (right - left) / 2;
-        if (vm->source_map[mid].pc_offset <= pc_offset) {
+        if (vm->dbg.source_map[mid].pc_offset <= pc_offset) {
             best_idx = mid;
             left = mid + 1;
         } else {
@@ -732,29 +732,29 @@ int cc_get_source_location(JCC *vm, long long *pc, File **out_file, int *out_lin
 
     // Return the found mapping
     if (out_file) {
-        *out_file = vm->source_map[best_idx].file;
+        *out_file = vm->dbg.source_map[best_idx].file;
     }
     if (out_line) {
-        *out_line = vm->source_map[best_idx].line_no;
+        *out_line = vm->dbg.source_map[best_idx].line_no;
     }
     if (out_col) {
-        *out_col = vm->source_map[best_idx].col_no;
+        *out_col = vm->dbg.source_map[best_idx].col_no;
     }
 
     return 1;
 }
 
 long long *cc_find_pc_for_source(JCC *vm, File *file, int line) {
-    if (!(vm->flags & JCC_ENABLE_DEBUGGER) || !vm->source_map || vm->source_map_count == 0) {
+    if (!(vm->flags & JCC_ENABLE_DEBUGGER) || !vm->dbg.source_map || vm->dbg.source_map_count == 0) {
         return NULL;
     }
 
     // Linear search for the first matching source location
     // TODO: Could optimize with secondary index
-    for (int i = 0; i < vm->source_map_count; i++) {
-        if (vm->source_map[i].line_no == line) {
-            if (!file || vm->source_map[i].file == file) {
-                return vm->text_seg + vm->source_map[i].pc_offset;
+    for (int i = 0; i < vm->dbg.source_map_count; i++) {
+        if (vm->dbg.source_map[i].line_no == line) {
+            if (!file || vm->dbg.source_map[i].file == file) {
+                return vm->text_seg + vm->dbg.source_map[i].pc_offset;
             }
         }
     }
@@ -785,9 +785,9 @@ DebugSymbol *cc_lookup_symbol(JCC *vm, const char *name) {
     }
 
     // Search in reverse order to find most recent (innermost scope)
-    for (int i = vm->num_debug_symbols - 1; i >= 0; i--) {
-        if (vm->debug_symbols[i].name && strcmp(vm->debug_symbols[i].name, name) == 0) {
-            return &vm->debug_symbols[i];
+    for (int i = vm->dbg.num_debug_symbols - 1; i >= 0; i--) {
+        if (vm->dbg.debug_symbols[i].name && strcmp(vm->dbg.debug_symbols[i].name, name) == 0) {
+            return &vm->dbg.debug_symbols[i];
         }
     }
 
@@ -1048,22 +1048,22 @@ static int debugger_eval_condition(JCC *vm, const char *condition_str) {
 // ============================================================================
 
 int cc_add_watchpoint(JCC *vm, void *address, int size, int type, const char *expr) {
-    if (vm->num_watchpoints >= MAX_WATCHPOINTS) {
+    if (vm->dbg.num_watchpoints >= MAX_WATCHPOINTS) {
         printf("Error: Maximum number of watchpoints (%d) reached\n", MAX_WATCHPOINTS);
         return -1;
     }
 
     // Find first available slot
     for (int i = 0; i < MAX_WATCHPOINTS; i++) {
-        if (!vm->watchpoints[i].enabled) {
-            vm->watchpoints[i].address = address;
-            vm->watchpoints[i].size = size;
-            vm->watchpoints[i].type = type;
-            vm->watchpoints[i].old_value = 0;  // Will be updated on first check
-            vm->watchpoints[i].expr = expr ? strdup(expr) : NULL;
-            vm->watchpoints[i].enabled = 1;
-            vm->watchpoints[i].hit_count = 0;
-            vm->num_watchpoints++;
+        if (!vm->dbg.watchpoints[i].enabled) {
+            vm->dbg.watchpoints[i].address = address;
+            vm->dbg.watchpoints[i].size = size;
+            vm->dbg.watchpoints[i].type = type;
+            vm->dbg.watchpoints[i].old_value = 0;  // Will be updated on first check
+            vm->dbg.watchpoints[i].expr = expr ? strdup(expr) : NULL;
+            vm->dbg.watchpoints[i].enabled = 1;
+            vm->dbg.watchpoints[i].hit_count = 0;
+            vm->dbg.num_watchpoints++;
 
             const char *type_str = "";
             if (type & WATCH_READ && type & WATCH_WRITE) {
@@ -1093,18 +1093,18 @@ void cc_remove_watchpoint(JCC *vm, int index) {
         return;
     }
 
-    if (!vm->watchpoints[index].enabled) {
+    if (!vm->dbg.watchpoints[index].enabled) {
         printf("Error: No watchpoint at index %d\n", index);
         return;
     }
 
-    vm->watchpoints[index].enabled = 0;
-    vm->watchpoints[index].address = NULL;
-    if (vm->watchpoints[index].expr) {
-        free(vm->watchpoints[index].expr);
-        vm->watchpoints[index].expr = NULL;
+    vm->dbg.watchpoints[index].enabled = 0;
+    vm->dbg.watchpoints[index].address = NULL;
+    if (vm->dbg.watchpoints[index].expr) {
+        free(vm->dbg.watchpoints[index].expr);
+        vm->dbg.watchpoints[index].expr = NULL;
     }
-    vm->num_watchpoints--;
+    vm->dbg.num_watchpoints--;
 
     printf("Watchpoint #%d removed\n", index);
 }
@@ -1113,12 +1113,12 @@ void cc_remove_watchpoint(JCC *vm, int index) {
 // Returns: watchpoint index if triggered, -1 otherwise
 int debugger_check_watchpoint(JCC *vm, void *addr, int size, int access_type) {
     // Safety checks
-    if (!vm || !(vm->flags & JCC_ENABLE_DEBUGGER) || vm->num_watchpoints == 0 || !addr) {
+    if (!vm || !(vm->flags & JCC_ENABLE_DEBUGGER) || vm->dbg.num_watchpoints == 0 || !addr) {
         return -1;
     }
 
     // Don't check watchpoints if we're already in the debugger REPL
-    if (vm->debugger_attached) {
+    if (vm->dbg.debugger_attached) {
         return -1;
     }
 
@@ -1128,11 +1128,11 @@ int debugger_check_watchpoint(JCC *vm, void *addr, int size, int access_type) {
     }
 
     for (int i = 0; i < MAX_WATCHPOINTS; i++) {
-        if (!vm->watchpoints[i].enabled) {
+        if (!vm->dbg.watchpoints[i].enabled) {
             continue;
         }
 
-        Watchpoint *wp = &vm->watchpoints[i];
+        Watchpoint *wp = &vm->dbg.watchpoints[i];
 
         // Check if the access overlaps with this watchpoint
         // Watchpoint range: [wp->address, wp->address + wp->size)
