@@ -1,12 +1,12 @@
 # jcc
 
+> **WARNING**: This is a work in progress and shouldn't be used for any serious work
+
 `JCC` is a **J**IT **C**11 **C**ompiler. The preprocessor/lexer/parser is built from [chibicc](http://https://github.com/rui314/chibicc) and the VM was built from [c4](https://github.com/rswier/c4) and [write-a-C-interpreter](https://github.com/lotabout/write-a-C-interpreter).
 
 ## About
 
 The goal of this project is correctness and safety. This is just a toy, and won't be 🚀🔥 **BLAZING FAST** 🔥🚀. I wouldn't recommend using this for anything important or in any production code. I'm not an expert, so safety features may not be perfect and will have *minimal* to **significant** performance overhead (depending on which features are enabled).
-
-`JCC` is not just a JIT compiler. It also extends the C preprocessor with new features, see [Pragma Macros](./MACROS.md) for more details. I have lots of other ideas for more `#pragma` extensions too.
 
 **Status**: All C11 language features are supported (minus `<threads.h>` and `_Thread_local`, see [Thread Support](#thread-support)). There is also partial C23 support (mostly parser/preprocessor features).
 
@@ -19,9 +19,6 @@ See [here](https://takeiteasy.github.io/jcc) for some basic documentation on the
 - Tonnes of memory safety features (see [SAFETY.md](./SAFETY.md))
   - Includes preset safety levels, `-0, -1, -2, 3` (0 is no safety, and is default)
   - Safety features come with an overhead
-- Pragma extentions (WIP)
-  - `#pragma macro` turns a function into a compile-time function. The functions can build and return AST, allowing for simple reflection at compile time (see [MACROS.md](./MACROS.md))
-  - More are planned (see [TODO](#todo))
 - Optional libcurl integration, include headers from URL
   - `#include <https://raw.githubusercontent.com/user/repo/main/header.h>`
   - Build with `make JCC_HAS_CURL=1`
@@ -151,27 +148,24 @@ JCC provides two modes for variadic foreign functions:
 - Not executed in the VM (no-op by default)
 - Callback can emit custom bytecode or perform logging
 
-### C11, C23, and GNU Extensions
+### C11 Features
 
-- Statement expressions `({...})`
-- `typeof` operator (compile-time type inquiry for variables and expressions)
-- `typeof_unqual` - typeof that removes type qualifiers
-- `__attribute__((...))` for functions and variables (currently ignored, parsed only)
-- `[[...]]` - C23 attributes, like GNU attributes, are parsed but ignored
-- Labels as values `&&label` - Get the address of a label for computed goto
-- Computed goto `goto *expr;` - Jump to an address computed at runtime
-- Switch case ranges `case 1 ... 5:` - Match ranges of values in switch statements
-- Zero-length arrays `int arr[0];` - Flexible array member alternative
-- Variable length arrays `int arr[] = { 1, 2, 3 };`
 - Universal character names `\uXXXX`, `\UXXXXXXXX` - Unicode escapes in strings
 - `_Generic` type-generic expressions (compile-time type selection)
 - `_Alignof` operator (query type/variable alignment)
 - `_Alignas` specifier (control variable alignment)
-- `static_asset` and `_Static_assert` (compile-time assertions with custom error messages)
+- `static_assert` and `_Static_assert` (compile-time assertions with custom error messages)
 - `Bitfields` - Bit-level struct member access (e.g., `unsigned int flags : 3;`)
 - `Anonymous structs/unions` - Direct member access without intermediate name
+- Variable length arrays `int arr[] = { 1, 2, 3 };`
+
+### C23 Features
+
+- `typeof` operator (compile-time type inquiry for variables and expressions)
+- `typeof_unqual` - typeof that removes type qualifiers
+- `[[...]]` - C23 attributes, like GNU attributes, are parsed but ignored
 - Binary literals (0b10101010)
-- Digit seperates with single quotes (1'000'000)
+- Digit separators with single quotes (1'000'000)
 - `#embed` directive (C23) - Binary resource inclusion
   - Example: `unsigned char data[] = { #embed "file.bin" };`
   - Supports `limit(N)` parameter to restrict bytes
@@ -179,6 +173,15 @@ JCC provides two modes for variadic foreign functions:
   - Supports `suffix(...)` to insert tokens after byte sequence
   - Supports `if_empty(...)` for empty file fallback values
   - `__has_embed("file")` macro for file availability checks
+
+### GNU Extensions
+
+- Statement expressions `({...})`
+- `__attribute__((...))` for functions and variables (currently ignored, parsed only)
+- Labels as values `&&label` - Get the address of a label for computed goto
+- Computed goto `goto *expr;` - Jump to an address computed at runtime
+- Switch case ranges `case 1 ... 5:` - Match ranges of values in switch statements
+- Zero-length arrays `int arr[0];` - Flexible array member alternative
 
 ### Thread Support
 
@@ -203,19 +206,12 @@ JCC has a custom standard library that is located in `include`. It is just a col
 - Support more architectures for native FFI
   - x86_64 (System V + Windows) + x86_64 (legacy System V only)
   - No plans for any other systems, but will accept patches
-- Hot reloading for FFI functions + compiled functions
+- Refactor VM from single accumulator (ax/fx) to multiple register
 - Support for pthread + internal thread support
   - Thread safety features (race condition checks, etc)
-- Refactor VM from single accumulator (ax/fx) to multiple register
 - Optimisation pass for bytecode
   - Peephole, code folding, dead code elimination, etc
-- Extend `#pragma macro`, support `#pragma derive`
-  - Rust like `derive` directive using pragma macros
-- Built in test suite `#pragma test(suite)`
-  - When in `test` mode, replace `main()` with a test runner (generated at compile time)
-  - Setup/teardown phase
-- UFCS (universal function call syntax)
-  - Extend parser to support `5.sqrt`
+- Hot reloading for FFI functions + compiled functions
 
 ## Building
 

@@ -1,5 +1,5 @@
 SRCS := $(wildcard src/*.c src/stdlib/*.c)
-CFLAGS := -Wall -O0 -g -std=c99 -Wno-switch -Wdeprecated-declarations
+CFLAGS := -Wall -O0 -g -std=c99 -Wno-deprecated-declarations -Wno-switch -Wno-inline-asm
 LDFLAGS :=
 
 # Optional libffi support for variadic foreign functions

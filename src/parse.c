@@ -413,37 +413,6 @@ static Token *skip_to_stmt_end(JCC *vm, Token *tok) {
     return tok;
 }
 
-// Error recovery helper: Skip to next synchronization point
-static Token *skip_to_sync_point(JCC *vm, Token *tok) {
-    int brace_depth = 0;
-
-    while (tok->kind != TK_EOF) {
-        // Track brace nesting to avoid skipping past function boundaries
-        if (equal(tok, "{")) brace_depth++;
-        if (equal(tok, "}")) {
-            if (brace_depth > 0) brace_depth--;
-            else return tok; // Found closing brace at same level
-        }
-
-        // Statement-level sync points
-        if (brace_depth == 0) {
-            if (equal(tok, ";")) return tok->next;  // After semicolon
-
-            // Statement keywords
-            if (equal(tok, "if") || equal(tok, "while") || equal(tok, "for") ||
-                equal(tok, "do") || equal(tok, "switch") || equal(tok, "return") ||
-                equal(tok, "break") || equal(tok, "continue") || equal(tok, "goto"))
-                return tok;
-
-            // Type keywords (declaration start)
-            if (is_typename(vm, tok)) return tok;
-        }
-
-        tok = tok->next;
-    }
-    return tok;
-}
-
 // Error recovery helper: Skip to next declarator boundary
 static Token *skip_to_decl_boundary(JCC *vm, Token *tok) {
     int paren_depth = 0;
@@ -3706,48 +3675,6 @@ static Node *primary(JCC *vm, Token **rest, Token *tok) {
     }
 
     if (tok->kind == TK_IDENT) {
-        // Check if this is a pragma macro call
-        if (equal(tok->next, "(")) {
-            char *name = strndup(tok->loc, tok->len);
-            PragmaMacro *pm = find_pragma_macro(vm, name);
-
-            if (pm) {
-                // This is a pragma macro call - execute it
-                tok = tok->next->next;  // Skip name and '('
-
-                // Parse arguments
-                Node *args[32];  // Max 32 arguments
-                int arg_count = 0;
-
-                if (!equal(tok, ")")) {
-                    while (true) {
-                        if (arg_count >= 32)
-                            error_tok(vm, tok, "too many arguments to pragma macro");
-                        args[arg_count++] = assign(vm, &tok, tok);
-                        if (equal(tok, ")"))
-                            break;
-                        tok = skip(vm, tok, ",");
-                    }
-                }
-
-                *rest = tok->next;  // Skip ')'
-
-                // Execute the pragma macro
-                Node *generated = execute_pragma_macro(vm, pm, args, arg_count);
-                if (!generated) {
-                    error_tok(vm, start, "pragma macro '%s' failed to generate node", pm->name);
-                }
-
-                if (name != NULL) {
-                  free(name);
-                  name = NULL;
-                }
-                return generated;
-            }
-            if (name != NULL)
-              free(name);
-        }
-
         // Variable or enum constant
         VarScope *sc = find_var(vm, tok);
         *rest = tok->next;

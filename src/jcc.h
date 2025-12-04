@@ -1030,23 +1030,6 @@ typedef struct Arena {
 } Arena;
 
 /*!
- @struct PragmaMacro
- @abstract Represents a pragma macro function.
- @field name Function name.
- @field body_tokens Original token stream for function body (from preprocessor).
- @field compiled_fn Compiled function pointer (returns Node*).
- @field macro_vm VM instance for this macro (used for recursive macro calls).
- @field next Pointer to next macro in list.
-*/
-typedef struct PragmaMacro {
-    char *name;               // Function name
-    Token *body_tokens;       // Original token stream for function body
-    void *compiled_fn;        // Compiled function pointer (returns Node*)
-    JCC *macro_vm;            // VM instance for this macro
-    struct PragmaMacro *next; // Next macro in list
-} PragmaMacro;
-
-/*!
  @struct JCC
  @abstract Encapsulates all state for the JCC compiler and virtual
            machine. Instances are independent and support embedding.
@@ -1163,10 +1146,6 @@ struct JCC {
     size_t embed_limit;           // Soft limit for #embed size (default: 10MB)
     size_t embed_hard_limit;      // Secondary warning threshold (default: 50MB)
     bool embed_hard_error;        // If true, exceeding limit is a hard error instead of warning
-
-    // Pragma macro system
-    struct PragmaMacro *pragma_macros;  // Linked list of compile-time macros
-    bool compiling_pragma_macro;        // True when compiling a pragma macro (skip main() requirement)
 
     // Tokenization state
     File *current_file;         // Input file
@@ -1290,7 +1269,6 @@ struct JCC {
     // Per-instance state (moved from static globals for thread-safety/multi-VM support)
     int unique_name_counter;           // Counter for new_unique_name() (was static in parse.c)
     int counter_macro_value;           // __COUNTER__ macro value (was static in preprocess.c)
-    struct JCC *pragma_parent_vm;      // Parent VM during pragma execution (was static in pragma.c)
 };
 
 /*!

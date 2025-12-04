@@ -22,7 +22,6 @@
 #pragma once
 
 #include "jcc.h"
-#include "../include/reflection_api.h"
 
 #ifndef __has_include
 #define __has_include(x) 0
@@ -218,15 +217,6 @@ void debugger_print_registers(JCC *vm);
 void debugger_print_stack(JCC *vm, int count);
 void debugger_disassemble_current(JCC *vm);
 int debugger_run(JCC *vm, int argc, char **argv);
-
-//
-// pragma.c
-//
-
-void compile_pragma_macros(JCC *vm);
-PragmaMacro *find_pragma_macro(JCC *vm, const char *name);
-Node *execute_pragma_macro(JCC *vm, PragmaMacro *pm, Node **args, int arg_count);
-Token *expand_pragma_macro_calls(JCC *vm, Token *tok);
 
 //
 // serialize.c
