@@ -635,8 +635,8 @@ void cc_output_source_map_json(JCC *vm, FILE *f) {
     fprintf(f, "  \"version\": 3,\n");
     fprintf(f, "  \"mappings\": [\n");
 
-    for (int i = 0; i < vm->source_map_count; i++) {
-        SourceMap *map = &vm->source_map[i];
+    for (int i = 0; i < vm->dbg.source_map_count; i++) {
+        SourceMap *map = &vm->dbg.source_map[i];
 
         fprintf(f, "    {");
         fprintf(f, "\"pc\": %lld, ", map->pc_offset);
@@ -648,7 +648,7 @@ void cc_output_source_map_json(JCC *vm, FILE *f) {
         fprintf(f, "\"end_col\": %d", map->end_col_no);
         fprintf(f, "}");
 
-        if (i < vm->source_map_count - 1) {
+        if (i < vm->dbg.source_map_count - 1) {
             fprintf(f, ",");
         }
         fprintf(f, "\n");

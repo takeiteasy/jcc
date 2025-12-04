@@ -403,16 +403,16 @@ void cc_compile(JCC *vm, Obj *prog) {
 
         // Initialize source map for debugger (if enabled)
         if (vm->flags & JCC_ENABLE_DEBUGGER) {
-            vm->source_map_capacity = 1024;  // Initial capacity
-            vm->source_map = malloc(vm->source_map_capacity * sizeof(SourceMap));
-            if (!vm->source_map) {
+            vm->dbg.source_map_capacity = 1024;  // Initial capacity
+            vm->dbg.source_map = malloc(vm->dbg.source_map_capacity * sizeof(SourceMap));
+            if (!vm->dbg.source_map) {
                 error("could not malloc for source map");
             }
-            vm->source_map_count = 0;
-            vm->last_debug_file = NULL;
-            vm->last_debug_line = -1;
-            vm->num_debug_symbols = 0;
-            vm->num_watchpoints = 0;
+            vm->dbg.source_map_count = 0;
+            vm->dbg.last_debug_file = NULL;
+            vm->dbg.last_debug_line = -1;
+            vm->dbg.num_debug_symbols = 0;
+            vm->dbg.num_watchpoints = 0;
         }
     }
 

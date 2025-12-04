@@ -692,7 +692,7 @@ int op_LEV_fn(JCC *vm) {
 
 int op_LI_fn(JCC *vm) {
     // check read watchpoints before loading
-    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->num_watchpoints > 0) {
+    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->dbg.num_watchpoints > 0) {
         debugger_check_watchpoint(vm, (void*)vm->ax, 8, WATCH_READ);
     }
     vm->ax = *(long long *)(long long)vm->ax; // load long long to ax, address in ax
@@ -701,7 +701,7 @@ int op_LI_fn(JCC *vm) {
 
 int op_LC_fn(JCC *vm) {
     // Check read watchpoints before loading
-    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->num_watchpoints > 0) {
+    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->dbg.num_watchpoints > 0) {
         debugger_check_watchpoint(vm, (void*)vm->ax, 1, WATCH_READ);
     }
     vm->ax = (long long)(*(signed char *)(long long)vm->ax); // load signed char, sign-extend to long long
@@ -710,7 +710,7 @@ int op_LC_fn(JCC *vm) {
 
 int op_LS_fn(JCC *vm) {
     // Check read watchpoints before loading
-    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->num_watchpoints > 0) {
+    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->dbg.num_watchpoints > 0) {
         debugger_check_watchpoint(vm, (void*)vm->ax, 2, WATCH_READ);
     }
     vm->ax = (long long)(*(short *)(long long)vm->ax); // load short, sign-extend to long long
@@ -719,7 +719,7 @@ int op_LS_fn(JCC *vm) {
 
 int op_LW_fn(JCC *vm) {
     // Check read watchpoints before loading
-    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->num_watchpoints > 0) {
+    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->dbg.num_watchpoints > 0) {
         debugger_check_watchpoint(vm, (void*)vm->ax, 4, WATCH_READ);
     }
     vm->ax = (long long)(*(int *)(long long)vm->ax); // load int, sign-extend to long long
@@ -728,7 +728,7 @@ int op_LW_fn(JCC *vm) {
 
 int op_SI_fn(JCC *vm) {
     // Check write watchpoints before storing
-    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->num_watchpoints > 0) {
+    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->dbg.num_watchpoints > 0) {
         debugger_check_watchpoint(vm, (void*)*vm->sp, 8, WATCH_WRITE);
     }
     *(long long *)*vm->sp++ = vm->ax; // save long long to address, value in ax, address on stack
@@ -737,7 +737,7 @@ int op_SI_fn(JCC *vm) {
 
 int op_SC_fn(JCC *vm) {
     // Check write watchpoints before storing
-    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->num_watchpoints > 0) {
+    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->dbg.num_watchpoints > 0) {
         debugger_check_watchpoint(vm, (void*)*vm->sp, 1, WATCH_WRITE);
     }
     vm->ax = *(char *)*vm->sp++ = vm->ax; // save character to address, value in ax, address on stack
@@ -746,7 +746,7 @@ int op_SC_fn(JCC *vm) {
 
 int op_SS_fn(JCC *vm) {
     // Check write watchpoints before storing
-    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->num_watchpoints > 0) {
+    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->dbg.num_watchpoints > 0) {
         debugger_check_watchpoint(vm, (void*)*vm->sp, 2, WATCH_WRITE);
     }
     vm->ax = *(short *)*vm->sp++ = vm->ax; // save short to address, value in ax, address on stack
@@ -755,7 +755,7 @@ int op_SS_fn(JCC *vm) {
 
 int op_SW_fn(JCC *vm) {
     // Check write watchpoints before storing
-    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->num_watchpoints > 0) {
+    if (vm->flags & JCC_ENABLE_DEBUGGER && vm->dbg.num_watchpoints > 0) {
         debugger_check_watchpoint(vm, (void*)*vm->sp, 4, WATCH_WRITE);
     }
     vm->ax = *(int *)*vm->sp++ = vm->ax; // save int (word) to address, value in ax, address on stack

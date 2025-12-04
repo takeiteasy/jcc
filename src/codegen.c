@@ -91,34 +91,34 @@ static void emit_debug_info(JCC *vm, Token *tok) {
     }
 
     // Only emit if line or column changed
-    if (tok->file == vm->last_debug_file &&
-        tok->line_no == vm->last_debug_line &&
-        tok->col_no == vm->last_debug_col) {
+    if (tok->file == vm->dbg.last_debug_file &&
+        tok->line_no == vm->dbg.last_debug_line &&
+        tok->col_no == vm->dbg.last_debug_col) {
         return;
     }
 
     // Grow source map if needed
-    if (vm->source_map_count >= vm->source_map_capacity) {
-        vm->source_map_capacity *= 2;
-        SourceMap *new_map = realloc(vm->source_map, vm->source_map_capacity * sizeof(SourceMap));
+    if (vm->dbg.source_map_count >= vm->dbg.source_map_capacity) {
+        vm->dbg.source_map_capacity *= 2;
+        SourceMap *new_map = realloc(vm->dbg.source_map, vm->dbg.source_map_capacity * sizeof(SourceMap));
         if (!new_map) {
             error("could not realloc source map");
         }
-        vm->source_map = new_map;
+        vm->dbg.source_map = new_map;
     }
 
     // Add mapping entry
-    vm->source_map[vm->source_map_count].pc_offset = vm->text_ptr - vm->text_seg;
-    vm->source_map[vm->source_map_count].file = tok->file;
-    vm->source_map[vm->source_map_count].line_no = tok->line_no;
-    vm->source_map[vm->source_map_count].col_no = tok->col_no;
+    vm->dbg.source_map[vm->dbg.source_map_count].pc_offset = vm->text_ptr - vm->text_seg;
+    vm->dbg.source_map[vm->dbg.source_map_count].file = tok->file;
+    vm->dbg.source_map[vm->dbg.source_map_count].line_no = tok->line_no;
+    vm->dbg.source_map[vm->dbg.source_map_count].col_no = tok->col_no;
     // Calculate end column using token length
-    vm->source_map[vm->source_map_count].end_col_no = tok->col_no + display_width(vm, tok->loc, tok->len);
-    vm->source_map_count++;
+    vm->dbg.source_map[vm->dbg.source_map_count].end_col_no = tok->col_no + display_width(vm, tok->loc, tok->len);
+    vm->dbg.source_map_count++;
 
-    vm->last_debug_file = tok->file;
-    vm->last_debug_line = tok->line_no;
-    vm->last_debug_col = tok->col_no;
+    vm->dbg.last_debug_file = tok->file;
+    vm->dbg.last_debug_line = tok->line_no;
+    vm->dbg.last_debug_col = tok->col_no;
 }
 
 static void gen_stmt(JCC *vm, Node *node);
@@ -1902,16 +1902,16 @@ static void gen_stmt(JCC *vm, Node *node) {
 
 // Add a variable to the debug symbol table
 static void add_debug_symbol(JCC *vm, const char *name, long long offset, Type *ty, int is_local) {
-    if (!(vm->flags & JCC_ENABLE_DEBUGGER) || vm->num_debug_symbols >= MAX_DEBUG_SYMBOLS) {
+    if (!(vm->flags & JCC_ENABLE_DEBUGGER) || vm->dbg.num_debug_symbols >= MAX_DEBUG_SYMBOLS) {
         return;
     }
 
-    vm->debug_symbols[vm->num_debug_symbols].name = (char*)name;
-    vm->debug_symbols[vm->num_debug_symbols].offset = offset;
-    vm->debug_symbols[vm->num_debug_symbols].ty = ty;
-    vm->debug_symbols[vm->num_debug_symbols].is_local = is_local;
-    vm->debug_symbols[vm->num_debug_symbols].scope_depth = vm->current_scope_id;
-    vm->num_debug_symbols++;
+    vm->dbg.debug_symbols[vm->dbg.num_debug_symbols].name = (char*)name;
+    vm->dbg.debug_symbols[vm->dbg.num_debug_symbols].offset = offset;
+    vm->dbg.debug_symbols[vm->dbg.num_debug_symbols].ty = ty;
+    vm->dbg.debug_symbols[vm->dbg.num_debug_symbols].is_local = is_local;
+    vm->dbg.debug_symbols[vm->dbg.num_debug_symbols].scope_depth = vm->current_scope_id;
+    vm->dbg.num_debug_symbols++;
 }
 
 // Add variable to scope's linked list for efficient iteration
@@ -2007,13 +2007,13 @@ void gen_function(JCC *vm, Obj *fn) {
     int num_global_symbols = 0;
     if (vm->flags & JCC_ENABLE_DEBUGGER) {
         // Count global symbols (is_local == 0)
-        for (int i = 0; i < vm->num_debug_symbols; i++) {
-            if (!vm->debug_symbols[i].is_local) {
+        for (int i = 0; i < vm->dbg.num_debug_symbols; i++) {
+            if (!vm->dbg.debug_symbols[i].is_local) {
                 num_global_symbols++;
             }
         }
         // Reset to globals only (removes previous function's locals)
-        vm->num_debug_symbols = num_global_symbols;
+        vm->dbg.num_debug_symbols = num_global_symbols;
     }
 
     // Generating function code
