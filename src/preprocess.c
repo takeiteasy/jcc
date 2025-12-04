@@ -1120,96 +1120,6 @@ static void read_line_marker(JCC *vm, Token **rest, Token *tok) {
     start->file->display_name = tok->str;
 }
 
-// Extract a #pragma macro function definition and store it
-// Returns the token after the function definition
-static Token *extract_pragma_macro(JCC *vm, Token *tok) {
-    // Expected format: <return_type> <function_name>(<params>) { <body> }
-
-    // Skip until we find the function name (identifier followed by '(')
-    Token *start = tok;
-    Token *func_name_tok = NULL;
-
-    // Simple heuristic: find identifier followed by '('
-    while (tok->kind != TK_EOF) {
-        if (tok->kind == TK_IDENT && equal(tok->next, "(")) {
-            func_name_tok = tok;
-            break;
-        }
-        tok = tok->next;
-    }
-
-    if (!func_name_tok) {
-        error_tok(vm, start, "#pragma macro: expected function definition");
-        return tok;
-    }
-
-    char *name = strndup(func_name_tok->loc, func_name_tok->len);
-
-    // Now find the opening brace of the function body
-    int paren_depth = 0;
-    tok = func_name_tok->next;  // Start at '('
-
-    // Skip parameter list
-    while (tok->kind != TK_EOF) {
-        if (equal(tok, "(")) paren_depth++;
-        else if (equal(tok, ")")) {
-            paren_depth--;
-            if (paren_depth == 0) {
-                tok = tok->next;
-                break;
-            }
-        }
-        tok = tok->next;
-    }
-
-    // Now find the opening brace
-    while (tok->kind != TK_EOF && !equal(tok, "{"))
-        tok = tok->next;
-
-    if (!equal(tok, "{")) {
-        error_tok(vm, start, "#pragma macro: expected function body");
-        return tok;
-    }
-
-    Token *body_start = start;
-
-    // Find the closing brace (matching the opening brace)
-    int brace_depth = 0;
-    Token *body_end = tok;
-    while (tok->kind != TK_EOF) {
-        if (equal(tok, "{")) brace_depth++;
-        else if (equal(tok, "}")) {
-            brace_depth--;
-            if (brace_depth == 0) {
-                body_end = tok->next;
-                break;
-            }
-        }
-        tok = tok->next;
-    }
-
-    // Copy tokens from start to body_end
-    Token head = {};
-    Token *cur = &head;
-    for (Token *t = body_start; t != body_end; t = t->next) {
-        cur = cur->next = copy_token(vm, t);
-    }
-    cur->next = new_eof(vm, body_end);
-
-    // Create PragmaMacro entry
-    PragmaMacro *pm = arena_alloc(&vm->parser_arena, sizeof(PragmaMacro));
-    memset(pm, 0, sizeof(PragmaMacro));
-    pm->name = name;
-    pm->body_tokens = head.next;
-    pm->compiled_fn = NULL;
-    pm->macro_vm = NULL;
-    pm->next = vm->pragma_macros;
-    vm->pragma_macros = pm;
-
-    // Return token after the function
-    return body_end;
-}
-
 // Read a token sequence for #embed parameters (prefix, suffix, if_empty)
 // Similar to read_macro_arg_one but simplified for #embed use case
 static Token *read_embed_parameter(JCC *vm, Token **rest, Token *tok) {
@@ -1252,7 +1162,6 @@ static Token *handle_embed_directive(JCC *vm, Token *tok, Token *directive_start
         tok = tok->next;
     } else if (equal(tok, "<")) {
         // Pattern: #embed <foo.bin>
-        Token *start = tok;
         tok = tok->next;
 
         // Find closing ">"
@@ -1575,16 +1484,6 @@ static Token *preprocess2(JCC *vm, Token *tok) {
         if (equal(tok, "pragma") && equal(tok->next, "once")) {
             hashmap_put(&vm->pragma_once, tok->file->name, (void *)1);
             tok = skip_line(vm, tok->next->next);
-            continue;
-        }
-
-        if (equal(tok, "pragma") && equal(tok->next, "macro")) {
-            // Skip to next line (past the #pragma macro directive)
-            Token *start_tok = tok->next->next;  // Points to "macro"
-            while (start_tok && !start_tok->at_bol && start_tok->kind != TK_EOF)
-                start_tok = start_tok->next;
-            // Now start_tok should point to the first token of the function definition
-            tok = extract_pragma_macro(vm, start_tok);
             continue;
         }
 

@@ -195,8 +195,10 @@ int main(int argc, const char* argv[]) {
     int skip_preprocess = 0; // -X
     int skip_stdlib = 0; // -S
     int output_json = 0; // -j
+#ifdef JCC_HAS_CURL
     char *url_cache_dir = NULL; // --url-cache-dir
     int url_cache_clear = 0; // --url-cache-clear
+#endif
     int max_errors = 20; // --max-errors (default: 20)
     int warnings_as_errors = 0; // --Werror
     size_t embed_limit = 0; // --embed-limit (0 = use default)
@@ -397,12 +399,14 @@ int main(int argc, const char* argv[]) {
         case 'j':
             output_json = 1;
             break;
+#ifdef JCC_HAS_CURL
         case 1008:
             url_cache_dir = strdup(optarg);
             break;
         case 1009:
             url_cache_clear = 1;
             break;
+#endif
         case 1010:
             max_errors = atoi(optarg);
             if (max_errors <= 0) {
@@ -563,11 +567,6 @@ int main(int argc, const char* argv[]) {
         }
     }
 
-    // Compile any pragma macros that were extracted during preprocessing
-    if (vm.pragma_macros) {
-        compile_pragma_macros(&vm);
-    }
-
     // If -E flag is set, output preprocessed source and exit
     if (preprocess_only) {
         for (int i = 0; i < input_files_count; i++) {
@@ -577,13 +576,7 @@ int main(int argc, const char* argv[]) {
                 goto BAIL;
             }
 
-            // Expand pragma macro calls before outputting
-            Token *expanded = input_tokens[i];
-            if (vm.pragma_macros) {
-                expanded = expand_pragma_macro_calls(&vm, input_tokens[i]);
-            }
-
-            cc_output_preprocessed(f, expanded);
+            cc_output_preprocessed(f, input_tokens[i]);
             if (f != stdout)
                 fclose(f);
         }

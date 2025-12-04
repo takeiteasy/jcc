@@ -2291,16 +2291,13 @@ void codegen(JCC *vm, Obj *prog) {
     }
 
     // Find main function and store its address
-    // (Skip this check when compiling pragma macros)
-    if (!vm->compiling_pragma_macro) {
-        for (Obj *fn = prog; fn; fn = fn->next) {
-            if (fn->is_function && strcmp(fn->name, "main") == 0) {
-                // Store main's address at the start of text segment
-                vm->text_seg[0] = fn->code_addr;
-                return;
-            }
+    for (Obj *fn = prog; fn; fn = fn->next) {
+        if (fn->is_function && strcmp(fn->name, "main") == 0) {
+            // Store main's address at the start of text segment
+            vm->text_seg[0] = fn->code_addr;
+            return;
         }
-
-        error("main() function not found");
     }
+
+    error("main() function not found");
 }
