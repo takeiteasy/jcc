@@ -131,8 +131,8 @@ static Obj *resolve_global_var(JCC *vm, Obj *var) {
         return var;
     }
     
-    // Look up in the merged program (vm->globals) by name
-    for (Obj *g = vm->globals; g; g = g->next) {
+    // Look up in the merged program (vm->compiler.globals) by name
+    for (Obj *g = vm->compiler.globals; g; g = g->next) {
         if (!g->is_function && strcmp(g->name, var->name) == 0) {
             return g;  // Return the canonical version from merged program
         }
@@ -147,8 +147,8 @@ static int find_ffi_function(JCC *vm, const char *name) {
         return -1;
     
     // First try exact match
-    for (int i = 0; i < vm->ffi_count; i++) {
-        if (strcmp(vm->ffi_table[i].name, name) == 0) {
+    for (int i = 0; i < vm->compiler.ffi_count; i++) {
+        if (strcmp(vm->compiler.ffi_table[i].name, name) == 0) {
             return i;
         }
     }
@@ -171,8 +171,8 @@ static int find_ffi_function(JCC *vm, const char *name) {
         base_name[base_len] = '\0';
         
         // Try to find a variadic function with this base name
-        for (int i = 0; i < vm->ffi_count; i++) {
-            if (vm->ffi_table[i].is_variadic && strcmp(vm->ffi_table[i].name, base_name) == 0) {
+        for (int i = 0; i < vm->compiler.ffi_count; i++) {
+            if (vm->compiler.ffi_table[i].is_variadic && strcmp(vm->compiler.ffi_table[i].name, base_name) == 0) {
                 return i;
             }
         }
@@ -225,12 +225,12 @@ void gen_expr(JCC *vm, Node *node) {
                 *addr_loc = 0;  // Placeholder
 
                 // Record patch location
-                if (vm->num_func_addr_patches >= MAX_CALLS) {
+                if (vm->compiler.num_func_addr_patches >= MAX_CALLS) {
                     error("too many function address references");
                 }
-                vm->func_addr_patches[vm->num_func_addr_patches].location = addr_loc;
-                vm->func_addr_patches[vm->num_func_addr_patches].function = node->var;
-                vm->num_func_addr_patches++;
+                vm->compiler.func_addr_patches[vm->compiler.num_func_addr_patches].location = addr_loc;
+                vm->compiler.func_addr_patches[vm->compiler.num_func_addr_patches].function = node->var;
+                vm->compiler.num_func_addr_patches++;
             } else if (node->var->is_local) {
                 // Local variable or parameter - load address relative to bp
                 // Parameters have positive offsets, locals have negative offsets
@@ -638,12 +638,12 @@ void gen_expr(JCC *vm, Node *node) {
                     *addr_loc = 0;  // Placeholder
                     
                     // Record patch location
-                    if (vm->num_func_addr_patches >= MAX_CALLS) {
+                    if (vm->compiler.num_func_addr_patches >= MAX_CALLS) {
                         error("too many function address references");
                     }
-                    vm->func_addr_patches[vm->num_func_addr_patches].location = addr_loc;
-                    vm->func_addr_patches[vm->num_func_addr_patches].function = node->lhs->var;
-                    vm->num_func_addr_patches++;
+                    vm->compiler.func_addr_patches[vm->compiler.num_func_addr_patches].location = addr_loc;
+                    vm->compiler.func_addr_patches[vm->compiler.num_func_addr_patches].function = node->lhs->var;
+                    vm->compiler.num_func_addr_patches++;
                 } else if (node->lhs->var->is_local) {
                     emit_with_arg(vm, LEA, node->lhs->var->offset);
 
@@ -943,7 +943,7 @@ void gen_expr(JCC *vm, Node *node) {
 
         case ND_FUNCALL: {
             // Check if this is a builtin alloca call
-            if (node->lhs->kind == ND_VAR && node->lhs->var == vm->builtin_alloca) {
+            if (node->lhs->kind == ND_VAR && node->lhs->var == vm->compiler.builtin_alloca) {
                 // Special handling for alloca: it's a VM instruction, not a function call
                 // Evaluate the size argument into ax
                 if (!node->args) {
@@ -959,7 +959,7 @@ void gen_expr(JCC *vm, Node *node) {
             }
 
             // Check if this is setjmp or longjmp - these are VM builtins
-            if (node->lhs->kind == ND_VAR && node->lhs->var == vm->builtin_setjmp) {
+            if (node->lhs->kind == ND_VAR && node->lhs->var == vm->compiler.builtin_setjmp) {
                 // setjmp(jmp_buf env) - save execution context
                 if (!node->args) {
                     error_tok(vm, node->tok, "setjmp requires a jmp_buf argument");
@@ -972,7 +972,7 @@ void gen_expr(JCC *vm, Node *node) {
                 return;
             }
 
-            if (node->lhs->kind == ND_VAR && node->lhs->var == vm->builtin_longjmp) {
+            if (node->lhs->kind == ND_VAR && node->lhs->var == vm->compiler.builtin_longjmp) {
                 // longjmp(jmp_buf env, int val) - restore execution context
                 // Arguments: env, val
                 if (!node->args || !node->args->next) {
@@ -1166,12 +1166,12 @@ void gen_expr(JCC *vm, Node *node) {
                     long long *call_addr = ++vm->text_ptr;
                     
                     // Store patch information
-                    if (vm->num_call_patches >= MAX_CALLS) {
+                    if (vm->compiler.num_call_patches >= MAX_CALLS) {
                         error("too many function calls");
                     }
-                    vm->call_patches[vm->num_call_patches].location = call_addr;
-                    vm->call_patches[vm->num_call_patches].function = fn;
-                    vm->num_call_patches++;
+                    vm->compiler.call_patches[vm->compiler.num_call_patches].location = call_addr;
+                    vm->compiler.call_patches[vm->compiler.num_call_patches].function = fn;
+                    vm->compiler.num_call_patches++;
                     
                     // Emit placeholder (will be patched)
                     *call_addr = 0;
@@ -1310,13 +1310,13 @@ void gen_expr(JCC *vm, Node *node) {
             long long *label_addr_loc = ++vm->text_ptr;
 
             // Record patch information (similar to goto patches)
-            if (vm->num_goto_patches >= MAX_LABELS) {
+            if (vm->compiler.num_goto_patches >= MAX_LABELS) {
                 error_tok(vm, node->tok, "too many label references");
             }
-            vm->goto_patches[vm->num_goto_patches].name = node->label;
-            vm->goto_patches[vm->num_goto_patches].unique_label = node->unique_label;
-            vm->goto_patches[vm->num_goto_patches].location = label_addr_loc;
-            vm->num_goto_patches++;
+            vm->compiler.goto_patches[vm->compiler.num_goto_patches].name = node->label;
+            vm->compiler.goto_patches[vm->compiler.num_goto_patches].unique_label = node->unique_label;
+            vm->compiler.goto_patches[vm->compiler.num_goto_patches].location = label_addr_loc;
+            vm->compiler.num_goto_patches++;
 
             *label_addr_loc = 0;  // Placeholder
             return;
@@ -1327,18 +1327,18 @@ void gen_expr(JCC *vm, Node *node) {
 }
 
 static void make_label(JCC *vm, Node *node, char *label_name, char *unique_label) {
-    if (vm->num_labels >= MAX_LABELS)
+    if (vm->compiler.num_labels >= MAX_LABELS)
         error_tok(vm, node->tok, "too many labels");
-    vm->label_table[vm->num_labels].name = label_name;
-    vm->label_table[vm->num_labels].unique_label = unique_label;
-    vm->label_table[vm->num_labels].address = vm->text_ptr + 1;
-    vm->num_labels++;
+    vm->compiler.label_table[vm->compiler.num_labels].name = label_name;
+    vm->compiler.label_table[vm->compiler.num_labels].unique_label = unique_label;
+    vm->compiler.label_table[vm->compiler.num_labels].address = vm->text_ptr + 1;
+    vm->compiler.num_labels++;
 }
 
 // Helper to emit VLA cleanup code  
 // Must preserve ax (return value) during cleanup
 static void emit_vla_cleanup(JCC *vm) {
-    Obj *fn = vm->current_codegen_fn;
+    Obj *fn = vm->compiler.current_codegen_fn;
     if (!fn) return;
     
     // Check if there are any VLAs to clean up
@@ -1482,24 +1482,24 @@ static void gen_dense_switch(JCC *vm, Node *node, long min_case, long max_case) 
 
     // 6. Set up tracking for case label positions
     // Store the jump table pointer in VM so ND_CASE can fill it during body generation
-    long long *old_switch_table = vm->current_switch_table;
-    long old_switch_min = vm->current_switch_min;
-    long old_switch_size = vm->current_switch_size;
-    Node *old_switch_default = vm->current_switch_default;
-    vm->current_switch_table = jump_table;
-    vm->current_switch_min = min_case;
-    vm->current_switch_size = table_size;
-    vm->current_switch_default = node->default_case;
+    long long *old_switch_table = vm->compiler.current_switch_table;
+    long old_switch_min = vm->compiler.current_switch_min;
+    long old_switch_size = vm->compiler.current_switch_size;
+    Node *old_switch_default = vm->compiler.current_switch_default;
+    vm->compiler.current_switch_table = jump_table;
+    vm->compiler.current_switch_min = min_case;
+    vm->compiler.current_switch_size = table_size;
+    vm->compiler.current_switch_default = node->default_case;
 
     // Generate the entire switch body
     // Case labels will fill in their positions in the jump table as they're encountered
     gen_stmt(vm, node->then);
 
     // Restore previous switch context
-    vm->current_switch_table = old_switch_table;
-    vm->current_switch_min = old_switch_min;
-    vm->current_switch_size = old_switch_size;
-    vm->current_switch_default = old_switch_default;
+    vm->compiler.current_switch_table = old_switch_table;
+    vm->compiler.current_switch_min = old_switch_min;
+    vm->compiler.current_switch_size = old_switch_size;
+    vm->compiler.current_switch_default = old_switch_default;
 
     // 7. Default case (bounds check failed or holes in table)
     long long *default_start = vm->text_ptr + 1;
@@ -1570,15 +1570,15 @@ static void gen_sparse_switch(JCC *vm, Node *node) {
 
     // Set up sparse switch tracking
     // Record case positions as we generate the body
-    long long *old_sparse_case_table = vm->current_sparse_case_table;
-    int old_sparse_num = vm->current_sparse_num;
-    vm->current_sparse_case_table = case_table[0].jump_addr;
-    vm->current_sparse_num = num_entries;
+    long long *old_sparse_case_table = vm->compiler.current_sparse_case_table;
+    int old_sparse_num = vm->compiler.current_sparse_num;
+    vm->compiler.current_sparse_case_table = case_table[0].jump_addr;
+    vm->compiler.current_sparse_num = num_entries;
 
     // Store mapping in temporary storage for ND_CASE to use
     for (int i = 0; i < num_entries; i++) {
-        vm->sparse_case_nodes[i] = case_table[i].case_node;
-        vm->sparse_jump_addrs[i] = case_table[i].jump_addr;
+        vm->compiler.sparse_case_nodes[i] = case_table[i].case_node;
+        vm->compiler.sparse_jump_addrs[i] = case_table[i].jump_addr;
     }
 
     // Generate the entire switch body
@@ -1586,8 +1586,8 @@ static void gen_sparse_switch(JCC *vm, Node *node) {
     gen_stmt(vm, node->then);
 
     // Restore sparse switch context
-    vm->current_sparse_case_table = old_sparse_case_table;
-    vm->current_sparse_num = old_sparse_num;
+    vm->compiler.current_sparse_case_table = old_sparse_case_table;
+    vm->compiler.current_sparse_num = old_sparse_num;
 
     // Default case or end
     if (node->default_case) {
@@ -1617,8 +1617,8 @@ static void gen_stmt(JCC *vm, Node *node) {
                 // If returning struct/union, copy to return buffer
                 if (node->lhs->ty && (node->lhs->ty->kind == TY_STRUCT || node->lhs->ty->kind == TY_UNION)) {
                     // Get next buffer from pool (rotating)
-                    char *buffer = vm->return_buffer_pool[vm->return_buffer_index];
-                    vm->return_buffer_index = (vm->return_buffer_index + 1) % RETURN_BUFFER_POOL_SIZE;
+                    char *buffer = vm->compiler.return_buffer_pool[vm->compiler.return_buffer_index];
+                    vm->compiler.return_buffer_index = (vm->compiler.return_buffer_index + 1) % RETURN_BUFFER_POOL_SIZE;
 
                     // MCPY expects stack: sp[0]=size, sp[1]=src, sp[2]=dest
                     // Push order: dest, src, size
@@ -1820,26 +1820,26 @@ static void gen_stmt(JCC *vm, Node *node) {
         case ND_CASE:
             // Case label: record position in jump table for switch dispatch
             // Skip default case - it doesn't fill the jump table
-            if (node == vm->current_switch_default) {
+            if (node == vm->compiler.current_switch_default) {
                 gen_stmt(vm, node->lhs);
                 return;
             }
 
-            if (vm->current_switch_table) {
+            if (vm->compiler.current_switch_table) {
                 // Dense switch: fill jump table entries for this case's value range
                 long long *case_addr = vm->text_ptr + 1;
                 for (long val = node->begin; val <= node->end; val++) {
-                    long idx = val - vm->current_switch_min;
-                    if (idx >= 0 && idx < vm->current_switch_size) {
-                        vm->current_switch_table[idx] = (long long)case_addr;
+                    long idx = val - vm->compiler.current_switch_min;
+                    if (idx >= 0 && idx < vm->compiler.current_switch_size) {
+                        vm->compiler.current_switch_table[idx] = (long long)case_addr;
                     }
                 }
-            } else if (vm->current_sparse_num > 0) {
+            } else if (vm->compiler.current_sparse_num > 0) {
                 // Sparse switch: patch jump addresses for this case
                 long long *case_addr = vm->text_ptr + 1;
-                for (int i = 0; i < vm->current_sparse_num; i++) {
-                    if (vm->sparse_case_nodes[i] == node) {
-                        *vm->sparse_jump_addrs[i] = (long long)case_addr;
+                for (int i = 0; i < vm->compiler.current_sparse_num; i++) {
+                    if (vm->compiler.sparse_case_nodes[i] == node) {
+                        *vm->compiler.sparse_jump_addrs[i] = (long long)case_addr;
                     }
                 }
             }
@@ -1857,7 +1857,7 @@ static void gen_stmt(JCC *vm, Node *node) {
 
         case ND_GOTO:
             // Goto statement: emit JMP and record for later patching
-            if (vm->num_goto_patches >= MAX_LABELS) {
+            if (vm->compiler.num_goto_patches >= MAX_LABELS) {
                 error_tok(vm, node->tok, "too many goto statements");
             }
 
@@ -1866,10 +1866,10 @@ static void gen_stmt(JCC *vm, Node *node) {
             long long *jmp_addr = ++vm->text_ptr;
 
             // Record patch information
-            vm->goto_patches[vm->num_goto_patches].name = node->label;
-            vm->goto_patches[vm->num_goto_patches].unique_label = node->unique_label;
-            vm->goto_patches[vm->num_goto_patches].location = jmp_addr;
-            vm->num_goto_patches++;
+            vm->compiler.goto_patches[vm->compiler.num_goto_patches].name = node->label;
+            vm->compiler.goto_patches[vm->compiler.num_goto_patches].unique_label = node->unique_label;
+            vm->compiler.goto_patches[vm->compiler.num_goto_patches].location = jmp_addr;
+            vm->compiler.num_goto_patches++;
 
             // Placeholder (will be patched after function code generation completes)
             // This is patched in gen_function() after all labels are collected
@@ -1889,8 +1889,8 @@ static void gen_stmt(JCC *vm, Node *node) {
             // Since this is a VM and not native code generation, we provide a callback
             // mechanism for users to handle assembly strings in application-specific ways.
             // If no callback is set, the asm statement is silently ignored (no-op).
-            if (vm->asm_callback) {
-                vm->asm_callback(vm, node->asm_str, vm->asm_user_data);
+            if (vm->compiler.asm_callback) {
+                vm->compiler.asm_callback(vm, node->asm_str, vm->compiler.asm_user_data);
             }
             // If no callback: asm statements have no effect in the VM
             return;
@@ -1996,11 +1996,11 @@ void gen_function(JCC *vm, Obj *fn) {
     }
 
     // Reset label and goto tables for this function
-    vm->num_labels = 0;
-    vm->num_goto_patches = 0;
+    vm->compiler.num_labels = 0;
+    vm->compiler.num_goto_patches = 0;
 
     // Set current function for VLA cleanup
-    vm->current_codegen_fn = fn;
+    vm->compiler.current_codegen_fn = fn;
 
     // Save number of global debug symbols (don't clear globals)
     // We only clear locals when entering a new function
@@ -2127,21 +2127,21 @@ void gen_function(JCC *vm, Obj *fn) {
     emit(vm, LEV);
     
     // Clear current function
-    vm->current_codegen_fn = NULL;
+    vm->compiler.current_codegen_fn = NULL;
 
     // Patch all goto statements in this function
-    for (int i = 0; i < vm->num_goto_patches; i++) {
-        GotoPatch *patch = &vm->goto_patches[i];
+    for (int i = 0; i < vm->compiler.num_goto_patches; i++) {
+        GotoPatch *patch = &vm->compiler.goto_patches[i];
 
         // Find the target label
         LabelEntry *target = NULL;
-        for (int j = 0; j < vm->num_labels; j++) {
+        for (int j = 0; j < vm->compiler.num_labels; j++) {
             // Match either by label name or unique_label (for break/continue)
-            if ((patch->name && vm->label_table[j].name && 
-                 strcmp(patch->name, vm->label_table[j].name) == 0) ||
-                (patch->unique_label && vm->label_table[j].unique_label &&
-                 strcmp(patch->unique_label, vm->label_table[j].unique_label) == 0)) {
-                target = &vm->label_table[j];
+            if ((patch->name && vm->compiler.label_table[j].name && 
+                 strcmp(patch->name, vm->compiler.label_table[j].name) == 0) ||
+                (patch->unique_label && vm->compiler.label_table[j].unique_label &&
+                 strcmp(patch->unique_label, vm->compiler.label_table[j].unique_label) == 0)) {
+                target = &vm->compiler.label_table[j];
                 break;
             }
         }
@@ -2164,7 +2164,7 @@ void codegen(JCC *vm, Obj *prog) {
     // Initialize text pointer to start of text segment
     // Reserve text_seg[0] for main entry point
     vm->text_ptr = vm->text_seg;  // Start at text_seg[1] (after first emit)
-    vm->num_call_patches = 0;  // Reset patch counter
+    vm->compiler.num_call_patches = 0;  // Reset patch counter
 
     // Validate all extern declarations have definitions
     for (Obj *obj = prog; obj; obj = obj->next) {
@@ -2231,9 +2231,9 @@ void codegen(JCC *vm, Obj *prog) {
         long long offset = vm->data_ptr - vm->data_seg;
         offset = (offset + 7) & ~7;
         vm->data_ptr = vm->data_seg + offset;
-        vm->return_buffer_pool[i] = vm->data_ptr;  // Store pointer for codegen
-        memset(vm->return_buffer_pool[i], 0, vm->return_buffer_size);
-        vm->data_ptr += vm->return_buffer_size;
+        vm->compiler.return_buffer_pool[i] = vm->data_ptr;  // Store pointer for codegen
+        memset(vm->compiler.return_buffer_pool[i], 0, vm->compiler.return_buffer_size);
+        vm->data_ptr += vm->compiler.return_buffer_size;
     }
 
     // First pass: generate code for all functions
@@ -2246,9 +2246,9 @@ void codegen(JCC *vm, Obj *prog) {
     // Second pass: patch function call addresses
     // Note: We must look up functions by name in the merged program list,
     // because the stored Obj* might point to a forward declaration, not the definition
-    for (int i = 0; i < vm->num_call_patches; i++) {
-        char *fn_name = vm->call_patches[i].function->name;
-        long long *loc = vm->call_patches[i].location;
+    for (int i = 0; i < vm->compiler.num_call_patches; i++) {
+        char *fn_name = vm->compiler.call_patches[i].function->name;
+        long long *loc = vm->compiler.call_patches[i].location;
         
         // Find the function definition in the program list
         Obj *fn_def = NULL;
@@ -2269,9 +2269,9 @@ void codegen(JCC *vm, Obj *prog) {
 
     // Patch function addresses (for function pointers)
     // Same as call patches - must look up by name to handle forward declarations
-    for (int i = 0; i < vm->num_func_addr_patches; i++) {
-        char *fn_name = vm->func_addr_patches[i].function->name;
-        long long *loc = vm->func_addr_patches[i].location;
+    for (int i = 0; i < vm->compiler.num_func_addr_patches; i++) {
+        char *fn_name = vm->compiler.func_addr_patches[i].function->name;
+        long long *loc = vm->compiler.func_addr_patches[i].location;
 
         // Find the function definition in the program list
         Obj *fn_def = NULL;

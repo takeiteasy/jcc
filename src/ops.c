@@ -1662,12 +1662,12 @@ int op_CALLF_fn(JCC *vm) {
     // Foreign function call: ax contains FFI function index
     // For variadic functions, actual arg count is on stack (pushed by codegen)
     int func_idx = vm->ax;
-    if (func_idx < 0 || func_idx >= vm->ffi_count) {
+    if (func_idx < 0 || func_idx >= vm->compiler.ffi_count) {
         printf("error: invalid FFI function index: %d\n", func_idx);
         return -1;
     }
 
-    ForeignFunc *ff = &vm->ffi_table[func_idx];
+    ForeignFunc *ff = &vm->compiler.ffi_table[func_idx];
 
     // Pop actual argument count and double_arg_mask from stack (pushed by codegen for all FFI calls)
     // Stack layout: [args...] [double_arg_mask] [arg_count] [func_idx in ax]

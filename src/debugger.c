@@ -438,9 +438,9 @@ void cc_debug_repl(JCC *vm) {
 
                     // Find file (simple match on filename, not full path)
                     File *target_file = NULL;
-                    for (int i = 0; vm->input_files && vm->input_files[i]; i++) {
-                        if (strstr(vm->input_files[i]->name, filename)) {
-                            target_file = vm->input_files[i];
+                    for (int i = 0; vm->compiler.input_files && vm->compiler.input_files[i]; i++) {
+                        if (strstr(vm->compiler.input_files[i]->name, filename)) {
+                            target_file = vm->compiler.input_files[i];
                             break;
                         }
                     }
@@ -648,7 +648,7 @@ void cc_debug_repl(JCC *vm) {
 int debugger_run(JCC *vm, int argc, char **argv) {
     // Find main function
     Obj *main_fn = NULL;
-    for (Obj *obj = vm->globals; obj; obj = obj->next) {
+    for (Obj *obj = vm->compiler.globals; obj; obj = obj->next) {
         if (obj->is_function && obj->name && strcmp(obj->name, "main") == 0) {
             main_fn = obj;
             break;
@@ -768,7 +768,7 @@ long long *cc_find_function_entry(JCC *vm, const char *name) {
     }
 
     // Search through global symbols for function
-    for (Obj *fn = vm->globals; fn; fn = fn->next) {
+    for (Obj *fn = vm->compiler.globals; fn; fn = fn->next) {
         if (fn->is_function && fn->name && strcmp(fn->name, name) == 0) {
             if (fn->code_addr >= 0) {
                 return vm->text_seg + fn->code_addr;

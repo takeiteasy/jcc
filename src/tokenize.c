@@ -51,7 +51,7 @@ static void verror_at(JCC *vm,
     // If error handling or error collection is enabled, save error to buffer
     if (vm && (vm->error_jmp_buf || vm->collect_errors)) {
         // Build error message into a buffer
-        char *msg = arena_alloc(&vm->parser_arena, 4096);  // Allocate space for error message
+        char *msg = arena_alloc(&vm->compiler.parser_arena, 4096);  // Allocate space for error message
         if (!msg) {
             fprintf(stderr, "Failed to allocate error message buffer\n");
             exit(1);
@@ -90,28 +90,28 @@ static void verror_at(JCC *vm,
 
 void error_at(JCC *vm, char *loc, char *fmt, ...) {
     int line_no = 1;
-    for (char *p = vm->current_file->contents; p < loc; p++)
+    for (char *p = vm->compiler.current_file->contents; p < loc; p++)
         if (*p == '\n')
             line_no++;
 
     // Calculate column number
     int col_no = 1;
     char *line_start = loc;
-    while (line_start > vm->current_file->contents && line_start[-1] != '\n') {
+    while (line_start > vm->compiler.current_file->contents && line_start[-1] != '\n') {
         line_start--;
         col_no++;
     }
 
     va_list ap;
     va_start(ap, fmt);
-    verror_at(vm, vm->current_file->name, vm->current_file->contents, line_no, loc, fmt, ap);
+    verror_at(vm, vm->compiler.current_file->name, vm->compiler.current_file->contents, line_no, loc, fmt, ap);
     va_end(ap);
 
     // Collect error if error collection is enabled
     if (vm && vm->collect_errors && vm->error_message) {
-        CompileError *err = arena_alloc(&vm->parser_arena, sizeof(CompileError));
+        CompileError *err = arena_alloc(&vm->compiler.parser_arena, sizeof(CompileError));
         err->message = vm->error_message;
-        err->filename = vm->current_file->name;
+        err->filename = vm->compiler.current_file->name;
         err->line_no = line_no;
         err->col_no = col_no;
         err->severity = 0; // error
@@ -143,7 +143,7 @@ void error_tok(JCC *vm, Token *tok, char *fmt, ...) {
 
     // Collect error if error collection is enabled
     if (vm && vm->collect_errors && vm->error_message) {
-        CompileError *err = arena_alloc(&vm->parser_arena, sizeof(CompileError));
+        CompileError *err = arena_alloc(&vm->compiler.parser_arena, sizeof(CompileError));
         err->message = vm->error_message;
         err->filename = tok->file->name;
         err->line_no = tok->line_no;
@@ -179,7 +179,7 @@ bool error_tok_recover(JCC *vm, Token *tok, char *fmt, ...) {
 
     // Collect error if error collection is enabled
     if (vm && vm->collect_errors && vm->error_message) {
-        CompileError *err = arena_alloc(&vm->parser_arena, sizeof(CompileError));
+        CompileError *err = arena_alloc(&vm->compiler.parser_arena, sizeof(CompileError));
         err->message = vm->error_message;
         err->filename = tok->file->name;
         err->line_no = tok->line_no;
@@ -232,7 +232,7 @@ void warn_tok(JCC *vm, Token *tok, char *fmt, ...) {
     // If warnings are treated as errors, call error_tok instead
     if (vm && vm->warnings_as_errors) {
         if (vm->error_message) {
-            CompileError *err = arena_alloc(&vm->parser_arena, sizeof(CompileError));
+            CompileError *err = arena_alloc(&vm->compiler.parser_arena, sizeof(CompileError));
             err->message = vm->error_message;
             err->filename = tok->file->name;
             err->line_no = tok->line_no;
@@ -260,7 +260,7 @@ void warn_tok(JCC *vm, Token *tok, char *fmt, ...) {
 
     // Collect warning if error collection is enabled
     if (vm && vm->collect_errors && vm->error_message) {
-        CompileError *err = arena_alloc(&vm->parser_arena, sizeof(CompileError));
+        CompileError *err = arena_alloc(&vm->compiler.parser_arena, sizeof(CompileError));
         err->message = vm->error_message;
         err->filename = tok->file->name;
         err->line_no = tok->line_no;
@@ -303,17 +303,17 @@ bool consume(JCC *vm, Token **rest, Token *tok, char *str) {
 
 // Create a new token.
 static Token *new_token(JCC *vm, TokenKind kind, char *start, char *end) {
-    Token *tok = arena_alloc(&vm->parser_arena, sizeof(Token));
+    Token *tok = arena_alloc(&vm->compiler.parser_arena, sizeof(Token));
     memset(tok, 0, sizeof(Token));
     tok->kind = kind;
     tok->loc = start;
     tok->len = end - start;
-    tok->file = vm->current_file;
-    tok->filename = vm->current_file->display_name;
-    tok->at_bol = vm->at_bol;
-    tok->has_space = vm->has_space;
+    tok->file = vm->compiler.current_file;
+    tok->filename = vm->compiler.current_file->display_name;
+    tok->at_bol = vm->compiler.at_bol;
+    tok->has_space = vm->compiler.has_space;
 
-    vm->at_bol = vm->has_space = false;
+    vm->compiler.at_bol = vm->compiler.has_space = false;
     return tok;
 }
 
@@ -450,7 +450,7 @@ static char *string_literal_end(JCC *vm, char *p) {
 
 static Token *read_string_literal(JCC *vm, char *start, char *quote) {
     char *end = string_literal_end(vm, quote + 1);
-    char *buf = arena_alloc(&vm->parser_arena, end - quote);
+    char *buf = arena_alloc(&vm->compiler.parser_arena, end - quote);
     memset(buf, 0, end - quote);
     int len = 0;
 
@@ -476,7 +476,7 @@ static Token *read_string_literal(JCC *vm, char *start, char *quote) {
 // is called a "surrogate pair".
 static Token *read_utf16_string_literal(JCC *vm, char *start, char *quote) {
     char *end = string_literal_end(vm, quote + 1);
-    uint16_t *buf = arena_alloc(&vm->parser_arena, 2 * (end - start));
+    uint16_t *buf = arena_alloc(&vm->compiler.parser_arena, 2 * (end - start));
     memset(buf, 0, 2 * (end - start));
     int len = 0;
 
@@ -510,7 +510,7 @@ static Token *read_utf16_string_literal(JCC *vm, char *start, char *quote) {
 // encoded in 4 bytes.
 static Token *read_utf32_string_literal(JCC *vm, char *start, char *quote, Type *ty) {
     char *end = string_literal_end(vm, quote + 1);
-    uint32_t *buf = arena_alloc(&vm->parser_arena, 4 * (end - quote));
+    uint32_t *buf = arena_alloc(&vm->compiler.parser_arena, 4 * (end - quote));
     memset(buf, 0, 4 * (end - quote));
     int len = 0;
 
@@ -703,7 +703,7 @@ void convert_pp_tokens(JCC *vm, Token *tok) {
 
 // Initialize line info for all tokens.
 static void add_line_numbers(JCC *vm, Token *tok) {
-    char *p = vm->current_file->contents;
+    char *p = vm->compiler.current_file->contents;
     char *line_start = p;
     int n = 1;
 
@@ -733,14 +733,14 @@ Token *tokenize_string_literal(JCC *vm, Token *tok, Type *basety) {
 
 // Tokenize a given string and returns new tokens.
 Token *tokenize(JCC *vm, File *file) {
-    vm->current_file = file;
+    vm->compiler.current_file = file;
 
     char *p = file->contents;
     Token head = {};
     Token *cur = &head;
 
-    vm->at_bol = true;
-    vm->has_space = false;
+    vm->compiler.at_bol = true;
+    vm->compiler.has_space = false;
 
     // State tracking for #include directive to preserve // in URLs
     bool after_include_directive = false;  // True after we see #include
@@ -752,7 +752,7 @@ Token *tokenize(JCC *vm, File *file) {
             p += 2;
             while (*p != '\n')
                 p++;
-            vm->has_space = true;
+            vm->compiler.has_space = true;
             continue;
         }
 
@@ -762,15 +762,15 @@ Token *tokenize(JCC *vm, File *file) {
             if (!q)
                 error_at(vm, p, "unclosed block comment");
             p = q + 2;
-            vm->has_space = true;
+            vm->compiler.has_space = true;
             continue;
         }
 
         // Skip newline.
         if (*p == '\n') {
             p++;
-            vm->at_bol = true;
-            vm->has_space = false;
+            vm->compiler.at_bol = true;
+            vm->compiler.has_space = false;
             // Reset include directive state on newline
             after_include_directive = false;
             in_include_path = false;
@@ -780,7 +780,7 @@ Token *tokenize(JCC *vm, File *file) {
         // Skip whitespace characters.
         if (isspace(*p)) {
             p++;
-            vm->has_space = true;
+            vm->compiler.has_space = true;
             continue;
         }
 
@@ -865,7 +865,7 @@ Token *tokenize(JCC *vm, File *file) {
         }
 
         // Detect # at beginning of line (potential directive)
-        if (vm->at_bol && *p == '#') {
+        if (vm->compiler.at_bol && *p == '#') {
             // Check if this is #include by peeking ahead
             char *peek = p + 1;
             while (isspace(*peek) && *peek != '\n') peek++;
@@ -954,7 +954,7 @@ static char *read_file(JCC *vm, char *path) {
     fclose(out);
 
     // Register buffer for cleanup
-    strarray_push(&vm->file_buffers, buf);
+    strarray_push(&vm->compiler.file_buffers, buf);
 
     return buf;
 }
@@ -985,7 +985,7 @@ unsigned char *read_binary_file(JCC *vm, char *path, size_t *out_size) {
     *out_size = (size_t)file_size;
 
     // Allocate buffer (use arena for automatic cleanup)
-    unsigned char *buffer = arena_alloc(&vm->parser_arena, file_size);
+    unsigned char *buffer = arena_alloc(&vm->compiler.parser_arena, file_size);
 
     // Read entire file
     if (file_size > 0) {
@@ -1001,7 +1001,7 @@ unsigned char *read_binary_file(JCC *vm, char *path, size_t *out_size) {
 }
 
 File *new_file(JCC *vm, char *name, int file_no, char *contents) {
-    File *file = arena_alloc(&vm->parser_arena, sizeof(File));
+    File *file = arena_alloc(&vm->compiler.parser_arena, sizeof(File));
     memset(file, 0, sizeof(File));
     file->name = name;
     file->display_name = name;
@@ -1119,9 +1119,9 @@ Token *tokenize_file(JCC *vm, char *path) {
     File *file = new_file(vm, path, file_no + 1, p);
 
     // Save the filename for assembler .file directive.
-    vm->input_files = realloc(vm->input_files, sizeof(char *) * (file_no + 2));
-    vm->input_files[file_no] = file;
-    vm->input_files[file_no + 1] = NULL;
+    vm->compiler.input_files = realloc(vm->compiler.input_files, sizeof(char *) * (file_no + 2));
+    vm->compiler.input_files[file_no] = file;
+    vm->compiler.input_files[file_no + 1] = NULL;
     file_no++;
 
     return tokenize(vm, file);

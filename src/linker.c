@@ -61,7 +61,7 @@ Token *cc_preprocess(JCC *vm, const char *path) {
     // Tokenize and parse.
     Token *tok2 = must_tokenize_file(vm, (char*)path);
     tok = append_tokens(tok, tok2);
-    if (!vm->skip_preprocess) {
+    if (!vm->compiler.skip_preprocess) {
         tok = preprocess(vm, tok);
     }
 
@@ -94,10 +94,10 @@ Obj *cc_link_progs(JCC *vm, Obj **progs, int count) {
         return progs[0];
     
     // Store progs for later offset propagation
-    vm->link_prog_count = count;
-    vm->link_progs = malloc(sizeof(Obj*) * count);
+    vm->compiler.link_prog_count = count;
+    vm->compiler.link_progs = malloc(sizeof(Obj*) * count);
     for (int i = 0; i < count; i++) {
-        vm->link_progs[i] = progs[i];
+        vm->compiler.link_progs[i] = progs[i];
     }
     
     // Build a hashmap to detect duplicate symbols

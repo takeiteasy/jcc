@@ -39,7 +39,7 @@ bool is_url(const char *filename) {
 #define URL_TIMEOUT 30
 
 void init_url_cache(JCC *vm) {
-    if (!vm->url_cache_dir) {
+    if (!vm->compiler.url_cache_dir) {
         // Set default cache directory to platform-specific temp path
         char *temp_dir = NULL;
 
@@ -57,26 +57,26 @@ void init_url_cache(JCC *vm) {
             temp_dir = "/tmp";
         #endif
 
-        vm->url_cache_dir = format("%s/jcc_cache", temp_dir);
+        vm->compiler.url_cache_dir = format("%s/jcc_cache", temp_dir);
     }
 
     // Create cache directory if it doesn't exist
     struct stat st;
-    if (stat(vm->url_cache_dir, &st) != 0) {
+    if (stat(vm->compiler.url_cache_dir, &st) != 0) {
         // Directory doesn't exist, create it
         #ifdef _WIN32
-        mkdir(vm->url_cache_dir);
+        mkdir(vm->compiler.url_cache_dir);
         #else
-        mkdir(vm->url_cache_dir, 0755);
+        mkdir(vm->compiler.url_cache_dir, 0755);
         #endif
     }
 }
 
 void clear_url_cache(JCC *vm) {
-    if (!vm->url_cache_dir)
+    if (!vm->compiler.url_cache_dir)
         return;
 
-    DIR *dir = opendir(vm->url_cache_dir);
+    DIR *dir = opendir(vm->compiler.url_cache_dir);
     if (!dir)
         return;
 
@@ -85,7 +85,7 @@ void clear_url_cache(JCC *vm) {
         if (entry->d_name[0] == '.')
             continue; // Skip . and ..
 
-        char *path = format("%s/%s", vm->url_cache_dir, entry->d_name);
+        char *path = format("%s/%s", vm->compiler.url_cache_dir, entry->d_name);
         unlink(path);
     }
     closedir(dir);
@@ -109,12 +109,12 @@ static char *get_url_cache_path(JCC *vm, const char *url) {
     const char *dot = strrchr(filename, '.');
     if (!dot || strlen(filename) > 64) {
         unsigned long hash = hash_url(url);
-        return format("%s/%lu.h", vm->url_cache_dir, hash);
+        return format("%s/%lu.h", vm->compiler.url_cache_dir, hash);
     }
 
     // Use filename from URL with hash prefix to avoid collisions
     unsigned long hash = hash_url(url);
-    return format("%s/%lu_%s", vm->url_cache_dir, hash, filename);
+    return format("%s/%lu_%s", vm->compiler.url_cache_dir, hash, filename);
 }
 
 // Callback for curl to write data to file

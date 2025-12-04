@@ -112,20 +112,20 @@ void cc_init(JCC *vm, uint32_t flags) {
     vm->debug_vm = 0;
 
     // Set #embed directive defaults
-    vm->embed_limit = 10 * 1024 * 1024;       // 10MB soft warning limit
-    vm->embed_hard_limit = 50 * 1024 * 1024;  // 50MB secondary warning
-    vm->embed_hard_error = false;              // Default to warnings, not errors
+    vm->compiler.embed_limit = 10 * 1024 * 1024;       // 10MB soft warning limit
+    vm->compiler.embed_hard_limit = 50 * 1024 * 1024;  // 50MB secondary warning
+    vm->compiler.embed_hard_error = false;              // Default to warnings, not errors
 
     // Return buffer pool will be allocated in data segment during codegen
-    vm->return_buffer_size = 1024;
-    vm->return_buffer_index = 0;
+    vm->compiler.return_buffer_size = 1024;
+    vm->compiler.return_buffer_index = 0;
     for (int i = 0; i < RETURN_BUFFER_POOL_SIZE; i++) {
-        vm->return_buffer_pool[i] = NULL;  // Will be set to data segment locations
+        vm->compiler.return_buffer_pool[i] = NULL;  // Will be set to data segment locations
     }
 
     // Initialize parser arena BEFORE init_macros to avoid orphaning blocks
     // (init_macros allocates from the arena, so arena must be initialized first)
-    arena_init(&vm->parser_arena, 0);  // 0 = use default (1MB)
+    arena_init(&vm->compiler.parser_arena, 0);  // 0 = use default (1MB)
 
     init_macros(vm);
     cc_init_parser(vm);
@@ -153,26 +153,26 @@ void cc_init(JCC *vm, uint32_t flags) {
     // Note: alloc_map and ptr_tags removed - now using sorted_allocs for heap tracking
 
     // Initialize included_headers HashMap for header-based stdlib loading
-    vm->included_headers.capacity = 0;
-    vm->included_headers.buckets = NULL;
-    vm->included_headers.used = 0;
+    vm->compiler.included_headers.capacity = 0;
+    vm->compiler.included_headers.buckets = NULL;
+    vm->compiler.included_headers.used = 0;
 
     // Initialize url_to_path HashMap for URL include tracking
-    vm->url_to_path.capacity = 0;
-    vm->url_to_path.buckets = NULL;
-    vm->url_to_path.used = 0;
-    vm->url_to_path.used = 0;
-    vm->url_cache_dir = NULL;  // Will be initialized on first URL include
+    vm->compiler.url_to_path.capacity = 0;
+    vm->compiler.url_to_path.buckets = NULL;
+    vm->compiler.url_to_path.used = 0;
+    vm->compiler.url_to_path.used = 0;
+    vm->compiler.url_cache_dir = NULL;  // Will be initialized on first URL include
 
     // Initialize include_cache HashMap
-    vm->include_cache.capacity = 0;
-    vm->include_cache.buckets = NULL;
-    vm->include_cache.used = 0;
+    vm->compiler.include_cache.capacity = 0;
+    vm->compiler.include_cache.buckets = NULL;
+    vm->compiler.include_cache.used = 0;
 
     // Initialize file_buffers StringArray
-    vm->file_buffers.data = NULL;
-    vm->file_buffers.len = 0;
-    vm->file_buffers.capacity = 0;
+    vm->compiler.file_buffers.data = NULL;
+    vm->compiler.file_buffers.len = 0;
+    vm->compiler.file_buffers.capacity = 0;
 
     // Initialize sorted allocation array for O(log n) pointer validation
     vm->sorted_allocs.addresses = NULL;
@@ -323,8 +323,8 @@ void cc_destroy(JCC *vm) {
     // Note: alloc_map and ptr_tags removed - now using sorted_allocs for heap tracking
 
     // Free included_headers HashMap (string literal keys - not allocated, values are casted integers - no heap allocation)
-    if (vm->included_headers.buckets)
-        free(vm->included_headers.buckets);
+    if (vm->compiler.included_headers.buckets)
+        free(vm->compiler.included_headers.buckets);
 
     // Free sorted allocation arrays
     if (vm->sorted_allocs.addresses)
@@ -333,34 +333,34 @@ void cc_destroy(JCC *vm) {
         free(vm->sorted_allocs.headers);
 
     // Free macros HashMap (string keys from tokens - not allocated, Macro values are arena-allocated)
-    if (vm->macros.buckets) {
+    if (vm->compiler.macros.buckets) {
         // Don't free individual Macro values - they're arena-allocated and will be freed by arena_destroy()
         // Just free the HashMap buckets
-        free(vm->macros.buckets);
+        free(vm->compiler.macros.buckets);
     }
 
     // Free pragma_once HashMap (string keys from file names - allocated, values are just (void*)1)
-    if (vm->pragma_once.buckets) {
-        for (int i = 0; i < vm->pragma_once.capacity; i++) {
-            HashEntry *entry = &vm->pragma_once.buckets[i];
+    if (vm->compiler.pragma_once.buckets) {
+        for (int i = 0; i < vm->compiler.pragma_once.capacity; i++) {
+            HashEntry *entry = &vm->compiler.pragma_once.buckets[i];
             if (entry->key && entry->key != (void *)-1 && entry->keylen != -1) {
                 // Free string key (file name)
                 free(entry->key);
             }
         }
-        free(vm->pragma_once.buckets);
+        free(vm->compiler.pragma_once.buckets);
     }
 
     // Free FFI table
-    if (vm->ffi_table) {
-        for (int i = 0; i < vm->ffi_count; i++) {
-            free(vm->ffi_table[i].name);
+    if (vm->compiler.ffi_table) {
+        for (int i = 0; i < vm->compiler.ffi_count; i++) {
+            free(vm->compiler.ffi_table[i].name);
 #ifdef JCC_HAS_FFI
-            if (vm->ffi_table[i].arg_types)
-                free(vm->ffi_table[i].arg_types);
+            if (vm->compiler.ffi_table[i].arg_types)
+                free(vm->compiler.ffi_table[i].arg_types);
 #endif
         }
-        free(vm->ffi_table);
+        free(vm->compiler.ffi_table);
     }
 
     // Free error message buffer if set
@@ -370,52 +370,52 @@ void cc_destroy(JCC *vm) {
     }
 
     // Free include paths
-    if (vm->include_paths.data) {
-        for (int i = 0; i < vm->include_paths.len; i++)
-            free(vm->include_paths.data[i]);
-        free(vm->include_paths.data);
+    if (vm->compiler.include_paths.data) {
+        for (int i = 0; i < vm->compiler.include_paths.len; i++)
+            free(vm->compiler.include_paths.data[i]);
+        free(vm->compiler.include_paths.data);
     }
 
     // Free system include paths
-    if (vm->system_include_paths.data) {
-        for (int i = 0; i < vm->system_include_paths.len; i++)
-            free(vm->system_include_paths.data[i]);
-        free(vm->system_include_paths.data);
+    if (vm->compiler.system_include_paths.data) {
+        for (int i = 0; i < vm->compiler.system_include_paths.len; i++)
+            free(vm->compiler.system_include_paths.data[i]);
+        free(vm->compiler.system_include_paths.data);
     }
 
     // Free input files array
-    if (vm->input_files)
-        free(vm->input_files);
+    if (vm->compiler.input_files)
+        free(vm->compiler.input_files);
 
     // Free URL cache directory
-    if (vm->url_cache_dir)
-        free(vm->url_cache_dir);
+    if (vm->compiler.url_cache_dir)
+        free(vm->compiler.url_cache_dir);
 
     // Free include_cache HashMap
-    if (vm->include_cache.buckets) {
-        for (int i = 0; i < vm->include_cache.capacity; i++) {
-            HashEntry *entry = &vm->include_cache.buckets[i];
+    if (vm->compiler.include_cache.buckets) {
+        for (int i = 0; i < vm->compiler.include_cache.capacity; i++) {
+            HashEntry *entry = &vm->compiler.include_cache.buckets[i];
             if (entry->key && entry->key != (void *)-1 && entry->keylen != -1) {
                 // Key is filename (not owned here usually, but let's check usage)
                 // Value is path (malloc'd string)
                 if (entry->val) free(entry->val);
             }
         }
-        free(vm->include_cache.buckets);
+        free(vm->compiler.include_cache.buckets);
     }
 
     // Free file buffers
-    if (vm->file_buffers.data) {
-        for (int i = 0; i < vm->file_buffers.len; i++)
-            free(vm->file_buffers.data[i]);
-        free(vm->file_buffers.data);
+    if (vm->compiler.file_buffers.data) {
+        for (int i = 0; i < vm->compiler.file_buffers.len; i++)
+            free(vm->compiler.file_buffers.data[i]);
+        free(vm->compiler.file_buffers.data);
     }
 
     // Free URL to path map
-    if (vm->url_to_path.buckets) {
+    if (vm->compiler.url_to_path.buckets) {
         // Keys are cache paths (owned by file_buffers or similar?), Values are filenames (owned by tokens/files)
         // We just free the buckets
-        free(vm->url_to_path.buckets);
+        free(vm->compiler.url_to_path.buckets);
     }
 
     // Free watchpoint expressions
@@ -427,7 +427,7 @@ void cc_destroy(JCC *vm) {
     }
 
     // Destroy parser arena (frees all tokens, AST nodes, preprocessor state)
-    arena_destroy(&vm->parser_arena);
+    arena_destroy(&vm->compiler.parser_arena);
 }
 
 void cc_print_stack_report(JCC *vm) {
@@ -465,11 +465,11 @@ void cc_print_stack_report(JCC *vm) {
 }
 
 void cc_include(JCC *vm, const char *path) {
-    strarray_push(&vm->include_paths, strdup(path));
+    strarray_push(&vm->compiler.include_paths, strdup(path));
 }
 
 void cc_system_include(JCC *vm, const char *path) {
-    strarray_push(&vm->system_include_paths, strdup(path));
+    strarray_push(&vm->compiler.system_include_paths, strdup(path));
 }
 
 void cc_define(JCC *vm, char *name, char *buf) {
@@ -481,8 +481,8 @@ void cc_undef(JCC *vm, char *name) {
 }
 
 void cc_set_asm_callback(JCC *vm, JCCAsmCallback callback, void *user_data) {
-    vm->asm_callback = callback;
-    vm->asm_user_data = user_data;
+    vm->compiler.asm_callback = callback;
+    vm->compiler.asm_user_data = user_data;
 }
 
 void cc_register_cfunc(JCC *vm, const char *name, void *func_ptr, int num_args, int returns_double) {
@@ -496,15 +496,15 @@ void cc_register_cfunc_ex(JCC *vm, const char *name, void *func_ptr, int num_arg
         error("cc_register_cfunc_ex: name or func_ptr is NULL");
 
     // Expand capacity if needed
-    if (vm->ffi_count >= vm->ffi_capacity) {
-        vm->ffi_capacity = vm->ffi_capacity ? vm->ffi_capacity * 2 : 32;
-        vm->ffi_table = realloc(vm->ffi_table, vm->ffi_capacity * sizeof(ForeignFunc));
-        if (!vm->ffi_table)
+    if (vm->compiler.ffi_count >= vm->compiler.ffi_capacity) {
+        vm->compiler.ffi_capacity = vm->compiler.ffi_capacity ? vm->compiler.ffi_capacity * 2 : 32;
+        vm->compiler.ffi_table = realloc(vm->compiler.ffi_table, vm->compiler.ffi_capacity * sizeof(ForeignFunc));
+        if (!vm->compiler.ffi_table)
             error("cc_register_cfunc_ex: realloc failed");
     }
 
     // Add function to registry (non-variadic)
-    vm->ffi_table[vm->ffi_count++] = (ForeignFunc){
+    vm->compiler.ffi_table[vm->compiler.ffi_count++] = (ForeignFunc){
         .name = strdup(name),
         .func_ptr = func_ptr,
         .num_args = num_args,
@@ -525,17 +525,17 @@ void cc_register_variadic_cfunc(JCC *vm, const char *name, void *func_ptr, int n
         error("cc_register_variadic_cfunc: name or func_ptr is NULL");
 
     // Expand capacity if needed
-    if (vm->ffi_count >= vm->ffi_capacity) {
-        vm->ffi_capacity = vm->ffi_capacity ? vm->ffi_capacity * 2 : 32;
-        vm->ffi_table = realloc(vm->ffi_table, vm->ffi_capacity * sizeof(ForeignFunc));
-        if (!vm->ffi_table)
+    if (vm->compiler.ffi_count >= vm->compiler.ffi_capacity) {
+        vm->compiler.ffi_capacity = vm->compiler.ffi_capacity ? vm->compiler.ffi_capacity * 2 : 32;
+        vm->compiler.ffi_table = realloc(vm->compiler.ffi_table, vm->compiler.ffi_capacity * sizeof(ForeignFunc));
+        if (!vm->compiler.ffi_table)
             error("cc_register_variadic_cfunc: realloc failed");
     }
 
     // Add variadic function to registry
     // Note: num_args will be updated dynamically during CALLF based on actual call
     // For now, we set it to num_fixed_args as a placeholder
-    vm->ffi_table[vm->ffi_count++] = (ForeignFunc){
+    vm->compiler.ffi_table[vm->compiler.ffi_count++] = (ForeignFunc){
         .name = strdup(name),
         .func_ptr = func_ptr,
         .num_args = num_fixed_args,  // Will be updated during CALLF
@@ -553,13 +553,13 @@ int cc_dlsym(JCC *vm, const char *name, void *func_ptr, int num_args, int return
     if (!vm || !name || !func_ptr)
         return -1;
 
-    for (int i = 0; i < vm->ffi_count; i++) {
-        if (strcmp(vm->ffi_table[i].name, name) == 0) {
-            if (vm->ffi_table[i].num_args != num_args || vm->ffi_table[i].returns_double != returns_double) {
+    for (int i = 0; i < vm->compiler.ffi_count; i++) {
+        if (strcmp(vm->compiler.ffi_table[i].name, name) == 0) {
+            if (vm->compiler.ffi_table[i].num_args != num_args || vm->compiler.ffi_table[i].returns_double != returns_double) {
                 fprintf(stderr, "error: FFI function '%s' signature mismatch\n", name);
                 return -1;
             }
-            vm->ffi_table[i].func_ptr = func_ptr;
+            vm->compiler.ffi_table[i].func_ptr = func_ptr;
             return 0;
         }
     }
@@ -595,11 +595,11 @@ int cc_dlopen(JCC *vm, const char *lib_path) {
 #endif
 
     int success_count = 0;
-    int total_count = vm->ffi_count;
+    int total_count = vm->compiler.ffi_count;
 
     // Try to resolve each FFI function
-    for (int i = 0; i < vm->ffi_count; i++) {
-        ForeignFunc *ff = &vm->ffi_table[i];
+    for (int i = 0; i < vm->compiler.ffi_count; i++) {
+        ForeignFunc *ff = &vm->compiler.ffi_table[i];
 
 #ifdef _WIN32
         // Look up the symbol
@@ -712,12 +712,12 @@ void cc_load_stdlib(JCC *vm) {
     register_time_functions(vm);
 
     // Mark all headers as included
-    hashmap_put(&vm->included_headers, "ctype.h", (void*)1);
-    hashmap_put(&vm->included_headers, "math.h", (void*)1);
-    hashmap_put(&vm->included_headers, "stdio.h", (void*)1);
-    hashmap_put(&vm->included_headers, "stdlib.h", (void*)1);
-    hashmap_put(&vm->included_headers, "string.h", (void*)1);
-    hashmap_put(&vm->included_headers, "time.h", (void*)1);
+    hashmap_put(&vm->compiler.included_headers, "ctype.h", (void*)1);
+    hashmap_put(&vm->compiler.included_headers, "math.h", (void*)1);
+    hashmap_put(&vm->compiler.included_headers, "stdio.h", (void*)1);
+    hashmap_put(&vm->compiler.included_headers, "stdlib.h", (void*)1);
+    hashmap_put(&vm->compiler.included_headers, "string.h", (void*)1);
+    hashmap_put(&vm->compiler.included_headers, "time.h", (void*)1);
 }
 
 int cc_run(JCC *vm, int argc, char **argv) {
