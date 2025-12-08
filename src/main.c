@@ -38,6 +38,7 @@ static void usage(const char *argv0, int exit_code) {
     printf("\t-X/--no-preprocess  Disable preprocessing step\n");
     printf("\t-S/--no-stdlib      Do not link standard library\n");
     printf("\t-o/--out <file>     Dump bytecode to <file> (no execution)\n");
+    printf("\t-d/--disassemble    Disassemble bytecode to stdout\n");
     printf("\t-v/--verbose        Enable debug logging\n");
     printf("\t-g/--debug          Enable interactive debugger\n");
     printf("\nSafety Levels (preset flag combinations):\n");
@@ -188,6 +189,7 @@ int main(int argc, const char* argv[]) {
     int undefs_count = 0;
     char *out_file = NULL; // -o (single)
     int dump_ast = 0;      // -a
+    int disassemble = 0;   // -d
     int verbose = 0;       // -v
     uint32_t flags = 0;    // JCCFlags bitfield for runtime features
     int print_tokens = 0; // -P
@@ -210,6 +212,7 @@ int main(int argc, const char* argv[]) {
     static struct option long_options[] = {
         {"help", no_argument, 0, 'h'},
         {"out", required_argument, 0, 'o'},
+        {"disassemble", no_argument, 0, 'd'},
         {"verbose", no_argument, 0, 'v'},
         {"ast", no_argument, 0, 'a'},
         {"print-tokens", no_argument, 0, 'P'},
@@ -253,7 +256,7 @@ int main(int argc, const char* argv[]) {
         {0, 0, 0, 0}
     };
 
-    const char *optstring = "0123haI:D:U:o:vgbftzOskpliPEXSjFTVC";
+    const char *optstring = "0123haI:D:U:o:dvgbftzOskpliPEXSjFTVC";
     int opt;
     opterr = 0; // we'll handle errors explicitly
     while ((opt = getopt_long(argc, (char * const *)argv, optstring, long_options, NULL)) != -1) {
@@ -295,6 +298,9 @@ int main(int argc, const char* argv[]) {
         case 'o':
             if (out_file) { fprintf(stderr, "error: only one -o/--out allowed\n"); usage(argv[0], 1); }
             out_file = strdup(optarg);
+            break;
+        case 'd':
+            disassemble = 1;
             break;
         case 'v':
             verbose = 1;
@@ -651,6 +657,11 @@ int main(int argc, const char* argv[]) {
     if (cc_has_errors(&vm)) {
         cc_print_all_errors(&vm);
         exit_code = 1;
+        goto BAIL;
+    }
+
+    if (disassemble) {
+        cc_disassemble(&vm);
         goto BAIL;
     }
 

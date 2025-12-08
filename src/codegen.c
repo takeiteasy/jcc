@@ -31,6 +31,36 @@ static void emit_with_arg(JCC *vm, int instruction, long long arg) {
     *++vm->text_ptr = arg;
 }
 
+// ========== Multi-Register Emit Helpers ==========
+// Emit 3-register instruction: [OPCODE] [rd:8|rs1:8|rs2:8|unused:40]
+static void emit_rrr(JCC *vm, int op, int rd, int rs1, int rs2) {
+    emit(vm, op);
+    *++vm->text_ptr = ENCODE_RRR(rd, rs1, rs2);
+}
+
+// Emit register + immediate: [OPCODE] [rd:8|unused:56] [immediate:64]
+static void emit_ri(JCC *vm, int op, int rd, long long imm) {
+    emit(vm, op);
+    *++vm->text_ptr = ENCODE_R(rd);
+    *++vm->text_ptr = imm;
+}
+
+// Sync helpers for bridging ax ↔ register file
+static void emit_ax2r(JCC *vm, int rd) {
+    emit(vm, AX2R);
+    *++vm->text_ptr = ENCODE_R(rd);
+}
+
+static void emit_r2ax(JCC *vm, int rs) {
+    emit(vm, R2AX);
+    *++vm->text_ptr = ENCODE_R(rs);
+}
+
+static void emit_pop3(JCC *vm, int rd) {
+    emit(vm, POP3);
+    *++vm->text_ptr = ENCODE_R(rd);
+}
+
 // Emit appropriate load instruction based on type
 // If is_deref is true, this is a pointer dereference and should be checked
 static void emit_load(JCC *vm, Type *ty, int is_deref) {
@@ -478,9 +508,18 @@ void gen_expr(JCC *vm, Node *node) {
                 gen_expr(vm, node->rhs);
                 emit(vm, FADD);
             } else {
-                emit(vm, PUSH);
-                gen_expr(vm, node->rhs);
-                emit(vm, vm->flags & JCC_OVERFLOW_CHECKS ? ADDC : ADD);
+                // Use stack for recursion-safe saves, registers for final op
+                emit(vm, PUSH);             // Save lhs to stack (safe across recursion)
+                gen_expr(vm, node->rhs);    // rhs result in ax
+                emit_ax2r(vm, REG_A1);      // Move rhs to REG_A1
+                emit_pop3(vm, REG_A0);      // Pop lhs from stack into REG_A0
+                if (vm->flags & JCC_OVERFLOW_CHECKS) {
+                    // TODO: Add overflow-checked ADD3C opcode
+                    emit_rrr(vm, ADD3, REG_A0, REG_A0, REG_A1);
+                } else {
+                    emit_rrr(vm, ADD3, REG_A0, REG_A0, REG_A1);
+                }
+                emit_r2ax(vm, REG_A0);      // Result back to ax for compatibility
             }
 
             // Check pointer arithmetic if result is a pointer type
@@ -496,9 +535,13 @@ void gen_expr(JCC *vm, Node *node) {
                 gen_expr(vm, node->rhs);
                 emit(vm, FSUB);
             } else {
+                // Use stack for recursion-safe saves, registers for final op
                 emit(vm, PUSH);
                 gen_expr(vm, node->rhs);
-                emit(vm, vm->flags & JCC_OVERFLOW_CHECKS ? SUBC : SUB);
+                emit_ax2r(vm, REG_A1);
+                emit_pop3(vm, REG_A0);
+                emit_rrr(vm, SUB3, REG_A0, REG_A0, REG_A1);
+                emit_r2ax(vm, REG_A0);
             }
 
             // Check pointer arithmetic if result is a pointer type
@@ -516,7 +559,10 @@ void gen_expr(JCC *vm, Node *node) {
             } else {
                 emit(vm, PUSH);
                 gen_expr(vm, node->rhs);
-                emit(vm, vm->flags & JCC_OVERFLOW_CHECKS ? MULC : MUL);
+                emit_ax2r(vm, REG_A1);
+                emit_pop3(vm, REG_A0);
+                emit_rrr(vm, MUL3, REG_A0, REG_A0, REG_A1);
+                emit_r2ax(vm, REG_A0);
             }
             return;
 
@@ -529,7 +575,10 @@ void gen_expr(JCC *vm, Node *node) {
             } else {
                 emit(vm, PUSH);
                 gen_expr(vm, node->rhs);
-                emit(vm, vm->flags & JCC_OVERFLOW_CHECKS ? DIVC : DIV);
+                emit_ax2r(vm, REG_A1);
+                emit_pop3(vm, REG_A0);
+                emit_rrr(vm, DIV3, REG_A0, REG_A0, REG_A1);
+                emit_r2ax(vm, REG_A0);
             }
             return;
 
@@ -537,7 +586,10 @@ void gen_expr(JCC *vm, Node *node) {
             gen_expr(vm, node->lhs);
             emit(vm, PUSH);
             gen_expr(vm, node->rhs);
-            emit(vm, MOD);
+            emit_ax2r(vm, REG_A1);
+            emit_pop3(vm, REG_A0);
+            emit_rrr(vm, MOD3, REG_A0, REG_A0, REG_A1);
+            emit_r2ax(vm, REG_A0);
             return;
 
         case ND_EQ:
@@ -549,7 +601,10 @@ void gen_expr(JCC *vm, Node *node) {
             } else {
                 emit(vm, PUSH);
                 gen_expr(vm, node->rhs);
-                emit(vm, EQ);
+                emit_ax2r(vm, REG_A1);
+                emit_pop3(vm, REG_A0);
+                emit_rrr(vm, SEQ3, REG_A0, REG_A0, REG_A1);
+                emit_r2ax(vm, REG_A0);
             }
             return;
 
@@ -562,7 +617,10 @@ void gen_expr(JCC *vm, Node *node) {
             } else {
                 emit(vm, PUSH);
                 gen_expr(vm, node->rhs);
-                emit(vm, NE);
+                emit_ax2r(vm, REG_A1);
+                emit_pop3(vm, REG_A0);
+                emit_rrr(vm, SNE3, REG_A0, REG_A0, REG_A1);
+                emit_r2ax(vm, REG_A0);
             }
             return;
 
@@ -575,7 +633,10 @@ void gen_expr(JCC *vm, Node *node) {
             } else {
                 emit(vm, PUSH);
                 gen_expr(vm, node->rhs);
-                emit(vm, LT);
+                emit_ax2r(vm, REG_A1);
+                emit_pop3(vm, REG_A0);
+                emit_rrr(vm, SLT3, REG_A0, REG_A0, REG_A1);
+                emit_r2ax(vm, REG_A0);
             }
             return;
 
@@ -588,7 +649,10 @@ void gen_expr(JCC *vm, Node *node) {
             } else {
                 emit(vm, PUSH);
                 gen_expr(vm, node->rhs);
-                emit(vm, LE);
+                emit_ax2r(vm, REG_A1);
+                emit_pop3(vm, REG_A0);
+                emit_rrr(vm, SLE3, REG_A0, REG_A0, REG_A1);
+                emit_r2ax(vm, REG_A0);
             }
             return;
 
@@ -596,35 +660,50 @@ void gen_expr(JCC *vm, Node *node) {
             gen_expr(vm, node->lhs);
             emit(vm, PUSH);
             gen_expr(vm, node->rhs);
-            emit(vm, OR);
+            emit_ax2r(vm, REG_A1);
+            emit_pop3(vm, REG_A0);
+            emit_rrr(vm, OR3, REG_A0, REG_A0, REG_A1);
+            emit_r2ax(vm, REG_A0);
             return;
 
         case ND_BITXOR:
             gen_expr(vm, node->lhs);
             emit(vm, PUSH);
             gen_expr(vm, node->rhs);
-            emit(vm, XOR);
+            emit_ax2r(vm, REG_A1);
+            emit_pop3(vm, REG_A0);
+            emit_rrr(vm, XOR3, REG_A0, REG_A0, REG_A1);
+            emit_r2ax(vm, REG_A0);
             return;
 
         case ND_BITAND:
             gen_expr(vm, node->lhs);
             emit(vm, PUSH);
             gen_expr(vm, node->rhs);
-            emit(vm, AND);
+            emit_ax2r(vm, REG_A1);
+            emit_pop3(vm, REG_A0);
+            emit_rrr(vm, AND3, REG_A0, REG_A0, REG_A1);
+            emit_r2ax(vm, REG_A0);
             return;
 
         case ND_SHL:
             gen_expr(vm, node->lhs);
             emit(vm, PUSH);
             gen_expr(vm, node->rhs);
-            emit(vm, SHL);
+            emit_ax2r(vm, REG_A1);
+            emit_pop3(vm, REG_A0);
+            emit_rrr(vm, SHL3, REG_A0, REG_A0, REG_A1);
+            emit_r2ax(vm, REG_A0);
             return;
 
         case ND_SHR:
             gen_expr(vm, node->lhs);
             emit(vm, PUSH);
             gen_expr(vm, node->rhs);
-            emit(vm, SHR);
+            emit_ax2r(vm, REG_A1);
+            emit_pop3(vm, REG_A0);
+            emit_rrr(vm, SHR3, REG_A0, REG_A0, REG_A1);
+            emit_r2ax(vm, REG_A0);
             return;
 
         case ND_ADDR:
