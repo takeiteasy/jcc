@@ -43,6 +43,38 @@
 // Stack canary constant for detecting stack overflows (used when random canaries disabled)
 #define STACK_CANARY 0xDEADBEEFCAFEBABELL
 
+// ========== Multi-Register VM Infrastructure ==========
+// Register file indices (RISC-V style naming)
+#define REG_ZERO  0   // Always zero (writes discarded)
+#define REG_RA    1   // Return address
+#define REG_SP    2   // Stack pointer (unused for now - we have vm->sp)
+#define REG_T0    5   // Temporary
+#define REG_T1    6   // Temporary
+#define REG_T2    7   // Temporary
+#define REG_A0    10  // Argument/return value (maps to ax)
+#define REG_A1    11  // Argument
+#define REG_A2    12  // Argument
+#define REG_A3    13  // Argument
+#define REG_A4    14  // Argument
+#define REG_A5    15  // Argument
+#define REG_A6    16  // Argument
+#define REG_A7    17  // Argument
+#define NUM_REGS  32
+
+// Instruction encoding macros for new opcodes
+// RRR format: [OPCODE] [rd:8|rs1:8|rs2:8|unused:40]
+#define ENCODE_RRR(rd, rs1, rs2) \
+    ((long long)(rd) | ((long long)(rs1) << 8) | ((long long)(rs2) << 16))
+#define DECODE_RRR(operands, rd, rs1, rs2) do { \
+    rd = (operands) & 0xFF; \
+    rs1 = ((operands) >> 8) & 0xFF; \
+    rs2 = ((operands) >> 16) & 0xFF; \
+} while(0)
+
+// RI format: [OPCODE] [rd:8|unused:56] [immediate:64]
+#define ENCODE_R(rd) ((long long)(rd))
+#define DECODE_R(operands, rd) do { rd = (operands) & 0xFF; } while(0)
+
 void strarray_push(StringArray *arr, char *s);
 char *format(char *fmt, ...) __attribute__((format(printf, 1, 2)));
 Token *preprocess(JCC *vm, Token *tok);

@@ -89,11 +89,6 @@ extern "C" {
     X(MUL) \
     X(DIV) \
     X(MOD) \
-    /* Checked arithmetic operations (overflow detection) */ \
-    X(ADDC) \
-    X(SUBC) \
-    X(MULC) \
-    X(DIVC) \
     /* VM memory operations (self-contained, no system calls) */ \
     X(MALC) \
     X(MFRE) \
@@ -145,7 +140,30 @@ extern "C" {
     X(MARKW) /* Mark variable write access */ \
     /* Non-local jump instructions (setjmp/longjmp) */ \
     X(SETJMP) /* Save execution context to jmp_buf, return 0 */ \
-    X(LONGJMP) /* Restore execution context from jmp_buf, return val */
+    X(LONGJMP) /* Restore execution context from jmp_buf, return val */ \
+    /* Multi-register opcodes (dual-mode refactor) */ \
+    X(ADD3)   /* rd = rs1 + rs2 */ \
+    X(SUB3)   /* rd = rs1 - rs2 */ \
+    X(MUL3)   /* rd = rs1 * rs2 */ \
+    X(DIV3)   /* rd = rs1 / rs2 */ \
+    X(MOD3)   /* rd = rs1 % rs2 */ \
+    X(AND3)   /* rd = rs1 & rs2 */ \
+    X(OR3)    /* rd = rs1 | rs2 */ \
+    X(XOR3)   /* rd = rs1 ^ rs2 */ \
+    X(SHL3)   /* rd = rs1 << rs2 */ \
+    X(SHR3)   /* rd = rs1 >> rs2 */ \
+    X(SEQ3)   /* rd = (rs1 == rs2) */ \
+    X(SNE3)   /* rd = (rs1 != rs2) */ \
+    X(SLT3)   /* rd = (rs1 < rs2) */ \
+    X(SGE3)   /* rd = (rs1 >= rs2) */ \
+    X(SGT3)   /* rd = (rs1 > rs2) */ \
+    X(SLE3)   /* rd = (rs1 <= rs2) */ \
+    X(LI3)    /* rd = immediate */ \
+    X(MOV3)   /* rd = rs1 */ \
+    /* Sync opcodes for bridging ax and register file */ \
+    X(AX2R)   /* rd = ax (copy accumulator to register) */ \
+    X(R2AX)   /* ax = rs1 (copy register to accumulator) */ \
+    X(POP3)   /* rd = pop from stack (for stack→register bridging) */
 
 /*!
  @enum JCC_OP
@@ -1209,6 +1227,7 @@ struct JCC {
     // VM Registers
     long long ax;              // Accumulator register (integer)
     double fax;                // Floating-point accumulator register
+    long long regs[32];        // General-purpose register file (NUM_REGS)
     long long *pc;             // Program counter
     long long *bp;             // Base pointer (frame pointer)
     long long *sp;             // Stack pointer
@@ -1626,6 +1645,13 @@ int cc_run(JCC *vm, int argc, char **argv);
  @param tok Head of the token stream to print.
 */
 void cc_print_tokens(Token *tok);
+
+/*!
+ @function cc_disassemble
+ @abstract Disassemble the compiled bytecode to stdout.
+ @param vm The JCC instance containing compiled bytecode.
+*/
+void cc_disassemble(JCC *vm);
 
 /*!
  @function cc_output_json

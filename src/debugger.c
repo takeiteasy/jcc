@@ -197,26 +197,88 @@ void debugger_print_stack(JCC *vm, int count) {
 
 static const char* opcode_name(int op) {
     static const char *names[] = {
-        "LEA", "IMM", " JMP", "CALL", "CALLI", "JZ", "JNZ", "ENT", "ADJ", "LEV", "LI", "LC", "LS", "LW", "SI", "SC", "SS", "SW", "PUSH",
-        "OR", "XOR", "AND", "EQ", "NE", "LT", "GT", "LE", "GE", "SHL", "SHR", "ADD", "SUB", "MUL", "DIV", "MOD",
-        // VM memory operations (self-contained, no system calls)
-        "MALC", "MFRE", "MCPY",
-        // Type conversion instructions
-        "SX1", "SX2", "SX4", // Sign extend 1/2/4 bytes to 8 bytes
-        "ZX1", "ZX2", "ZX4", // Zero extend 1/2/4 bytes to 8 bytes
-        // Floating-point instructions
-        "FLD", "FST", "FADD", "FSUB", "FMUL", "FDIV", "FNEG",
-        "FEQ", "FNE", "FLT", "FLE", "FGT", "FGE",
-        "I2F", "F2I", "FPUSH",
-        // Foreign function interface
-        "CALLF",
-        // Memory safety operations
-        "CHKB", "CHKP"
+#define X(NAME) #NAME,
+        OPS_X
+#undef X
     };
-
     if (op >= 0 && op < (int)(sizeof(names) / sizeof(names[0])))
         return names[op];
     return "UNKNOWN";
+}
+
+// Returns the number of words consumed by the instruction (including opcode)
+static int disassemble_instruction(long long *pc, long long *text_seg, long long *text_end) {
+    if (pc >= text_end) return 0;
+    
+    long long offset = (long long)pc - (long long)text_seg;
+    int op = (int)*pc;
+    const char *name = opcode_name(op);
+    
+    printf("0x%llx (offset %lld): %-6s", (long long)pc, offset, name);
+    
+    int size = 1; // Default size (just opcode)
+    
+    switch (op) {
+        // 1 operand (opcode + operand) -> size 2 words
+        case LEA:
+        case IMM:
+        case JMP:
+        case CALL:
+        case JZ:
+        case JNZ:
+        case JMPT:
+        case ENT:
+        case ADJ:
+        case CHKB:
+        case CHKT:
+        case CHKI:
+        case MARKI:
+        case CHKA:
+        case SCOPEIN:
+        case SCOPEOUT:
+        case CHKL:
+        case MARKR:
+        case MARKW:
+            if (pc + 1 < text_end) {
+                printf(" %lld", pc[1]);
+            }
+            size = 2;
+            break;
+            
+        // 3 operands (opcode + 3 args) -> size 4 words
+        case MARKA:
+        case MARKP:
+             if (pc + 3 < text_end) {
+                printf(" %lld, %lld, %lld", pc[1], pc[2], pc[3]);
+             }
+             size = 4;
+             break;
+
+        default:
+            // 0 operands (size 1)
+            size = 1;
+            break;
+    }
+    
+    printf("\n");
+    return size;
+}
+
+void cc_disassemble(JCC *vm) {
+    if (!vm || !vm->text_seg) return;
+    
+    printf("=== Disassembly ===\n");
+    // text_seg[0] is the entry point offset, not an instruction
+    printf("Entry point: 0x%llx (offset %lld)\n", 
+           (long long)(vm->text_seg + vm->text_seg[0]), vm->text_seg[0]);
+    
+    long long *pc = vm->text_seg + 1;
+    while (pc < vm->text_ptr) {
+        int size = disassemble_instruction(pc, vm->text_seg, vm->text_ptr);
+        if (size == 0) break;
+        pc += size;
+    }
+    printf("===================\n");
 }
 
 void debugger_disassemble_current(JCC *vm) {
@@ -224,29 +286,7 @@ void debugger_disassemble_current(JCC *vm) {
         printf("PC out of text segment range\n");
         return;
     }
-
-    long long *pc = vm->pc;
-    long long offset = (long long)pc - (long long)vm->text_seg;
-    int op = *pc++;
-
-    printf("0x%llx (offset %lld): %s", (long long)vm->pc, offset, opcode_name(op));
-
-    // Print operand for instructions that have one
-    switch (op) {
-        case LEA:
-        case IMM:
-        case JMP:
-        case CALL:
-        case JZ:
-        case JNZ:
-        case ENT:
-        case ADJ:
-            printf(" %lld", *pc);
-            break;
-        default:
-            break;
-    }
-    printf("\n");
+    disassemble_instruction(vm->pc, vm->text_seg, vm->text_ptr);
 }
 
 static void print_help(void) {
