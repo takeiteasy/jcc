@@ -163,7 +163,40 @@ extern "C" {
     /* Sync opcodes for bridging ax and register file */ \
     X(AX2R)   /* rd = ax (copy accumulator to register) */ \
     X(R2AX)   /* ax = rs1 (copy register to accumulator) */ \
-    X(POP3)   /* rd = pop from stack (for stack→register bridging) */
+    X(POP3)   /* rd = pop from stack (for stack→register bridging) */ \
+    /* Register-based calling convention opcodes */ \
+    X(ENT3)   /* Enter function: stack_size|param_count, copies REG_A0-An to stack */ \
+    X(LEV3)   /* Leave function: copies ax to REG_A0, returns */ \
+    /* Floating-point register file opcodes */ \
+    X(FAX2FR) /* fregs[rd] = fax (copy float accumulator to float register) */ \
+    X(FR2FAX) /* fax = fregs[rs1] (copy float register to float accumulator) */ \
+    /* 3-register floating-point arithmetic */ \
+    X(FADD3)  /* fregs[rd] = fregs[rs1] + fregs[rs2] */ \
+    X(FSUB3)  /* fregs[rd] = fregs[rs1] - fregs[rs2] */ \
+    X(FMUL3)  /* fregs[rd] = fregs[rs1] * fregs[rs2] */ \
+    X(FDIV3)  /* fregs[rd] = fregs[rs1] / fregs[rs2] */ \
+    X(FNEG3)  /* fregs[rd] = -fregs[rs1] */ \
+    /* 3-register floating-point comparisons */ \
+    X(FEQ3)   /* rd = (fregs[rs1] == fregs[rs2]) */ \
+    X(FNE3)   /* rd = (fregs[rs1] != fregs[rs2]) */ \
+    X(FLT3)   /* rd = (fregs[rs1] < fregs[rs2]) */ \
+    X(FLE3)   /* rd = (fregs[rs1] <= fregs[rs2]) */ \
+    X(FGT3)   /* rd = (fregs[rs1] > fregs[rs2]) */ \
+    X(FGE3)   /* rd = (fregs[rs1] >= fregs[rs2]) */ \
+    /* Phase D: Internal operations opcodes */ \
+    X(ADDI3)  /* rd = rs1 + immediate (register + constant offset) */ \
+    X(NEG3)   /* rd = -rs1 (integer unary negation) */ \
+    /* Phase C: Register-based load/store opcodes */ \
+    X(LDR_B)  /* regs[rd] = *(char*)regs[rs] (load byte, sign-extend) */ \
+    X(LDR_H)  /* regs[rd] = *(short*)regs[rs] (load halfword, sign-extend) */ \
+    X(LDR_W)  /* regs[rd] = *(int*)regs[rs] (load word, sign-extend) */ \
+    X(LDR_D)  /* regs[rd] = *(long long*)regs[rs] (load dword) */ \
+    X(STR_B)  /* *(char*)regs[rs] = regs[rd] (store byte) */ \
+    X(STR_H)  /* *(short*)regs[rs] = regs[rd] (store halfword) */ \
+    X(STR_W)  /* *(int*)regs[rs] = regs[rd] (store word) */ \
+    X(STR_D)  /* *(long long*)regs[rs] = regs[rd] (store dword) */ \
+    X(FLDR)   /* fregs[rd] = *(double*)regs[rs] (float load) */ \
+    X(FSTR)   /* *(double*)regs[rs] = fregs[rd] (float store) */
 
 /*!
  @enum JCC_OP
@@ -1228,6 +1261,7 @@ struct JCC {
     long long ax;              // Accumulator register (integer)
     double fax;                // Floating-point accumulator register
     long long regs[32];        // General-purpose register file (NUM_REGS)
+    double fregs[32];          // Floating-point register file (for float args)
     long long *pc;             // Program counter
     long long *bp;             // Base pointer (frame pointer)
     long long *sp;             // Stack pointer

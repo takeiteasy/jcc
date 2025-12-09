@@ -51,6 +51,7 @@
 #define REG_T0    5   // Temporary
 #define REG_T1    6   // Temporary
 #define REG_T2    7   // Temporary
+#define REG_T3    8   // Temporary
 #define REG_A0    10  // Argument/return value (maps to ax)
 #define REG_A1    11  // Argument
 #define REG_A2    12  // Argument
@@ -61,6 +62,17 @@
 #define REG_A7    17  // Argument
 #define NUM_REGS  32
 
+// Floating-point register file indices (for float/double arguments)
+// These mirror REG_A* but in the fregs[] array
+#define FREG_A0   10  // Float argument/return (maps to fax)
+#define FREG_A1   11  // Float argument
+#define FREG_A2   12  // Float argument
+#define FREG_A3   13  // Float argument
+#define FREG_A4   14  // Float argument
+#define FREG_A5   15  // Float argument
+#define FREG_A6   16  // Float argument
+#define FREG_A7   17  // Float argument
+
 // Instruction encoding macros for new opcodes
 // RRR format: [OPCODE] [rd:8|rs1:8|rs2:8|unused:40]
 #define ENCODE_RRR(rd, rs1, rs2) \
@@ -69,6 +81,14 @@
     rd = (operands) & 0xFF; \
     rs1 = ((operands) >> 8) & 0xFF; \
     rs2 = ((operands) >> 16) & 0xFF; \
+} while(0)
+
+// RR format: [OPCODE] [rd:8|rs1:8|unused:48]
+#define ENCODE_RR(rd, rs1) \
+    ((long long)(rd) | ((long long)(rs1) << 8))
+#define DECODE_RR(operands, rd, rs1) do { \
+    rd = (operands) & 0xFF; \
+    rs1 = ((operands) >> 8) & 0xFF; \
 } while(0)
 
 // RI format: [OPCODE] [rd:8|unused:56] [immediate:64]

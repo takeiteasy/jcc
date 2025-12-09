@@ -129,6 +129,12 @@ for test_file in "${test_files[@]}"; do
         is_negative_test=1
     fi
 
+    # Check if this test expects a runtime error (e.g., division by zero detection)
+    expects_runtime_error=0
+    if head -n 1 "$test_file" | grep -q "EXPECT_RUNTIME_ERROR"; then
+        expects_runtime_error=1
+    fi
+
     # Run the test and capture output and exit code
     if [ $use_leaks -eq 1 ]; then
         # Run with platform-specific leak detection tool
@@ -223,6 +229,10 @@ for test_file in "${test_files[@]}"; do
         # Exit code 42 indicates successful test execution
         passed=$((passed + 1))
         echo "✓ $test_name"
+    elif [ $expects_runtime_error -eq 1 ] && [ $exit_code -eq 255 ]; then
+        # Runtime error test that correctly detected the error
+        negative_passed=$((negative_passed + 1))
+        echo "✓ $test_name (correctly detected runtime error)"
     else
         # Any exit code other than 42 indicates test failure
         failed=$((failed + 1))

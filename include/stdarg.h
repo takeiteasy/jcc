@@ -45,7 +45,7 @@ typedef char *va_list;
  * In the VM, all arguments are 8 bytes (long long), so we add 8 bytes
  * to the address of the last fixed parameter.
  */
-#define va_start(ap, last) ((ap) = (char *)((long long *)&(last) + 1))
+#define va_start(ap, last) ((ap) = (char *)((long long *)&(last) - 1))
 
 /*
  * va_arg(ap, type) - Retrieve next argument
@@ -70,8 +70,8 @@ typedef char *va_list;
 #define va_arg(ap, type) \
     (__jcc_types_compatible_p(type, double) || \
      __jcc_types_compatible_p(type, float) \
-        ? (*(double *)((ap) += 8, (ap) - 8)) \
-        : (*(type *)((ap) += 8, (ap) - 8)))
+        ? (*(double *)((ap) -= 8, (ap) + 8)) \
+        : (*(type *)((ap) -= 8, (ap) + 8)))
 
 /*
  * va_end(ap) - Cleanup va_list

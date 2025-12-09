@@ -45,5 +45,5 @@ int main() {
     int l = 32 >> 2;  // Should be 8
     if (l != 8) return 16;
     
-    return 0;  // All tests passed
+    return 42;  // All tests passed
 }
