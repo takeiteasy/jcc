@@ -38,13 +38,6 @@ static void emit_rrr(JCC *vm, int op, int rd, int rs1, int rs2) {
     *++vm->text_ptr = ENCODE_RRR(rd, rs1, rs2);
 }
 
-// Emit register + immediate: [OPCODE] [rd:8|unused:56] [immediate:64]
-static void emit_ri(JCC *vm, int op, int rd, long long imm) {
-    emit(vm, op);
-    *++vm->text_ptr = ENCODE_R(rd);
-    *++vm->text_ptr = imm;
-}
-
 // Sync helpers for bridging ax ↔ register file
 static void emit_ax2r(JCC *vm, int rd) {
     emit(vm, AX2R);
@@ -59,6 +52,105 @@ static void emit_r2ax(JCC *vm, int rs) {
 static void emit_pop3(JCC *vm, int rd) {
     emit(vm, POP3);
     *++vm->text_ptr = ENCODE_R(rd);
+}
+
+// Float register sync helpers
+static void emit_fax2fr(JCC *vm, int rd) {
+    emit(vm, FAX2FR);
+    *++vm->text_ptr = ENCODE_R(rd);
+}
+
+static void emit_fr2fax(JCC *vm, int rs) {
+    emit(vm, FR2FAX);
+    *++vm->text_ptr = ENCODE_R(rs);
+}
+
+// Float 3-register operation: fregs[rd] = fregs[rs1] OP fregs[rs2]
+static void emit_frrr(JCC *vm, int op, int rd, int rs1, int rs2) {
+    emit(vm, op);
+    *++vm->text_ptr = ENCODE_RRR(rd, rs1, rs2);
+}
+
+// Float 2-register operation: fregs[rd] = OP fregs[rs1] (for FNEG3)
+static void emit_frr(JCC *vm, int op, int rd, int rs1) {
+    emit(vm, op);
+    *++vm->text_ptr = ENCODE_RR(rd, rs1);
+}
+
+// Integer 2-register operation: regs[rd] = OP regs[rs1] (for NEG3)
+static void emit_rr(JCC *vm, int op, int rd, int rs1) {
+    emit(vm, op);
+    *++vm->text_ptr = ENCODE_RR(rd, rs1);
+}
+
+// Register + register + immediate: regs[rd] = regs[rs1] + imm (for ADDI3)
+static void emit_rri(JCC *vm, int op, int rd, int rs1, long long imm) {
+    emit(vm, op);
+    *++vm->text_ptr = ENCODE_RR(rd, rs1);
+    *++vm->text_ptr = imm;
+}
+
+// ========== Phase C: Register-Based Load/Store Helpers ==========
+
+// Emit register-based load: regs[rd] = *regs[rs] (typed by size)
+// Returns the opcode used for the load
+static void emit_load3(JCC *vm, Type *ty, int rd, int rs) {
+    if (ty->kind == TY_CHAR) {
+        emit_rr(vm, LDR_B, rd, rs);  // 1 byte, sign-extend
+    } else if (ty->kind == TY_SHORT) {
+        emit_rr(vm, LDR_H, rd, rs);  // 2 bytes, sign-extend
+    } else if (ty->kind == TY_INT || ty->kind == TY_ENUM) {
+        emit_rr(vm, LDR_W, rd, rs);  // 4 bytes, sign-extend
+    } else if (is_flonum(ty)) {
+        emit_rr(vm, FLDR, rd, rs);   // float/double to fregs
+    } else {
+        emit_rr(vm, LDR_D, rd, rs);  // 8 bytes (long, pointers)
+    }
+}
+
+// Emit register-based store: *regs[rs_addr] = regs[rs_val] (typed by size)
+static void emit_store3(JCC *vm, Type *ty, int rs_val, int rs_addr) {
+    if (ty->kind == TY_CHAR) {
+        emit_rr(vm, STR_B, rs_val, rs_addr);  // 1 byte
+    } else if (ty->kind == TY_SHORT) {
+        emit_rr(vm, STR_H, rs_val, rs_addr);  // 2 bytes
+    } else if (ty->kind == TY_INT || ty->kind == TY_ENUM) {
+        emit_rr(vm, STR_W, rs_val, rs_addr);  // 4 bytes
+    } else if (is_flonum(ty)) {
+        emit_rr(vm, FSTR, rs_val, rs_addr);   // float/double from fregs
+    } else {
+        emit_rr(vm, STR_D, rs_val, rs_addr);  // 8 bytes (long, pointers)
+    }
+}
+
+// Emit register-based load with optional security checks
+// rs_addr: register containing the address to load from
+// rd: destination register for loaded value
+// is_deref: true if this is a pointer dereference (triggers security checks)
+static void emit_load3_checked(JCC *vm, Type *ty, int rd, int rs_addr, int is_deref) {
+    // Security checks operate on the address register
+    // For now, we need to sync to ax for the legacy check opcodes
+    // TODO: Add register-based CHKP3/CHKA3/CHKT3 opcodes later
+    if (is_deref && (vm->flags & JCC_POINTER_CHECKS)) {
+        emit_r2ax(vm, rs_addr);  // Sync address to ax for CHKP
+        emit(vm, CHKP);  // Check that pointer is valid
+    }
+
+    if (is_deref && (vm->flags & JCC_ALIGNMENT_CHECKS)) {
+        size_t type_size = ty->size;
+        if (type_size > 1) {
+            emit_r2ax(vm, rs_addr);  // Sync address to ax for CHKA
+            emit_with_arg(vm, CHKA, type_size);
+        }
+    }
+
+    if (is_deref && (vm->flags & JCC_TYPE_CHECKS)) {
+        emit_r2ax(vm, rs_addr);  // Sync address to ax for CHKT
+        emit_with_arg(vm, CHKT, ty->kind);
+    }
+
+    // Now do the actual load using registers
+    emit_load3(vm, ty, rd, rs_addr);
 }
 
 // Emit appropriate load instruction based on type
@@ -286,12 +378,20 @@ void gen_expr(JCC *vm, Node *node) {
                 // For struct/union parameters (positive offset), we pass by pointer
                 // So we need to load the pointer value first
                 if (is_param && (node->ty->kind == TY_STRUCT || node->ty->kind == TY_UNION)) {
-                    emit(vm, LI);  // Load the pointer to struct
-                    // Now ax contains the struct address
+                    // Struct/union params: load the pointer value using register-based load
+                    emit_ax2r(vm, REG_T0);  // Address is in ax, move to REG_T0
+                    emit_load3(vm, node->ty, REG_T1, REG_T0);  // Load pointer to REG_T1
+                    emit_r2ax(vm, REG_T1);  // Result back to ax
                 } else if (is_scalar) {
-                    // For arrays/structs/unions (locals), LEA gives us the address
-                    // For scalar types, we need to load the value
-                    emit_load(vm, node->ty, 0);  // Not a dereference, just loading variable value
+                    // For scalar types, load the value using register-based load
+                    emit_ax2r(vm, REG_T0);  // Address is in ax, move to REG_T0
+                    if (is_flonum(node->ty)) {
+                        emit_load3(vm, node->ty, FREG_A0, REG_T0);  // Float to FREG_A0
+                        emit_fr2fax(vm, FREG_A0);  // Result to fax
+                    } else {
+                        emit_load3(vm, node->ty, REG_T1, REG_T0);  // Int to REG_T1
+                        emit_r2ax(vm, REG_T1);  // Result to ax
+                    }
                     // Mark read access for stack instrumentation
                     if (vm->flags & JCC_STACK_INSTR) {
                         emit_with_arg(vm, MARKR, node->var->offset);
@@ -303,11 +403,18 @@ void gen_expr(JCC *vm, Node *node) {
                 emit_with_arg(vm, IMM, (long long)(vm->data_seg + resolved->offset));
 
                 // For arrays, structs, unions, and string literals, IMM gives us the address
-                // For scalar types, we need to load the value
+                // For scalar types, we need to load the value using register-based load
                 if (node->ty->kind != TY_ARRAY &&
                     node->ty->kind != TY_STRUCT &&
                     node->ty->kind != TY_UNION) {
-                    emit_load(vm, node->ty, 0);  // Not a dereference, just loading variable value
+                    emit_ax2r(vm, REG_T0);  // Address is in ax, move to REG_T0
+                    if (is_flonum(node->ty)) {
+                        emit_load3(vm, node->ty, FREG_A0, REG_T0);  // Float to FREG_A0
+                        emit_fr2fax(vm, FREG_A0);  // Result to fax
+                    } else {
+                        emit_load3(vm, node->ty, REG_T1, REG_T0);  // Int to REG_T1
+                        emit_r2ax(vm, REG_T1);  // Result to ax
+                    }
                 }
             }
             return;
@@ -331,11 +438,11 @@ void gen_expr(JCC *vm, Node *node) {
                     gen_expr(vm, node->lhs->lhs);
                 }
 
-                // Add member offset
+                // Add member offset using register-based ADDI3
                 if (node->lhs->member->offset != 0) {
-                    emit(vm, PUSH);  // Save struct address
-                    emit_with_arg(vm, IMM, node->lhs->member->offset);
-                    emit(vm, ADD);  // ax = struct_addr + offset
+                    emit_ax2r(vm, REG_T0);  // Save struct address to temp reg
+                    emit_rri(vm, ADDI3, REG_T0, REG_T0, node->lhs->member->offset);
+                    emit_r2ax(vm, REG_T0);  // Result back to ax
                 }
 
                 // ax now has the member address
@@ -391,11 +498,11 @@ void gen_expr(JCC *vm, Node *node) {
                         gen_expr(vm, node->lhs->lhs);
                     }
 
-                    // Add member offset
+                    // Add member offset using register-based ADDI3
                     if (node->lhs->member->offset != 0) {
-                        emit(vm, PUSH);  // Save struct address
-                        emit_with_arg(vm, IMM, node->lhs->member->offset);
-                        emit(vm, ADD);  // ax = struct_addr + offset
+                        emit_ax2r(vm, REG_T0);
+                        emit_rri(vm, ADDI3, REG_T0, REG_T0, node->lhs->member->offset);
+                        emit_r2ax(vm, REG_T0);
                     }
 
                     emit(vm, PUSH);  // Push member address onto stack
@@ -424,67 +531,63 @@ void gen_expr(JCC *vm, Node *node) {
                 emit(vm, MCPY);  // Pops size, src, dest; returns dest in ax
                 // Note: We don't return the dest address for now (chibicc limitation)
             } else if (node->lhs->kind == ND_MEMBER && node->lhs->member->is_bitfield) {
-                // Bitfield write - read-modify-write operation
+                // Bitfield write - read-modify-write operation using registers
                 // Entry: Stack: [address], ax: new_value
+                // We need: address, shifted_new_value, current_value, then combine and store
 
                 long long mask = (1LL << node->lhs->member->bit_width) - 1;
                 long long clear_mask = ~(mask << node->lhs->member->bit_offset);
 
-                // Mask and shift the new value first
-                emit(vm, PUSH);  // Stack: [address, new_value]
+                // Pop address into REG_T3 (will need later for store)
+                emit_pop3(vm, REG_T3);  // REG_T3 = address
+
+                // new_value is in ax, mask it: REG_T0 = ax & mask
+                emit_ax2r(vm, REG_T0);  // REG_T0 = new_value
                 emit_with_arg(vm, IMM, mask);
-                emit(vm, AND);  // ax = new_value & mask
+                emit_ax2r(vm, REG_T1);  // REG_T1 = mask
+                emit_rrr(vm, AND3, REG_T0, REG_T0, REG_T1);  // REG_T0 = new_value & mask
 
+                // Shift if needed: REG_T0 = REG_T0 << bit_offset
                 if (node->lhs->member->bit_offset > 0) {
-                    emit(vm, PUSH);  // Stack: [address, masked_new_value]
                     emit_with_arg(vm, IMM, node->lhs->member->bit_offset);
-                    emit(vm, SHL);  // ax = shifted_new_val
+                    emit_ax2r(vm, REG_T1);  // REG_T1 = bit_offset
+                    emit_rrr(vm, SHL3, REG_T0, REG_T0, REG_T1);  // REG_T0 = shifted_new_value
                 }
 
-                // ax = shifted_new_val, Stack: [address]
-                // Save shifted new value
-                emit(vm, PUSH);  // Stack: [address, shifted_new_val]
+                // Load current value from address in REG_T3
+                emit_load3_checked(vm, node->lhs->member->ty, REG_T2, REG_T3, 1);  // REG_T2 = current_value
 
-                // Recompute address (simpler than trying to peek at stack)
-                if (node->lhs->lhs->kind == ND_VAR) {
-                    if (node->lhs->lhs->var->is_local) {
-                        emit_with_arg(vm, LEA, node->lhs->lhs->var->offset);
-                    } else {
-                        emit_with_arg(vm, IMM, (long long)(vm->data_seg + node->lhs->lhs->var->offset));
-                    }
-                } else {
-                    gen_expr(vm, node->lhs->lhs);
-                }
-                if (node->lhs->member->offset != 0) {
-                    emit(vm, PUSH);
-                    emit_with_arg(vm, IMM, node->lhs->member->offset);
-                    emit(vm, ADD);
-                }
-                // ax = address
-
-                // Load current value
-                emit_load(vm, node->lhs->member->ty, 1);  // ax = current_value
-
-                // Clear target bits
-                emit(vm, PUSH);  // Stack: [address, shifted_new_val, current_value]
+                // Clear target bits: REG_T2 = REG_T2 & clear_mask
                 emit_with_arg(vm, IMM, clear_mask);
-                emit(vm, AND);  // ax = cleared_old_val, pops current_value
+                emit_ax2r(vm, REG_T1);  // REG_T1 = clear_mask
+                emit_rrr(vm, AND3, REG_T2, REG_T2, REG_T1);  // REG_T2 = cleared_old_value
 
-                // OR with shifted new value
-                emit(vm, OR);  // Pops shifted_new_val, ax = final_value
+                // Combine: REG_T2 = REG_T2 | REG_T0 (final_value)
+                emit_rrr(vm, OR3, REG_T2, REG_T2, REG_T0);
 
-                // Now ax has the final value to store, Stack: [address (original)]
-                // Stack still has the address we computed at the beginning
-                // emit_store expects: Stack: [address], ax: value
-                // We already have exactly that!
-                emit_store(vm, node->lhs->member->ty);
+                // Store final value: *REG_T3 = REG_T2
+                emit_store3(vm, node->lhs->member->ty, REG_T2, REG_T3);
+
+                // Result in REG_T2, sync back to ax for assignment expression result
+                emit_r2ax(vm, REG_T2);
             } else {
-                // For scalar types, emit appropriate store instruction
+                // For scalar types, emit appropriate store instruction using registers
+                // Stack has [address], ax/fax has value
                 // Mark write access for stack instrumentation (before store)
                 if (vm->flags & JCC_STACK_INSTR && node->lhs->kind == ND_VAR && node->lhs->var->is_local) {
                     emit_with_arg(vm, MARKW, node->lhs->var->offset);
                 }
-                emit_store(vm, node->ty);
+                // Pop address into REG_T1
+                emit_pop3(vm, REG_T1);
+                // Store value: *REG_T1 = ax (for int) or *REG_T1 = fax (for float)
+                if (is_flonum(node->ty)) {
+                    emit_fax2fr(vm, FREG_A0);  // Copy fax to FREG_A0
+                    emit_store3(vm, node->ty, FREG_A0, REG_T1);
+                } else {
+                    emit_ax2r(vm, REG_T0);  // Copy ax to REG_T0
+                    emit_store3(vm, node->ty, REG_T0, REG_T1);
+                    emit_r2ax(vm, REG_T0);  // Preserve ax for assignment expression result
+                }
             }
 
             // Mark local variable as initialized (for uninitialized detection)
@@ -504,9 +607,12 @@ void gen_expr(JCC *vm, Node *node) {
         case ND_ADD:
             gen_expr(vm, node->lhs);
             if (is_flonum(node->lhs->ty)) {
-                emit(vm, FPUSH);
-                gen_expr(vm, node->rhs);
-                emit(vm, FADD);
+                // Float addition: use 3-register float ops
+                emit_fax2fr(vm, FREG_A0);        // Save lhs (in fax) to FREG_A0
+                gen_expr(vm, node->rhs);         // rhs result in fax
+                emit_fax2fr(vm, FREG_A1);        // Save rhs to FREG_A1
+                emit_frrr(vm, FADD3, FREG_A0, FREG_A0, FREG_A1);  // FREG_A0 = FREG_A0 + FREG_A1
+                emit_fr2fax(vm, FREG_A0);        // Result back to fax for compatibility
             } else {
                 // Use stack for recursion-safe saves, registers for final op
                 emit(vm, PUSH);             // Save lhs to stack (safe across recursion)
@@ -531,9 +637,12 @@ void gen_expr(JCC *vm, Node *node) {
         case ND_SUB:
             gen_expr(vm, node->lhs);
             if (is_flonum(node->lhs->ty)) {
-                emit(vm, FPUSH);
-                gen_expr(vm, node->rhs);
-                emit(vm, FSUB);
+                // Float subtraction: use 3-register float ops
+                emit_fax2fr(vm, FREG_A0);        // Save lhs to FREG_A0
+                gen_expr(vm, node->rhs);         // rhs result in fax
+                emit_fax2fr(vm, FREG_A1);        // Save rhs to FREG_A1
+                emit_frrr(vm, FSUB3, FREG_A0, FREG_A0, FREG_A1);
+                emit_fr2fax(vm, FREG_A0);
             } else {
                 // Use stack for recursion-safe saves, registers for final op
                 emit(vm, PUSH);
@@ -553,9 +662,12 @@ void gen_expr(JCC *vm, Node *node) {
         case ND_MUL:
             gen_expr(vm, node->lhs);
             if (is_flonum(node->lhs->ty)) {
-                emit(vm, FPUSH);
-                gen_expr(vm, node->rhs);
-                emit(vm, FMUL);
+                // Float multiplication: use 3-register float ops
+                emit_fax2fr(vm, FREG_A0);        // Save lhs to FREG_A0
+                gen_expr(vm, node->rhs);         // rhs result in fax
+                emit_fax2fr(vm, FREG_A1);        // Save rhs to FREG_A1
+                emit_frrr(vm, FMUL3, FREG_A0, FREG_A0, FREG_A1);
+                emit_fr2fax(vm, FREG_A0);
             } else {
                 emit(vm, PUSH);
                 gen_expr(vm, node->rhs);
@@ -569,9 +681,12 @@ void gen_expr(JCC *vm, Node *node) {
         case ND_DIV:
             gen_expr(vm, node->lhs);
             if (is_flonum(node->lhs->ty)) {
-                emit(vm, FPUSH);
-                gen_expr(vm, node->rhs);
-                emit(vm, FDIV);
+                // Float division: use 3-register float ops
+                emit_fax2fr(vm, FREG_A0);        // Save lhs to FREG_A0
+                gen_expr(vm, node->rhs);         // rhs result in fax
+                emit_fax2fr(vm, FREG_A1);        // Save rhs to FREG_A1
+                emit_frrr(vm, FDIV3, FREG_A0, FREG_A0, FREG_A1);
+                emit_fr2fax(vm, FREG_A0);
             } else {
                 emit(vm, PUSH);
                 gen_expr(vm, node->rhs);
@@ -595,9 +710,12 @@ void gen_expr(JCC *vm, Node *node) {
         case ND_EQ:
             gen_expr(vm, node->lhs);
             if (is_flonum(node->lhs->ty)) {
-                emit(vm, FPUSH);
-                gen_expr(vm, node->rhs);
-                emit(vm, FEQ);
+                // Float equality: use 3-register float comparison
+                emit_fax2fr(vm, FREG_A0);        // Save lhs to FREG_A0
+                gen_expr(vm, node->rhs);         // rhs result in fax
+                emit_fax2fr(vm, FREG_A1);        // Save rhs to FREG_A1
+                emit_frrr(vm, FEQ3, REG_A0, FREG_A0, FREG_A1);  // Result in integer reg
+                emit_r2ax(vm, REG_A0);           // Result to ax
             } else {
                 emit(vm, PUSH);
                 gen_expr(vm, node->rhs);
@@ -611,9 +729,12 @@ void gen_expr(JCC *vm, Node *node) {
         case ND_NE:
             gen_expr(vm, node->lhs);
             if (is_flonum(node->lhs->ty)) {
-                emit(vm, FPUSH);
-                gen_expr(vm, node->rhs);
-                emit(vm, FNE);
+                // Float not-equal: use 3-register float comparison
+                emit_fax2fr(vm, FREG_A0);        // Save lhs to FREG_A0
+                gen_expr(vm, node->rhs);         // rhs result in fax
+                emit_fax2fr(vm, FREG_A1);        // Save rhs to FREG_A1
+                emit_frrr(vm, FNE3, REG_A0, FREG_A0, FREG_A1);  // Result in integer reg
+                emit_r2ax(vm, REG_A0);           // Result to ax
             } else {
                 emit(vm, PUSH);
                 gen_expr(vm, node->rhs);
@@ -627,9 +748,12 @@ void gen_expr(JCC *vm, Node *node) {
         case ND_LT:
             gen_expr(vm, node->lhs);
             if (is_flonum(node->lhs->ty)) {
-                emit(vm, FPUSH);
-                gen_expr(vm, node->rhs);
-                emit(vm, FLT);
+                // Float less-than: use 3-register float comparison
+                emit_fax2fr(vm, FREG_A0);        // Save lhs to FREG_A0
+                gen_expr(vm, node->rhs);         // rhs result in fax
+                emit_fax2fr(vm, FREG_A1);        // Save rhs to FREG_A1
+                emit_frrr(vm, FLT3, REG_A0, FREG_A0, FREG_A1);  // Result in integer reg
+                emit_r2ax(vm, REG_A0);           // Result to ax
             } else {
                 emit(vm, PUSH);
                 gen_expr(vm, node->rhs);
@@ -643,9 +767,12 @@ void gen_expr(JCC *vm, Node *node) {
         case ND_LE:
             gen_expr(vm, node->lhs);
             if (is_flonum(node->lhs->ty)) {
-                emit(vm, FPUSH);
-                gen_expr(vm, node->rhs);
-                emit(vm, FLE);
+                // Float less-equal: use 3-register float comparison
+                emit_fax2fr(vm, FREG_A0);        // Save lhs to FREG_A0
+                gen_expr(vm, node->rhs);         // rhs result in fax
+                emit_fax2fr(vm, FREG_A1);        // Save rhs to FREG_A1
+                emit_frrr(vm, FLE3, REG_A0, FREG_A0, FREG_A1);  // Result in integer reg
+                emit_r2ax(vm, REG_A0);           // Result to ax
             } else {
                 emit(vm, PUSH);
                 gen_expr(vm, node->rhs);
@@ -795,11 +922,11 @@ void gen_expr(JCC *vm, Node *node) {
                     gen_expr(vm, node->lhs->lhs);
                 }
                 
-                // Add member offset
+                // Add member offset using register-based ADDI3
                 if (node->lhs->member->offset != 0) {
-                    emit(vm, PUSH);  // Save struct address
-                    emit_with_arg(vm, IMM, node->lhs->member->offset);
-                    emit(vm, ADD);  // ax = struct_addr + offset
+                    emit_ax2r(vm, REG_T0);
+                    emit_rri(vm, ADDI3, REG_T0, REG_T0, node->lhs->member->offset);
+                    emit_r2ax(vm, REG_T0);
                 }
             } else {
                 error_tok(vm, node->tok, "invalid operand for address-of operator");
@@ -817,20 +944,32 @@ void gen_expr(JCC *vm, Node *node) {
                 // Address is already in ax, nothing more to do
                 return;
             }
-            // For scalar types, load the value from the address
-            emit_load(vm, node->ty, 1);  // This IS a dereference - check it!
+            // For scalar types, load the value from the address using register-based LDR
+            // Use REG_T0 for address and REG_T1 for value to avoid conflicting
+            // with argument registers REG_A0-A7 during function calls
+            emit_ax2r(vm, REG_T0);  // Move pointer address to REG_T0
+            if (is_flonum(node->ty)) {
+                emit_load3(vm, node->ty, FREG_A0, REG_T0);  // Load float into FREG_A0
+                emit_fr2fax(vm, FREG_A0);  // Move result to fax
+            } else {
+                emit_load3(vm, node->ty, REG_T1, REG_T0);  // Use REG_T1, not REG_A0
+                emit_r2ax(vm, REG_T1);  // Move result to ax
+            }
             return;
 
         case ND_NEG:
             // Unary minus
             gen_expr(vm, node->lhs);
             if (is_flonum(node->lhs->ty)) {
-                emit(vm, FNEG);
+                // Float negation: use 3-register float op
+                emit_fax2fr(vm, FREG_A0);        // Save operand to FREG_A0
+                emit_frr(vm, FNEG3, FREG_A0, FREG_A0);  // FREG_A0 = -FREG_A0
+                emit_fr2fax(vm, FREG_A0);        // Result back to fax
             } else {
-                // Push operand first, then multiply by -1
-                emit(vm, PUSH);              // Push operand onto stack
-                emit_with_arg(vm, IMM, -1);  // Load -1 into ax
-                emit(vm, MUL);               // Pop operand, compute operand * -1
+                // Integer negation: use 3-register op
+                emit_ax2r(vm, REG_A0);           // Move operand to REG_A0
+                emit_rr(vm, NEG3, REG_A0, REG_A0);  // REG_A0 = -REG_A0
+                emit_r2ax(vm, REG_A0);           // Result back to ax
             }
             return;
 
@@ -1124,7 +1263,7 @@ void gen_expr(JCC *vm, Node *node) {
                 }
             }
 
-            // Function call: push arguments right-to-left, then CALL
+            // Function call: store arguments in registers REG_A0-REG_A7, then CALL
             // Struct/union returns handled by copy-before-return in callee
             
             // Count arguments
@@ -1133,19 +1272,69 @@ void gen_expr(JCC *vm, Node *node) {
                 nargs++;
             }
             
-            // Collect arguments in array for proper left-to-right evaluation
-            Node **arg_array = calloc(nargs, sizeof(Node*));
-            if (!arg_array)
-                error("out of memory");
-            int i = 0;
-            for (Node *arg = node->args; arg; arg = arg->next) {
-                arg_array[i++] = arg;
+            // Check how many args - first 8 go in registers, rest on stack
+            // Stack args are pushed RIGHT-TO-LEFT before register args are set up
+            int num_stack_args = (nargs > 8) ? (nargs - 8) : 0;
+            
+            // If we have stack args (args 9+), push them first in reverse order
+            if (num_stack_args > 0) {
+                // Collect args in array for stack arg handling
+                Node **arg_array = calloc(nargs, sizeof(Node*));
+                if (!arg_array) error("out of memory");
+                int idx = 0;
+                for (Node *a = node->args; a; a = a->next) {
+                    arg_array[idx++] = a;
+                }
+                
+                // Push stack args (args 8, 9, ... nargs-1) in reverse order
+                for (int j = nargs - 1; j >= 8; j--) {
+                    gen_expr(vm, arg_array[j]);
+                    emit(vm, PUSH);
+                }
+                free(arg_array);
             }
             
-            // Push arguments in reverse order (right-to-left)
-            for (int j = nargs - 1; j >= 0; j--) {
-                Node *arg = arg_array[j];
-
+            // Evaluate first 8 arguments left-to-right and store in registers
+            // REG_A0 = first int arg, REG_A1 = second int arg, etc.
+            // FREG_A0 = first float arg, FREG_A1 = second float arg, etc.
+            // Args 9+ were already pushed to stack above.
+            // 
+            // CRITICAL: When an argument is itself a function call, that call
+            // will clobber REG_A0-REG_A7 and FREG_A0-FREG_A7. We must save any
+            // already-prepared arguments before evaluating nested function calls.
+            int int_arg_idx = 0;
+            int float_arg_idx = 0;
+            int total_reg_args = 0;
+            int num_reg_args = (nargs > 8) ? 8 : nargs;
+            for (Node *arg = node->args; arg && total_reg_args < num_reg_args; arg = arg->next) {
+                // Check if this arg expression contains a function call
+                // If so, we need to save all previously-evaluated arg registers
+                bool needs_save = false;
+                if (int_arg_idx > 0 || float_arg_idx > 0) {
+                    // Check if arg is or contains a function call
+                    Node *check = arg;
+                    // Simple check: direct function call as argument
+                    if (check->kind == ND_FUNCALL) {
+                        needs_save = true;
+                    }
+                    // Also check for binary ops where either side could be a call
+                    if (check->lhs && check->lhs->kind == ND_FUNCALL) needs_save = true;
+                    if (check->rhs && check->rhs->kind == ND_FUNCALL) needs_save = true;
+                }
+                
+                // Save previously-prepared registers if needed
+                // For now, save int registers (float registers saved via FPUSH would be complex)
+                int saved_int_args = 0;  // Track how many we saved
+                if (needs_save) {
+                    saved_int_args = int_arg_idx;  // Save count BEFORE gen_expr
+                    // Push all already-prepared int arg registers to stack (reverse order)
+                    for (int j = int_arg_idx - 1; j >= 0; j--) {
+                        emit_r2ax(vm, REG_A0 + j);
+                        emit(vm, PUSH);
+                    }
+                    // TODO: Save float registers via FPUSH similarly
+                }
+                
                 // Special handling for struct/union arguments that are function call results
                 // We need to copy them to temporaries to avoid return buffer reuse issues
                 if (arg->kind == ND_FUNCALL && arg->ty &&
@@ -1163,45 +1352,53 @@ void gen_expr(JCC *vm, Node *node) {
                     gen_expr(vm, arg);  // ax = return_buffer_addr, stack = [temp_addr]
 
                     // Step 3: Build stack for MCPY: need [size, src, dest]
-                    // Currently: ax = return_buffer_addr, stack = [temp_addr]
-                    // Stack grows down, so sp[0] is topmost, sp[2] is bottom
-                    // After pushing 3 items: sp[0]=size, sp[1]=src, sp[2]=dest
-
                     emit(vm, PUSH);  // stack = [temp_addr, return_buffer_addr]
-                    // Stack is now: sp[1]=temp_addr (dest), sp[0]=return_buffer_addr (src)
 
                     // Push size
                     emit_with_arg(vm, IMM, struct_size);
                     emit(vm, PUSH);  // stack = [temp_addr, return_buffer_addr, size]
-                    // Stack is now: sp[2]=temp_addr (dest), sp[1]=return_buffer_addr (src), sp[0]=size
 
                     // Step 4: Copy from return buffer to temp
                     emit(vm, MCPY);  // Returns temp_addr in ax
 
-                    // ax now contains address of temp, which is what we want to pass as argument
-                    // Note: These heap temporaries will leak, but that's acceptable for this fix
-
                 } else {
-                    // For non-struct-returning calls and other expressions, evaluate normally
-                    // For structs/unions, gen_expr already returns the address
-                    // So we just push the address (pass by implicit pointer)
+                    // For non-struct-returning calls and other expressions
                     gen_expr(vm, arg);
                 }
 
+                // Store result in appropriate register based on type
                 if (is_flonum(arg->ty)) {
-                    emit(vm, FPUSH);
+                    // Float/double argument - result is in fax after gen_expr
+                    // Store in float register file
+                    if (float_arg_idx < 8) {
+                        emit_fax2fr(vm, FREG_A0 + float_arg_idx);
+                        float_arg_idx++;
+                    }
                 } else {
-                    emit(vm, PUSH);
+                    // Integer/pointer argument - result is in ax after gen_expr
+                    // Store in integer register file
+                    if (int_arg_idx < 8) {
+                        emit_ax2r(vm, REG_A0 + int_arg_idx);
+                        int_arg_idx++;
+                    }
                 }
+                
+                // Restore previously-saved registers if needed
+                if (needs_save) {
+                    // Pop back in forward order (use saved count, not current int_arg_idx)
+                    for (int j = 0; j < saved_int_args; j++) {
+                        emit_pop3(vm, REG_A0 + j);
+                    }
+                }
+                
+                total_reg_args++;
             }
-            
-            free(arg_array);
             
             // Determine if this is a direct or indirect function call
             // Direct call: function name is a ND_VAR with is_function=true
             // Indirect call: anything else (function pointer variable, dereferenced pointer, etc.)
             
-            // Track if this is an FFI call (CALLF pops args itself)
+            // Track if this is an FFI call
             bool is_ffi_call = false;
             
             if (node->lhs->kind == ND_VAR && node->lhs->var->is_function) {
@@ -1210,24 +1407,24 @@ void gen_expr(JCC *vm, Node *node) {
                 int ffi_idx = find_ffi_function(vm, fn->name);
                 
                 if (ffi_idx >= 0) {
-                    // It's a registered FFI function - use CALLF
-                    // We need to pass: 1) double_arg_mask, 2) arg count, 3) function index
+                    // It's a registered FFI function - use old stack-based convention
+                    // For now, push args from registers back to stack for FFI
+                    // Note: Args 9+ were already pushed to stack earlier (num_stack_args)
+                    // So we only need to push the register args (first min(nargs, 8))
+                    int num_reg_ffi = (nargs > 8) ? 8 : nargs;
+                    for (int j = num_reg_ffi - 1; j >= 0; j--) {
+                        emit_r2ax(vm, REG_A0 + j);
+                        emit(vm, PUSH);
+                    }
                     
                     // Compute double_arg_mask based on actual arguments
                     uint64_t double_arg_mask = 0;
-                    int arg_idx = 0;
-                    for (Node *arg = node->args; arg && arg_idx < 64; arg = arg->next, arg_idx++) {
+                    int arg_mask_idx = 0;
+                    for (Node *arg = node->args; arg && arg_mask_idx < 64; arg = arg->next, arg_mask_idx++) {
                         if (is_flonum(arg->ty)) {
-                            double_arg_mask |= (1ULL << arg_idx);
-                            if (vm->debug_vm)
-                                printf("  codegen: arg[%d] is double\n", arg_idx);
-                        } else if (vm->debug_vm) {
-                            printf("  codegen: arg[%d] is NOT double (kind=%d)\n", arg_idx, arg->ty ? arg->ty->kind : -1);
+                            double_arg_mask |= (1ULL << arg_mask_idx);
                         }
                     }
-                    
-                    if (vm->debug_vm)
-                        printf("  codegen: computed double_arg_mask = 0x%llx for %s\n", double_arg_mask, fn->name);
                     
                     // Push double_arg_mask, arg count, then function index
                     emit_with_arg(vm, IMM, double_arg_mask);
@@ -1239,8 +1436,6 @@ void gen_expr(JCC *vm, Node *node) {
                     is_ffi_call = true;  // CALLF pops its own arguments
                 } else {
                     // Regular VM function - use CALL with static address
-                    // Emit CALL instruction with function address
-                    // The address is stored as offset in text segment
                     emit(vm, CALL);
                     long long *call_addr = ++vm->text_ptr;
                     
@@ -1263,12 +1458,23 @@ void gen_expr(JCC *vm, Node *node) {
                 emit(vm, CALLI);
             }
             
-            // Clean up arguments from stack (but not for CALLF - it does it itself)
-            if (nargs > 0 && !is_ffi_call) {
-                emit_with_arg(vm, ADJ, nargs);
+            // Read return value from REG_A0 or FREG_A0 back into ax/fax
+            if (!is_ffi_call) {
+                // Check if function returns a float type
+                Type *ret_type = node->ty;
+                if (ret_type && is_flonum(ret_type)) {
+                    // Float return: result is in fregs[FREG_A0], copy to fax
+                    emit_fr2fax(vm, FREG_A0);
+                } else {
+                    // Integer/pointer return: result is in regs[REG_A0], copy to ax
+                    emit_r2ax(vm, REG_A0);
+                }
             }
+            // For FFI calls, result is already in ax/fax
             
-            // Result is in ax
+            // Note: No ADJ needed - register-based convention doesn't push to stack
+            
+            // Result is in ax (int) or fax (float)
             // For struct/union returns, ax contains the address of the struct
             return;
         }
@@ -1292,72 +1498,75 @@ void gen_expr(JCC *vm, Node *node) {
             }
 
             // ax now contains the address of the struct
-            // Add member offset to get member address
+            // Add member offset using register-based ADDI3
             if (node->member->offset != 0) {
-                emit(vm, PUSH);  // Save struct address
-                emit_with_arg(vm, IMM, node->member->offset);
-                emit(vm, ADD);  // ax = struct_addr + offset
+                emit_ax2r(vm, REG_T0);
+                emit_rri(vm, ADDI3, REG_T0, REG_T0, node->member->offset);
+                emit_r2ax(vm, REG_T0);
             }
 
             // Now ax contains the address of the member
             // Handle bitfield reads specially
             if (node->member->is_bitfield) {
-                // Load the underlying storage unit
-                // Bitfields use the member's type size for the storage unit
-                emit_load(vm, node->member->ty, 1);
+                // Load the underlying storage unit using register-based load
+                // Address is in ax (synced earlier via emit_r2ax if offset was added)
+                emit_ax2r(vm, REG_T0);  // Address to REG_T0
+                emit_load3_checked(vm, node->member->ty, REG_T1, REG_T0, 1);  // Load to REG_T1
 
                 // Extract bits: (value >> bit_offset) & ((1 << bit_width) - 1)
                 if (node->member->bit_offset > 0) {
-                    emit(vm, PUSH);  // Save value
+                    // REG_T1 = REG_T1 >> bit_offset
                     emit_with_arg(vm, IMM, node->member->bit_offset);
-                    emit(vm, SHR);  // Logical shift right (unsigned)
+                    emit_ax2r(vm, REG_T2);  // bit_offset in REG_T2
+                    emit_rrr(vm, SHR3, REG_T1, REG_T1, REG_T2);
                 }
 
-                // Create mask and apply it
+                // Create mask and apply it: REG_T1 = REG_T1 & mask
                 long long mask = (1LL << node->member->bit_width) - 1;
-                emit(vm, PUSH);  // Save shifted value
                 emit_with_arg(vm, IMM, mask);
-                emit(vm, AND);  // Extract bits
+                emit_ax2r(vm, REG_T2);  // mask in REG_T2
+                emit_rrr(vm, AND3, REG_T1, REG_T1, REG_T2);
 
                 // Sign extend if signed type
                 if (!node->ty->is_unsigned) {
                     // Check if sign bit is set
                     long long sign_bit = 1LL << (node->member->bit_width - 1);
-                    emit(vm, PUSH);  // Save value for later use
-                    emit(vm, PUSH);  // Save value again for sign bit test
                     emit_with_arg(vm, IMM, sign_bit);
-                    emit(vm, AND);  // Test sign bit (pops one copy of value)
+                    emit_ax2r(vm, REG_T2);  // sign_bit in REG_T2
+                    // REG_T0 = REG_T1 & sign_bit (test sign bit)
+                    emit_rrr(vm, AND3, REG_T0, REG_T1, REG_T2);
 
-                    // If sign bit is set, we need to sign extend
-                    // Jump if zero (positive value, no sign extension needed)
+                    // If sign bit is 0, skip sign extension
+                    emit_r2ax(vm, REG_T0);  // ax = sign test result
                     emit(vm, JZ);
                     long long *jz_addr = ++vm->text_ptr;
                     *jz_addr = 0;  // Placeholder
 
-                    // Negative path: Sign extend value | ~mask
-                    // Stack still has the original value saved from first PUSH
+                    // Negative path: Sign extend - REG_T1 = REG_T1 | ~mask
                     emit_with_arg(vm, IMM, ~mask);
-                    emit(vm, OR);  // Set upper bits (pops the saved value)
+                    emit_ax2r(vm, REG_T2);  // ~mask in REG_T2
+                    emit_rrr(vm, OR3, REG_T1, REG_T1, REG_T2);
 
-                    // Jump past the positive path
-                    emit(vm, JMP);
-                    long long *end_jmp = ++vm->text_ptr;
-                    *end_jmp = 0;
-
-                    // Positive path: restore value from stack
+                    // Patch jump target
                     *jz_addr = (long long)(vm->text_ptr + 1);
-                    // Stack has the saved value, ax = 0
-                    // Pop the value using OR with 0
-                    emit_with_arg(vm, IMM, 0);
-                    emit(vm, OR);  // ax = value | 0 = value (pops from stack)
-
-                    *end_jmp = (long long)(vm->text_ptr + 1);
                 }
+
+                // Result in REG_T1, sync back to ax
+                emit_r2ax(vm, REG_T1);
             } else {
-                // Load the value unless it's an array or nested struct
+                // Non-bitfield member: load the value unless it's an array or nested struct
                 if (node->ty->kind != TY_ARRAY && node->ty->kind != TY_STRUCT && node->ty->kind != TY_UNION) {
-                    // Member access involves dereferencing the struct pointer
-                    emit_load(vm, node->ty, 1);  // This is a dereference
+                    // Member access: load value using register-based LDR
+                    // Use REG_T0 for address and REG_T1 for loaded value to avoid
+                    // conflicting with argument registers REG_A0-A7 during function calls
+                    emit_ax2r(vm, REG_T0);  // Address is in ax, move to REG_T0
+                    if (is_flonum(node->ty)) {
+                        emit_load3(vm, node->ty, FREG_A0, REG_T0);  // Float regs don't conflict
+                        emit_fr2fax(vm, FREG_A0);
+                    } else {
+                        emit_load3(vm, node->ty, REG_T1, REG_T0);  // Use REG_T1, not REG_A0
+                        emit_r2ax(vm, REG_T1);
+                    }
                 }
             }
             return;
@@ -1730,7 +1939,7 @@ static void gen_stmt(JCC *vm, Node *node) {
             if (vm->flags & JCC_STACK_INSTR) {
                 emit_with_arg(vm, SCOPEOUT, vm->current_function_scope_id);
             }
-            emit(vm, LEV);  // Return from function
+            emit(vm, LEV3);  // Return from function (copies ax to REG_A0)
             return;
 
         case ND_BLOCK: {
@@ -2097,22 +2306,39 @@ void gen_function(JCC *vm, Obj *fn) {
 
     // Generating function code
 
-    // Set up parameter offsets
-    // Stack layout after CALL and ENT:
-    // Arguments are pushed right-to-left, so:
-    //   push arg2, push arg1, CALL, ENT
-    // Memory layout (stack grows downward, but we index upward from BP):
-    // [arg2]      <- bp[3] or bp + 3
-    // [arg1]      <- bp[2] or bp + 2
-    // [ret_addr]  <- bp[1] or bp + 1
+    // Register-based calling convention:
+    // Arguments are passed in REG_A0-REG_A7 and stored at negative offsets
+    // Stack layout after CALL and ENT3:
     // [old_bp]    <- bp[0] or bp (BP points here)
-    // [local1]    <- bp[-1] or below BP (allocated by ENT)
+    // [canary]    <- bp[-1] (if canaries enabled)
+    // [param1]    <- bp[-1] or bp[-2] with canary (first param from REG_A0)
+    // [param2]    <- bp[-2] or bp[-3] with canary (second param from REG_A1)
+    // [local1]    <- after params
+    // ...
     
     // Function scope (scope_id 0 reserved for function-level)
     int function_scope_id = vm->current_scope_id++;
     vm->current_function_scope_id = function_scope_id;
 
-    int param_offset = 2;  // First param at bp+2 (arg1)
+    // Count parameters first
+    int param_count = 0;
+    for (Obj *param = fn->params; param; param = param->next) {
+        param_count++;
+    }
+    
+    // For variadic functions, we need to copy all 8 potential arg registers
+    // because we don't know at compile time how many varargs will be passed.
+    // The caller may pass more args than declared fixed params.
+    bool is_variadic = fn->ty && fn->ty->is_variadic;
+    int reg_param_count = is_variadic ? 8 : param_count;
+    
+    // Stack size starts with space for parameters (at negative offsets)
+    // For variadic functions, reserve space for all 8 potential args
+    int stack_size = reg_param_count;
+    
+    // Assign parameter offsets (negative, after canary slot if enabled)
+    // Parameters: bp[-1], bp[-2], ... (or bp[-2], bp[-3] with canary)
+    int param_offset = -1;  // First param at bp[-1]
     for (Obj *param = fn->params; param; param = param->next) {
         param->offset = param_offset;
         param->is_local = true;  // Parameters are accessed like locals
@@ -2120,12 +2346,11 @@ void gen_function(JCC *vm, Obj *fn) {
         add_debug_symbol(vm, param->name, param_offset, param->ty, 1);
         // Add to stack instrumentation metadata
         add_stack_var_meta(vm, param->name, param_offset, param->ty, function_scope_id);
-        param_offset++;  // Next param is at higher index
+        param_offset--;  // Next param is at lower index
     }
     
     // Count local variables (excluding parameters)
     // For arrays, we need to allocate space for all elements
-    int stack_size = 0;
     for (Obj *var = fn->locals; var; var = var->next) {
         // Check if this is a parameter (params are also in locals list)
         bool is_param = false;
@@ -2157,7 +2382,7 @@ void gen_function(JCC *vm, Obj *fn) {
                 var_size = (var->ty->size + 7) / 8;  // Round up
             }
             stack_size += var_size;
-            var->offset = -stack_size;  // Locals have negative offsets (below bp)
+            var->offset = -stack_size;  // Locals have negative offsets (below bp and params)
             // Add to debug symbol table
             add_debug_symbol(vm, var->name, var->offset, var->ty, 1);
             // Add to stack instrumentation metadata
@@ -2165,18 +2390,32 @@ void gen_function(JCC *vm, Obj *fn) {
         }
     }
 
-    // Store function entry address (right before ENT)
+    // Store function entry address (right before ENT3)
     // text_ptr is currently pointing to last written instruction
     // Next emit will write at text_ptr+1
     fn->code_addr = (vm->text_ptr + 1 - vm->text_seg);
 
-    // Function prologue
-    emit_with_arg(vm, ENT, stack_size);
+    // Compute float parameter mask - bit i is set if param i is a float/double
+    long long float_param_mask = 0;
+    int pindex = 0;
+    for (Obj *param = fn->params; param && pindex < 8; param = param->next, pindex++) {
+        if (is_flonum(param->ty)) {
+            float_param_mask |= (1LL << pindex);
+        }
+    }
+
+    // Function prologue using ENT3 (register-based calling convention)
+    // ENT3 format: [stack_size:32|param_count:32] [float_param_mask]
+    // For variadic functions, reg_param_count is 8 to copy all potential args
+    long long ent3_operand = ((long long)stack_size) | (((long long)reg_param_count) << 32);
+    emit_with_arg(vm, ENT3, ent3_operand);
+    *++vm->text_ptr = float_param_mask;  // Second operand: which params are floats
 
     // Emit SCOPEIN for function-level scope (activates all function variables)
     if (vm->flags & JCC_STACK_INSTR) {
         emit_with_arg(vm, SCOPEIN, function_scope_id);
     }
+
 
     // Mark function parameters as initialized (for uninitialized detection)
     if (vm->flags & JCC_UNINIT_DETECTION) {
@@ -2203,7 +2442,7 @@ void gen_function(JCC *vm, Obj *fn) {
     if (vm->flags & JCC_STACK_INSTR) {
         emit_with_arg(vm, SCOPEOUT, function_scope_id);
     }
-    emit(vm, LEV);
+    emit(vm, LEV3);  // Implicit return (copies ax to REG_A0)
     
     // Clear current function
     vm->compiler.current_codegen_fn = NULL;

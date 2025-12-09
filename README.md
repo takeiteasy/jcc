@@ -196,13 +196,8 @@ JCC has a custom standard library that is located in `include`. It is just a col
 
 ## TODO
 
-### Language features
-
 - Blocks/closures (`^{}`) - Complex feature requiring variable capture and closure runtime
 - Nested functions - Requires static chain or trampolines for accessing parent scope
-
-### JCC features (and ideas)
-
 - Support more architectures for native FFI
   - x86_64 (System V + Windows) + x86_64 (legacy System V only)
   - No plans for any other systems, but will accept patches

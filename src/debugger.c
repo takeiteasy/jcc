@@ -254,6 +254,81 @@ static int disassemble_instruction(long long *pc, long long *text_seg, long long
              size = 4;
              break;
 
+        // Multi-register opcodes (R format: 1 operand word with register encoding)
+        case AX2R:
+        case R2AX:
+        case POP3:
+            if (pc + 1 < text_end) {
+                int rd = (int)(pc[1] & 0xFF);
+                printf(" r%d", rd);
+            }
+            size = 2;
+            break;
+
+        // Multi-register opcodes (RRR format: 1 operand word with 3 registers)
+        case ADD3:
+        case SUB3:
+        case MUL3:
+        case DIV3:
+        case MOD3:
+        case AND3:
+        case OR3:
+        case XOR3:
+        case SHL3:
+        case SHR3:
+        case SEQ3:
+        case SNE3:
+        case SLT3:
+        case SLE3:
+        case SGT3:
+        case SGE3:
+        case MOV3:
+            if (pc + 1 < text_end) {
+                int rd = (int)(pc[1] & 0xFF);
+                int rs1 = (int)((pc[1] >> 8) & 0xFF);
+                int rs2 = (int)((pc[1] >> 16) & 0xFF);
+                printf(" r%d, r%d, r%d", rd, rs1, rs2);
+            }
+            size = 2;
+            break;
+
+        // Multi-register opcodes (RI format: 1 register word + 1 immediate word)
+        case LI3:
+            if (pc + 2 < text_end) {
+                int rd = (int)(pc[1] & 0xFF);
+                long long imm = pc[2];
+                printf(" r%d, %lld", rd, imm);
+            }
+            size = 3;
+            break;
+
+        // Register-based calling convention opcodes
+        case ENT3:
+            // ENT3 now has 2 operands: [stack_size:32|param_count:32] [float_param_mask]
+            if (pc + 2 < text_end) {
+                int stack_size = (int)(pc[1] & 0xFFFFFFFF);
+                int param_count = (int)((pc[1] >> 32) & 0xFFFFFFFF);
+                long long float_mask = pc[2];
+                printf(" stack=%d, params=%d, floatmask=0x%llx", stack_size, param_count, float_mask);
+            }
+            size = 3;
+            break;
+
+        case LEV3:
+            // LEV3 has no operands
+            size = 1;
+            break;
+
+        case FAX2FR:
+        case FR2FAX:
+            // R format: single register operand
+            if (pc + 1 < text_end) {
+                int rd = (int)(pc[1] & 0xFF);
+                printf(" r%d", rd);
+            }
+            size = 2;
+            break;
+
         default:
             // 0 operands (size 1)
             size = 1;
