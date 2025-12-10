@@ -647,7 +647,7 @@ int op_FGE3_fn(JCC *vm) {
     return 0;
 }
 
-// ========== Phase D: Internal Operations ==========
+// ========== Internal Operations ==========
 
 int op_ADDI3_fn(JCC *vm) {
     // Add immediate: regs[rd] = regs[rs1] + immediate
@@ -676,7 +676,7 @@ int op_NEG3_fn(JCC *vm) {
     return 0;
 }
 
-// ========== Phase C: Register-Based Load/Store ==========
+// ========== Register-Based Load/Store ==========
 
 int op_LDR_B_fn(JCC *vm) {
     // Load byte (sign-extend): regs[rd] = *(char*)regs[rs]
