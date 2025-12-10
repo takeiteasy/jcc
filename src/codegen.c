@@ -152,59 +152,9 @@ static void emit_load3_checked(JCC *vm, Type *ty, int rd, int rs_addr, int is_de
     // Now do the actual load using registers
     emit_load3(vm, ty, rd, rs_addr);
 }
+// Note: Legacy emit_load() and emit_store() removed - all load/store ops now use
+// register-based emit_load3(), emit_load3_checked(), and emit_store3() helpers
 
-// Emit appropriate load instruction based on type
-// If is_deref is true, this is a pointer dereference and should be checked
-static void emit_load(JCC *vm, Type *ty, int is_deref) {
-    // If UAF detection, bounds checking, dangling detection, or memory tagging enabled, check pointer before dereferencing
-    // Only check on actual dereferences, not when loading pointer values
-    if (is_deref && (vm->flags & JCC_POINTER_CHECKS))
-        emit(vm, CHKP);  // Check that pointer in ax is valid
-
-    // If alignment checking enabled, check pointer alignment before dereferencing
-    if (is_deref && vm->flags & JCC_ALIGNMENT_CHECKS) {
-        // Emit alignment check with type size
-        size_t type_size = ty->size;
-        if (type_size > 1) {  // Only check for types larger than 1 byte
-            emit_with_arg(vm, CHKA, type_size);
-        }
-    }
-
-    // If type checking enabled, check the type on dereference
-    if (is_deref && vm->flags & JCC_TYPE_CHECKS) {
-        // Emit type check with expected type
-        emit_with_arg(vm, CHKT, ty->kind);
-    }
-
-    if (ty->kind == TY_CHAR) {
-        emit(vm, LC);  // 1 byte - loads and sign extends via C semantics
-    } else if (ty->kind == TY_SHORT) {
-        emit(vm, LS);  // 2 bytes - loads and sign extends via C semantics
-    } else if (ty->kind == TY_INT || ty->kind == TY_ENUM) {
-        emit(vm, LW);  // 4 bytes - loads and sign extends via C semantics
-    } else if (is_flonum(ty)) {
-        emit(vm, FLD); // floating-point
-    } else {
-        emit(vm, LI);  // 8 bytes (long, pointers)
-    }
-}
-
-// Emit appropriate store instruction based on type
-static void emit_store(JCC *vm, Type *ty) {
-    // Note: UAF checks for stores are done inside the store opcodes themselves
-    // because the address is on the stack, not in ax
-    if (ty->kind == TY_CHAR) {
-        emit(vm, SC);  // 1 byte
-    } else if (ty->kind == TY_SHORT) {
-        emit(vm, SS);  // 2 bytes
-    } else if (ty->kind == TY_INT || ty->kind == TY_ENUM) {
-        emit(vm, SW);  // 4 bytes
-    } else if (is_flonum(ty)) {
-        emit(vm, FST); // floating-point
-    } else {
-        emit(vm, SI);  // 8 bytes (long, pointers)
-    }
-}
 
 // Emit debug info (source location mapping) for debugger
 static void emit_debug_info(JCC *vm, Token *tok) {
