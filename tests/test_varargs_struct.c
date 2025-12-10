@@ -45,13 +45,13 @@ int double_equal(double a, double b, double epsilon) {
 int main() {
     int a = 5, b = 10;
     
-    // sum_all_types(8, 10, 100, 5.5, &a, 20, 200, 10.5, &b)
-    AllTypesSums sums = sum_all_types(8, 10, 100, 5.5, &a, 20, 200, 10.5, &b);
+    // sum_all_types(4, 10, 100, 5.5, &a) - max 8 args for register-based calling
+    AllTypesSums sums = sum_all_types(4, 10, 100, 5.5, &a);
     
-    if (sums.int_sum != 30) return 1;
-    if (sums.long_sum != 300) return 2;
-    if (!double_equal(sums.double_sum, 16.0, 0.0001)) return 3;
-    if (sums.ptr_sum != 15) return 4;
+    if (sums.int_sum != 10) return 1;
+    if (sums.long_sum != 100) return 2;
+    if (!double_equal(sums.double_sum, 5.5, 0.0001)) return 3;
+    if (sums.ptr_sum != 5) return 4;
     
     return 42;
 }

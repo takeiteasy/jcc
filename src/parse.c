@@ -3674,6 +3674,19 @@ static Node *primary(JCC *vm, Token **rest, Token *tok) {
         return node;
     }
 
+    // __builtin_frame_address(0) - returns the current frame's base pointer
+    if (equal(tok, "__builtin_frame_address")) {
+        tok = skip(vm, tok->next, "(");
+        // Only level 0 is supported (current frame)
+        long long level = const_expr(vm, &tok, tok);
+        if (level != 0)
+            error_tok(vm, tok, "__builtin_frame_address only supports level 0");
+        *rest = skip(vm, tok, ")");
+        Node *node = new_node(vm, ND_FRAME_ADDR, start);
+        node->ty = pointer_to(vm, ty_void);
+        return node;
+    }
+
     if (tok->kind == TK_IDENT) {
         // Variable or enum constant
         VarScope *sc = find_var(vm, tok);

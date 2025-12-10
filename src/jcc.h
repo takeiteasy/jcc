@@ -177,10 +177,10 @@ extern "C" {
     X(FLE3)   /* rd = (fregs[rs1] <= fregs[rs2]) */ \
     X(FGT3)   /* rd = (fregs[rs1] > fregs[rs2]) */ \
     X(FGE3)   /* rd = (fregs[rs1] >= fregs[rs2]) */ \
-    /* Phase D: Internal operations opcodes */ \
+    /* Internal operations opcodes */ \
     X(ADDI3)  /* rd = rs1 + immediate (register + constant offset) */ \
     X(NEG3)   /* rd = -rs1 (integer unary negation) */ \
-    /* Phase C: Register-based load/store opcodes */ \
+    /* Register-based load/store opcodes */ \
     X(LDR_B)  /* regs[rd] = *(char*)regs[rs] (load byte, sign-extend) */ \
     X(LDR_H)  /* regs[rd] = *(short*)regs[rs] (load halfword, sign-extend) */ \
     X(LDR_W)  /* regs[rd] = *(int*)regs[rs] (load word, sign-extend) */ \
@@ -559,6 +559,7 @@ typedef enum {
     ND_ASM       = 45,      // "asm"
     ND_CAS       = 46,      // Atomic compare-and-swap
     ND_EXCH      = 47,      // Atomic exchange
+    ND_FRAME_ADDR = 48,     // __builtin_frame_address(0) - returns base pointer
 } NodeKind;
 
 /*!

@@ -4,81 +4,108 @@
  * 
  * Implements C99/C11 variable argument list support for the JCC VM.
  * 
- * Stack Layout for Variadic Functions:
- *   [argN]         ← sp (extra variadic args)
+ * Stack Layout for Variadic Functions (after ENT3):
+ *   Stack Args      (args 8+, caller's frame)
+ *   [arg9]          ← bp[+3]
+ *   [arg8]          ← bp[+2]   (first stack arg)
+ *   [ret_addr]      ← bp[+1]
+ *   [old_bp]        ← bp[+0]   (base pointer points here)
+ *   ---- callee frame below ----
+ *   [param0]        ← bp[-1]   (spilled from REG_A0)
+ *   [param1]        ← bp[-2]   (spilled from REG_A1)
  *   ...
- *   [arg(fixed+1)] ← First variadic argument
- *   [arg(fixed)]   ← Last fixed argument
- *   [arg1]
- *   [arg0]
- *   [ret_addr]
- *   [old_bp]       ← bp (Base Pointer)
- *   [va_area]      ← bp - 1 (136-byte buffer storing variadic args)
- *   [locals...]
+ *   [param7]        ← bp[-8]   (spilled from REG_A7, last register arg)
+ *   [locals...]     ← bp[-9] and below
  * 
- * The va_area is a 136-byte buffer that holds copies of all variadic arguments.
- * This buffer is automatically allocated by the compiler for variadic functions.
+ * Register-based calling: first 8 args in REG_A0-A7, spilled by ENT3.
+ * Args 9+ are pushed to stack before CALL, remain in caller's frame.
  * 
- * Implementation:
- * - va_list is a pointer (char*) into the va_area buffer
- * - va_start initializes it to point to the start of va_area
- * - va_arg retrieves the value and advances the pointer
- * - va_end is a no-op (included for compatibility)
- * - va_copy copies the pointer (shallow copy)
+ * va_list is a struct that tracks position in both regions and knows
+ * when to switch from the register-spill area to the stack args area.
  */
 
 #ifndef _STDARG_H
 #define _STDARG_H
 
 /* 
- * va_list type: pointer to variable argument list
- * Implemented as char* to allow pointer arithmetic
+ * va_list type: struct tracking position in two memory regions
+ * - reg_ptr: current position in spilled register area (bp[-1...-8])
+ * - stack_ptr: current position in stack args area (bp[+2...])
+ * - reg_count: number of register-spill slots remaining before switching
  */
-typedef char *va_list;
+typedef struct {
+    char *reg_ptr;      /* Current position in register spill area */
+    char *stack_ptr;    /* Current position in stack overflow area */
+    int reg_count;      /* Remaining slots in register spill area */
+} va_list;
 
 /*
  * va_start(ap, last) - Initialize va_list
  * @ap:   va_list to initialize
  * @last: name of the last fixed parameter before '...'
  * 
- * Sets ap to point to the first variadic argument on the stack.
- * In the VM, all arguments are 8 bytes (long long), so we add 8 bytes
- * to the address of the last fixed parameter.
+ * Computes:
+ * - reg_ptr: address of first variadic arg = &last - 8 (one slot before last)
+ * - stack_ptr: address of first stack arg = bp + 16 (bp[+2])
+ * - reg_count: how many varargs fit in remaining register spill slots
+ * 
+ * Stack geometry: last is at bp[-(param_idx+1)], bp[-8] is last reg slot.
+ * reg_count = 8 - (param_idx + 1) = 7 - param_idx
+ * 
+ * We compute this by measuring distance from last to bp[-8]:
+ * bp[-8] = bp - 64, and &last = bp - (param_idx+1)*8
+ * Distance in slots = (bp - (param_idx+1)*8) - (bp - 64) / 8 = (64 - (param_idx+1)*8) / 8
+ *                   = 8 - param_idx - 1 = 7 - param_idx
+ *
+ * Simpler: reg_count = (reg_end - &last) / 8 - 1 where reg_end is at a known offset.
+ * 
+ * The trick: bp can be recovered as ((long long *)&last) + (param_offset / 8)
+ * where param_offset = &last's position below bp. But param_offset is encoded
+ * in the stack layout.
+ *
+ * Practical approach: From &last, we walk back to find bp. ENT3 stores old_bp
+ * at bp[-0], but we have a simpler method: assume fixed params start at bp[-1].
+ * The number of fixed params = (&(bp[-1]) - &last) / 8 + 1.
+ *
+ * Since we can't easily find bp from &last alone, we use __builtin_frame_address.
+ * JCC compiles this to LEA 0 which gives bp.
  */
-#define va_start(ap, last) ((ap) = (char *)((long long *)&(last) - 1))
+#define va_start(ap, last) do { \
+    long long *__bp = (long long *)__builtin_frame_address(0); \
+    (ap).reg_ptr = (char *)((long long *)&(last) - 1); \
+    (ap).stack_ptr = (char *)(__bp + 2); \
+    /* Count remaining reg slots: last is at __bp[-(N+1)], reg area ends at __bp[-8] */ \
+    /* Remaining = 8 - (N+1) = number of slots from (last-1) down to __bp[-8] */ \
+    int __param_slot = (int)(__bp - (long long *)&(last)); \
+    (ap).reg_count = 8 - __param_slot; \
+    if ((ap).reg_count < 0) (ap).reg_count = 0; \
+} while(0)
 
 /*
  * va_arg(ap, type) - Retrieve next argument
  * @ap:   va_list to read from
  * @type: type of the argument to retrieve
  * 
- * Returns the current argument cast to 'type' and advances ap.
- * All arguments are stored as 8-byte values (VM uses 8-byte integers).
+ * If reg_count > 0: read from reg_ptr, decrement both reg_ptr and reg_count
+ * Else: read from stack_ptr, increment stack_ptr
  * 
- * Note: The VM stores all integers and pointers as 8 bytes (long long).
- * Floating-point values (double/float) are also stored as 8 bytes.
- * 
- * For floating-point types, we use pointer casting to reinterpret the bit
- * pattern from the stack as a double. The stack stores doubles as 8-byte
- * bit patterns (same memory layout as long long), and we cast the pointer
- * to double* before dereferencing to get the correct IEEE 754 value.
- * 
- * The __jcc_types_compatible_p check allows compile-time type dispatch:
- * - For double/float: cast pointer to double* before dereferencing
- * - For other types: cast directly (works for int, long, pointers, etc.)
+ * For floating-point types, we cast to double* to get correct IEEE 754 value.
  */
 #define va_arg(ap, type) \
-    (__jcc_types_compatible_p(type, double) || \
-     __jcc_types_compatible_p(type, float) \
-        ? (*(double *)((ap) -= 8, (ap) + 8)) \
-        : (*(type *)((ap) -= 8, (ap) + 8)))
+    (((ap).reg_count > 0) \
+        ? (--((ap).reg_count), \
+           (__jcc_types_compatible_p(type, double) || __jcc_types_compatible_p(type, float) \
+               ? (*(double *)(((ap).reg_ptr) -= 8, ((ap).reg_ptr) + 8)) \
+               : (*(type *)(((ap).reg_ptr) -= 8, ((ap).reg_ptr) + 8)))) \
+        : (__jcc_types_compatible_p(type, double) || __jcc_types_compatible_p(type, float) \
+               ? (*(double *)(((ap).stack_ptr) += 8, ((ap).stack_ptr) - 8)) \
+               : (*(type *)(((ap).stack_ptr) += 8, ((ap).stack_ptr) - 8))))
 
 /*
  * va_end(ap) - Cleanup va_list
  * @ap: va_list to cleanup
  * 
  * No-op in this implementation. Included for C standard compliance.
- * The va_area buffer is automatically deallocated when the function returns.
  */
 #define va_end(ap) ((void)0)
 
@@ -87,7 +114,7 @@ typedef char *va_list;
  * @dest: destination va_list
  * @src:  source va_list
  * 
- * Creates a copy of src in dest. Both can then be used independently.
+ * Struct assignment copies all fields.
  */
 #define va_copy(dest, src) ((dest) = (src))
 

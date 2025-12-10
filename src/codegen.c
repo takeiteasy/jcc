@@ -102,7 +102,7 @@ static void emit_rri(JCC *vm, int op, int rd, int rs1, long long imm) {
     *++vm->text_ptr = imm;
 }
 
-// ========== Phase C: Register-Based Load/Store Helpers ==========
+// ========== Register-Based Load/Store Helpers ==========
 
 // Emit register-based load: regs[rd] = *regs[rs] (typed by size)
 // Returns the opcode used for the load
@@ -1324,10 +1324,21 @@ void gen_expr(JCC *vm, Node *node) {
                 // Push stack args (args 8, 9, ... nargs-1) in reverse order
                 for (int j = nargs - 1; j >= 8; j--) {
                     gen_expr(vm, arg_array[j]);
-                    emit(vm, PUSH);
+                    // For variadic calls, float stack args need special handling:
+                    // The fax register holds the double value, but for varargs
+                    // we need to pass it as a bit pattern (long long) on stack.
+                    // Use FPUSH to push the fax value (as 8-byte bit pattern).
+                    if (is_flonum(arg_array[j]->ty)) {
+                        emit(vm, FPUSH);  // Push fax (double bits) onto stack
+                    } else {
+                        emit(vm, PUSH);   // Push ax (integer) onto stack
+                    }
                 }
                 free(arg_array);
             }
+            
+            // Track if we have stack args - if so, disable needs_save as it corrupts stack layout
+            bool has_stack_args = (num_stack_args > 0);
             
             // Evaluate first 8 arguments left-to-right and store in registers
             // REG_A0 = first int arg, REG_A1 = second int arg, etc.
@@ -1342,32 +1353,55 @@ void gen_expr(JCC *vm, Node *node) {
             int total_reg_args = 0;
             int num_reg_args = (nargs > 8) ? 8 : nargs;
             for (Node *arg = node->args; arg && total_reg_args < num_reg_args; arg = arg->next) {
-                // Check if this arg expression contains a function call
-                // If so, we need to save all previously-evaluated arg registers
+                // Check if this arg expression might clobber previously-evaluated arg registers
+                // This happens for any non-trivial expression that uses ax (most expressions do)
+                // Simple cases that don't clobber: ND_VAR, ND_NUM, ND_CAST of simple expr
                 bool needs_save = false;
                 if (int_arg_idx > 0 || float_arg_idx > 0) {
-                    // Check if arg is or contains a function call
-                    Node *check = arg;
-                    // Simple check: direct function call as argument
-                    if (check->kind == ND_FUNCALL) {
-                        needs_save = true;
+                    // Non-trivial expressions that use ax and could clobber arg registers:
+                    // - Binary operations (ADD, SUB, MUL, etc.) - result goes through ax
+                    // - Function calls
+                    // - Array access (involves computing address in ax)
+                    // - Member access through pointer (dereference uses ax)
+                    // Simple expressions that don't need save:
+                    // - ND_NUM (immediate load)
+                    // - ND_VAR of scalar (simple load)
+                    // Conservative approach: save for anything except simple loads
+                    switch (arg->kind) {
+                        case ND_NUM:
+                            // Number literal - doesn't clobber
+                            needs_save = false;
+                            break;
+                        case ND_VAR:
+                            // Variable - doesn't clobber regs if it's just a load
+                            needs_save = false;
+                            break;
+                        default:
+                            // Any other expression might clobber ax->reg
+                            needs_save = true;
+                            break;
                     }
-                    // Also check for binary ops where either side could be a call
-                    if (check->lhs && check->lhs->kind == ND_FUNCALL) needs_save = true;
-                    if (check->rhs && check->rhs->kind == ND_FUNCALL) needs_save = true;
                 }
                 
                 // Save previously-prepared registers if needed
                 // For now, save int registers (float registers saved via FPUSH would be complex)
+                // IMPORTANT: Don't use needs_save when stack args exist - pushing to stack
+                // would corrupt the already-pushed stack args layout
                 int saved_int_args = 0;  // Track how many we saved
-                if (needs_save) {
+                int saved_float_args = 0;  // Track saved float args
+                if (needs_save && !has_stack_args) {
                     saved_int_args = int_arg_idx;  // Save count BEFORE gen_expr
+                    saved_float_args = float_arg_idx;
                     // Push all already-prepared int arg registers to stack (reverse order)
                     for (int j = int_arg_idx - 1; j >= 0; j--) {
                         emit_r2ax(vm, REG_A0 + j);
                         emit(vm, PUSH);
                     }
-                    // TODO: Save float registers via FPUSH similarly
+                    // Save float registers via FPUSH similarly
+                    for (int j = float_arg_idx - 1; j >= 0; j--) {
+                        emit_fr2fax(vm, FREG_A0 + j);
+                        emit(vm, FPUSH);
+                    }
                 }
                 
                 // Special handling for struct/union arguments that are function call results
@@ -1431,8 +1465,13 @@ void gen_expr(JCC *vm, Node *node) {
                 }
                 
                 // Restore previously-saved registers if needed
-                if (needs_save) {
-                    // Pop back in forward order (use saved count, not current int_arg_idx)
+                if (needs_save && !has_stack_args) {
+                    // Pop back in reverse order of push (LIFO)
+                    // We pushed floats after ints, so pop floats first
+                    for (int j = 0; j < saved_float_args; j++) {
+                        emit_fpop3(vm, FREG_A0 + j);
+                    }
+                    // Then restore int registers
                     for (int j = 0; j < saved_int_args; j++) {
                         emit_pop3(vm, REG_A0 + j);
                     }
@@ -1480,6 +1519,13 @@ void gen_expr(JCC *vm, Node *node) {
             } else {
                 // Integer/pointer return: result is in regs[REG_A0], copy to ax
                 emit_r2ax(vm, REG_A0);
+            }
+            
+            // Clean up stack args pushed before the call
+            // The caller pushed num_stack_args values onto the stack before CALL,
+            // and they need to be popped after the call returns.
+            if (num_stack_args > 0) {
+                emit_with_arg(vm, ADJ, num_stack_args);
             }
             
             // Result is in ax (int) or fax (float)
@@ -1615,6 +1661,12 @@ void gen_expr(JCC *vm, Node *node) {
             vm->compiler.num_goto_patches++;
 
             *label_addr_loc = 0;  // Placeholder
+            return;
+
+        case ND_FRAME_ADDR:
+            // __builtin_frame_address(0) - returns current base pointer
+            // LEA 0 loads bp + 0 = bp into ax
+            emit_with_arg(vm, LEA, 0);
             return;
 
         default:
