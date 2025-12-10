@@ -65,13 +65,6 @@ extern "C" {
     X(ADJ) \
     X(LEV) \
     X(LI) \
-    X(LC) \
-    X(LS) \
-    X(LW) \
-    X(SI) \
-    X(SC) \
-    X(SS) \
-    X(SW) \
     X(PUSH) \
     X(OR) \
     X(XOR) \
