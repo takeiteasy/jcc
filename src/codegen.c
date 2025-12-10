@@ -54,10 +54,22 @@ static void emit_pop3(JCC *vm, int rd) {
     *++vm->text_ptr = ENCODE_R(rd);
 }
 
+static void emit_fpop3(JCC *vm, int rd) {
+    emit(vm, FPOP3);
+    *++vm->text_ptr = ENCODE_R(rd);
+}
+
 // Float register sync helpers
 static void emit_fax2fr(JCC *vm, int rd) {
     emit(vm, FAX2FR);
     *++vm->text_ptr = ENCODE_R(rd);
+}
+
+// Move fax bits to integer register (for passing float varargs in int regs)
+// Uses FPUSH to push fax bits to stack, then POP3 to pop into int reg
+static void emit_fax2r(JCC *vm, int rd) {
+    emit(vm, FPUSH);   // Push fax bits to stack
+    emit_pop3(vm, rd); // Pop to integer register
 }
 
 static void emit_fr2fax(JCC *vm, int rs) {
@@ -309,7 +321,7 @@ void gen_expr(JCC *vm, Node *node) {
 
                 // Check if variable is initialized (for uninitialized detection)
                 // Only check scalar types (not arrays/structs) that will actually be loaded
-                bool is_param = node->var->offset > 0;
+                bool is_param = node->var->is_param;
                 bool is_scalar = (node->ty->kind != TY_ARRAY &&
                                   node->ty->kind != TY_STRUCT &&
                                   node->ty->kind != TY_UNION);
@@ -322,6 +334,8 @@ void gen_expr(JCC *vm, Node *node) {
                 if (vm->flags & JCC_UNINIT_DETECTION && is_scalar) {
                     emit_with_arg(vm, CHKI, node->var->offset);
                 }
+
+                // Check if this is a parameter
 
                 emit_with_arg(vm, LEA, node->var->offset);
 
@@ -557,10 +571,11 @@ void gen_expr(JCC *vm, Node *node) {
         case ND_ADD:
             gen_expr(vm, node->lhs);
             if (is_flonum(node->lhs->ty)) {
-                // Float addition: use 3-register float ops
-                emit_fax2fr(vm, FREG_A0);        // Save lhs (in fax) to FREG_A0
+                // Float addition: use FPUSH/FPOP3 to safely save lhs across rhs eval
+                emit(vm, FPUSH);                 // Save lhs (in fax) to stack
                 gen_expr(vm, node->rhs);         // rhs result in fax
                 emit_fax2fr(vm, FREG_A1);        // Save rhs to FREG_A1
+                emit_fpop3(vm, FREG_A0);         // Pop lhs from stack into FREG_A0
                 emit_frrr(vm, FADD3, FREG_A0, FREG_A0, FREG_A1);  // FREG_A0 = FREG_A0 + FREG_A1
                 emit_fr2fax(vm, FREG_A0);        // Result back to fax for compatibility
             } else {
@@ -587,10 +602,11 @@ void gen_expr(JCC *vm, Node *node) {
         case ND_SUB:
             gen_expr(vm, node->lhs);
             if (is_flonum(node->lhs->ty)) {
-                // Float subtraction: use 3-register float ops
-                emit_fax2fr(vm, FREG_A0);        // Save lhs to FREG_A0
+                // Float subtraction: use FPUSH/FPOP3 to safely save lhs across rhs eval
+                emit(vm, FPUSH);                 // Save lhs to stack
                 gen_expr(vm, node->rhs);         // rhs result in fax
                 emit_fax2fr(vm, FREG_A1);        // Save rhs to FREG_A1
+                emit_fpop3(vm, FREG_A0);         // Pop lhs from stack into FREG_A0
                 emit_frrr(vm, FSUB3, FREG_A0, FREG_A0, FREG_A1);
                 emit_fr2fax(vm, FREG_A0);
             } else {
@@ -612,10 +628,11 @@ void gen_expr(JCC *vm, Node *node) {
         case ND_MUL:
             gen_expr(vm, node->lhs);
             if (is_flonum(node->lhs->ty)) {
-                // Float multiplication: use 3-register float ops
-                emit_fax2fr(vm, FREG_A0);        // Save lhs to FREG_A0
+                // Float multiplication: use FPUSH/FPOP3 to safely save lhs across rhs eval
+                emit(vm, FPUSH);                 // Save lhs to stack
                 gen_expr(vm, node->rhs);         // rhs result in fax
                 emit_fax2fr(vm, FREG_A1);        // Save rhs to FREG_A1
+                emit_fpop3(vm, FREG_A0);         // Pop lhs from stack into FREG_A0
                 emit_frrr(vm, FMUL3, FREG_A0, FREG_A0, FREG_A1);
                 emit_fr2fax(vm, FREG_A0);
             } else {
@@ -631,10 +648,11 @@ void gen_expr(JCC *vm, Node *node) {
         case ND_DIV:
             gen_expr(vm, node->lhs);
             if (is_flonum(node->lhs->ty)) {
-                // Float division: use 3-register float ops
-                emit_fax2fr(vm, FREG_A0);        // Save lhs to FREG_A0
+                // Float division: use FPUSH/FPOP3 to safely save lhs across rhs eval
+                emit(vm, FPUSH);                 // Save lhs to stack
                 gen_expr(vm, node->rhs);         // rhs result in fax
                 emit_fax2fr(vm, FREG_A1);        // Save rhs to FREG_A1
+                emit_fpop3(vm, FREG_A0);         // Pop lhs from stack into FREG_A0
                 emit_frrr(vm, FDIV3, FREG_A0, FREG_A0, FREG_A1);
                 emit_fr2fax(vm, FREG_A0);
             } else {
@@ -660,10 +678,11 @@ void gen_expr(JCC *vm, Node *node) {
         case ND_EQ:
             gen_expr(vm, node->lhs);
             if (is_flonum(node->lhs->ty)) {
-                // Float equality: use 3-register float comparison
-                emit_fax2fr(vm, FREG_A0);        // Save lhs to FREG_A0
+                // Float equality: use FPUSH/FPOP3 to safely save lhs across rhs eval
+                emit(vm, FPUSH);                 // Save lhs to stack
                 gen_expr(vm, node->rhs);         // rhs result in fax
                 emit_fax2fr(vm, FREG_A1);        // Save rhs to FREG_A1
+                emit_fpop3(vm, FREG_A0);         // Pop lhs from stack into FREG_A0
                 emit_frrr(vm, FEQ3, REG_A0, FREG_A0, FREG_A1);  // Result in integer reg
                 emit_r2ax(vm, REG_A0);           // Result to ax
             } else {
@@ -679,10 +698,11 @@ void gen_expr(JCC *vm, Node *node) {
         case ND_NE:
             gen_expr(vm, node->lhs);
             if (is_flonum(node->lhs->ty)) {
-                // Float not-equal: use 3-register float comparison
-                emit_fax2fr(vm, FREG_A0);        // Save lhs to FREG_A0
+                // Float not-equal: use FPUSH/FPOP3 to safely save lhs across rhs eval
+                emit(vm, FPUSH);                 // Save lhs to stack
                 gen_expr(vm, node->rhs);         // rhs result in fax
                 emit_fax2fr(vm, FREG_A1);        // Save rhs to FREG_A1
+                emit_fpop3(vm, FREG_A0);         // Pop lhs from stack into FREG_A0
                 emit_frrr(vm, FNE3, REG_A0, FREG_A0, FREG_A1);  // Result in integer reg
                 emit_r2ax(vm, REG_A0);           // Result to ax
             } else {
@@ -698,10 +718,11 @@ void gen_expr(JCC *vm, Node *node) {
         case ND_LT:
             gen_expr(vm, node->lhs);
             if (is_flonum(node->lhs->ty)) {
-                // Float less-than: use 3-register float comparison
-                emit_fax2fr(vm, FREG_A0);        // Save lhs to FREG_A0
+                // Float less-than: use FPUSH/FPOP3 to safely save lhs across rhs eval
+                emit(vm, FPUSH);                 // Save lhs to stack
                 gen_expr(vm, node->rhs);         // rhs result in fax
                 emit_fax2fr(vm, FREG_A1);        // Save rhs to FREG_A1
+                emit_fpop3(vm, FREG_A0);         // Pop lhs from stack into FREG_A0
                 emit_frrr(vm, FLT3, REG_A0, FREG_A0, FREG_A1);  // Result in integer reg
                 emit_r2ax(vm, REG_A0);           // Result to ax
             } else {
@@ -717,10 +738,11 @@ void gen_expr(JCC *vm, Node *node) {
         case ND_LE:
             gen_expr(vm, node->lhs);
             if (is_flonum(node->lhs->ty)) {
-                // Float less-equal: use 3-register float comparison
-                emit_fax2fr(vm, FREG_A0);        // Save lhs to FREG_A0
+                // Float less-equal: use FPUSH/FPOP3 to safely save lhs across rhs eval
+                emit(vm, FPUSH);                 // Save lhs to stack
                 gen_expr(vm, node->rhs);         // rhs result in fax
                 emit_fax2fr(vm, FREG_A1);        // Save rhs to FREG_A1
+                emit_fpop3(vm, FREG_A0);         // Pop lhs from stack into FREG_A0
                 emit_frrr(vm, FLE3, REG_A0, FREG_A0, FREG_A1);  // Result in integer reg
                 emit_r2ax(vm, REG_A0);           // Result to ax
             } else {
@@ -1222,10 +1244,73 @@ void gen_expr(JCC *vm, Node *node) {
                 nargs++;
             }
             
+            // Count fixed parameters (for variadic function handling)
+            // Varargs are passed in int registers even if they are floats
+            int fixed_param_count = 0;
+            bool is_variadic_call = node->func_ty && node->func_ty->is_variadic;
+            if (is_variadic_call) {
+                for (Type *p = node->func_ty->params; p; p = p->next) {
+                    fixed_param_count++;
+                }
+            }
+            
             // Check how many args - first 8 go in registers, rest on stack
             // Stack args are pushed RIGHT-TO-LEFT before register args are set up
             int num_stack_args = (nargs > 8) ? (nargs - 8) : 0;
             
+            // Early detection of FFI call - for FFI calls we use direct stack-based
+            // arg passing instead of register-based to avoid clobbering issues
+            bool is_ffi_call = false;
+            int ffi_idx = -1;
+            if (node->lhs->kind == ND_VAR && node->lhs->var->is_function) {
+                ffi_idx = find_ffi_function(vm, node->lhs->var->name);
+                is_ffi_call = (ffi_idx >= 0);
+            }
+            
+            // For FFI calls, push ALL args directly to stack in reverse order
+            // This avoids register clobbering issues with expressions
+            if (is_ffi_call) {
+                // Collect args in array
+                Node **arg_array = calloc(nargs, sizeof(Node*));
+                if (!arg_array) error("out of memory");
+                int idx = 0;
+                for (Node *a = node->args; a; a = a->next) {
+                    arg_array[idx++] = a;
+                }
+                
+                // Push all args in reverse order (right-to-left)
+                for (int j = nargs - 1; j >= 0; j--) {
+                    gen_expr(vm, arg_array[j]);
+                    if (is_flonum(arg_array[j]->ty)) {
+                        emit(vm, FPUSH);  // Float result in fax
+                    } else {
+                        emit(vm, PUSH);   // Int result in ax
+                    }
+                }
+                
+                // Compute double_arg_mask based on actual arguments
+                uint64_t double_arg_mask = 0;
+                int arg_mask_idx = 0;
+                for (Node *arg = node->args; arg && arg_mask_idx < 64; arg = arg->next, arg_mask_idx++) {
+                    if (is_flonum(arg->ty)) {
+                        double_arg_mask |= (1ULL << arg_mask_idx);
+                    }
+                }
+                
+                // Push double_arg_mask, arg count, then function index
+                emit_with_arg(vm, IMM, double_arg_mask);
+                emit(vm, PUSH);                  // Save double_arg_mask on stack
+                emit_with_arg(vm, IMM, nargs);   // Actual argument count
+                emit(vm, PUSH);                  // Save on stack
+                emit_with_arg(vm, IMM, ffi_idx); // Function index in ax
+                emit(vm, CALLF);
+                
+                free(arg_array);
+                // Result is already in ax/fax
+                return;
+            }
+            
+            // Non-FFI call: use register-based passing
             // If we have stack args (args 9+), push them first in reverse order
             if (num_stack_args > 0) {
                 // Collect args in array for stack arg handling
@@ -1317,12 +1402,24 @@ void gen_expr(JCC *vm, Node *node) {
                 }
 
                 // Store result in appropriate register based on type
+                // For variadic calls, varargs (args beyond fixed count) must go in int regs
+                bool is_vararg = is_variadic_call && (total_reg_args >= fixed_param_count);
+                
                 if (is_flonum(arg->ty)) {
                     // Float/double argument - result is in fax after gen_expr
-                    // Store in float register file
-                    if (float_arg_idx < 8) {
-                        emit_fax2fr(vm, FREG_A0 + float_arg_idx);
-                        float_arg_idx++;
+                    if (is_vararg) {
+                        // Vararg float: move bits to int register
+                        // ENT3 will spill int regs to stack; va_arg reads from stack
+                        if (int_arg_idx < 8) {
+                            emit_fax2r(vm, REG_A0 + int_arg_idx);
+                            int_arg_idx++;
+                        }
+                    } else {
+                        // Fixed param float: store in float register
+                        if (float_arg_idx < 8) {
+                            emit_fax2fr(vm, FREG_A0 + float_arg_idx);
+                            float_arg_idx++;
+                        }
                     }
                 } else {
                     // Integer/pointer argument - result is in ax after gen_expr
@@ -1348,58 +1445,24 @@ void gen_expr(JCC *vm, Node *node) {
             // Direct call: function name is a ND_VAR with is_function=true
             // Indirect call: anything else (function pointer variable, dereferenced pointer, etc.)
             
-            // Track if this is an FFI call
-            bool is_ffi_call = false;
+            // Note: FFI calls already handled above via early return
             
             if (node->lhs->kind == ND_VAR && node->lhs->var->is_function) {
-                // Direct function call - check if it's an FFI function first
+                // Regular VM function - use CALL with static address
                 Obj *fn = node->lhs->var;
-                int ffi_idx = find_ffi_function(vm, fn->name);
+                emit(vm, CALL);
+                long long *call_addr = ++vm->text_ptr;
                 
-                if (ffi_idx >= 0) {
-                    // It's a registered FFI function - use old stack-based convention
-                    // For now, push args from registers back to stack for FFI
-                    // Note: Args 9+ were already pushed to stack earlier (num_stack_args)
-                    // So we only need to push the register args (first min(nargs, 8))
-                    int num_reg_ffi = (nargs > 8) ? 8 : nargs;
-                    for (int j = num_reg_ffi - 1; j >= 0; j--) {
-                        emit_r2ax(vm, REG_A0 + j);
-                        emit(vm, PUSH);
-                    }
-                    
-                    // Compute double_arg_mask based on actual arguments
-                    uint64_t double_arg_mask = 0;
-                    int arg_mask_idx = 0;
-                    for (Node *arg = node->args; arg && arg_mask_idx < 64; arg = arg->next, arg_mask_idx++) {
-                        if (is_flonum(arg->ty)) {
-                            double_arg_mask |= (1ULL << arg_mask_idx);
-                        }
-                    }
-                    
-                    // Push double_arg_mask, arg count, then function index
-                    emit_with_arg(vm, IMM, double_arg_mask);
-                    emit(vm, PUSH);                  // Save double_arg_mask on stack
-                    emit_with_arg(vm, IMM, nargs);   // Actual argument count
-                    emit(vm, PUSH);                  // Save on stack
-                    emit_with_arg(vm, IMM, ffi_idx); // Function index in ax
-                    emit(vm, CALLF);
-                    is_ffi_call = true;  // CALLF pops its own arguments
-                } else {
-                    // Regular VM function - use CALL with static address
-                    emit(vm, CALL);
-                    long long *call_addr = ++vm->text_ptr;
-                    
-                    // Store patch information
-                    if (vm->compiler.num_call_patches >= MAX_CALLS) {
-                        error("too many function calls");
-                    }
-                    vm->compiler.call_patches[vm->compiler.num_call_patches].location = call_addr;
-                    vm->compiler.call_patches[vm->compiler.num_call_patches].function = fn;
-                    vm->compiler.num_call_patches++;
-                    
-                    // Emit placeholder (will be patched)
-                    *call_addr = 0;
+                // Store patch information
+                if (vm->compiler.num_call_patches >= MAX_CALLS) {
+                    error("too many function calls");
                 }
+                vm->compiler.call_patches[vm->compiler.num_call_patches].location = call_addr;
+                vm->compiler.call_patches[vm->compiler.num_call_patches].function = fn;
+                vm->compiler.num_call_patches++;
+                
+                // Emit placeholder (will be patched)
+                *call_addr = 0;
             } else {
                 // Indirect function call through pointer - use CALLI
                 // Evaluate the function expression to get the address
@@ -1409,20 +1472,15 @@ void gen_expr(JCC *vm, Node *node) {
             }
             
             // Read return value from REG_A0 or FREG_A0 back into ax/fax
-            if (!is_ffi_call) {
-                // Check if function returns a float type
-                Type *ret_type = node->ty;
-                if (ret_type && is_flonum(ret_type)) {
-                    // Float return: result is in fregs[FREG_A0], copy to fax
-                    emit_fr2fax(vm, FREG_A0);
-                } else {
-                    // Integer/pointer return: result is in regs[REG_A0], copy to ax
-                    emit_r2ax(vm, REG_A0);
-                }
+            // (FFI calls already returned above)
+            Type *ret_type = node->ty;
+            if (ret_type && is_flonum(ret_type)) {
+                // Float return: result is in fregs[FREG_A0], copy to fax
+                emit_fr2fax(vm, FREG_A0);
+            } else {
+                // Integer/pointer return: result is in regs[REG_A0], copy to ax
+                emit_r2ax(vm, REG_A0);
             }
-            // For FFI calls, result is already in ax/fax
-            
-            // Note: No ADJ needed - register-based convention doesn't push to stack
             
             // Result is in ax (int) or fax (float)
             // For struct/union returns, ax contains the address of the struct
@@ -2292,6 +2350,7 @@ void gen_function(JCC *vm, Obj *fn) {
     for (Obj *param = fn->params; param; param = param->next) {
         param->offset = param_offset;
         param->is_local = true;  // Parameters are accessed like locals
+        param->is_param = true;  // Mark as parameter for codegen
         // Add to debug symbol table
         add_debug_symbol(vm, param->name, param_offset, param->ty, 1);
         // Add to stack instrumentation metadata

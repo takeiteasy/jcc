@@ -352,6 +352,17 @@ int op_POP3_fn(JCC *vm) {
     return 0;
 }
 
+int op_FPOP3_fn(JCC *vm) {
+    // Pop stack into float register: [FPOP3] [rd:8|unused:56]
+    // The value on stack is the bit pattern of a double (pushed by FPUSH)
+    long long operands = *vm->pc++;
+    int rd;
+    DECODE_R(operands, rd);
+    long long bits = *vm->sp++;
+    vm->fregs[rd] = *(double *)&bits;
+    return 0;
+}
+
 // ========== Register-Based Calling Convention ==========
 
 int op_ENT3_fn(JCC *vm) {

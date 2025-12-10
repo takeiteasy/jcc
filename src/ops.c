@@ -1583,9 +1583,14 @@ int op_CALLF_fn(JCC *vm) {
             return -1;
         }
 
-        // All arguments are long long (for integers/pointers)
-        for (int i = 0; i < actual_nargs; i++)
-            arg_types[i] = &ffi_type_sint64;
+        // Use double_arg_mask to set correct types
+        for (int i = 0; i < actual_nargs; i++) {
+            if (i < 64 && (double_arg_mask & (1ULL << i))) {
+                arg_types[i] = &ffi_type_double;
+            } else {
+                arg_types[i] = &ffi_type_sint64;
+            }
+        }
 
         // Prepare variadic cif with actual argument count
         ffi_status status = ffi_prep_cif_var(&cif, FFI_DEFAULT_ABI, ff->num_fixed_args,
@@ -1596,29 +1601,30 @@ int op_CALLF_fn(JCC *vm) {
             return -1;
         }
     } else {
-        // Non-variadic function - use cached cif or prepare once
-        if (!ff->arg_types) {
-            // First call - allocate and prepare
-            ff->arg_types = malloc(actual_nargs * sizeof(ffi_type *));
-            if (!ff->arg_types) {
-                printf("error: failed to allocate arg types for FFI\n");
-                return -1;
-            }
+        // Non-variadic function - need to prepare cif for each call since double_arg_mask may vary
+        // (We can't cache since codegen double_arg_mask might differ from registered value)
+        arg_types = malloc(actual_nargs * sizeof(ffi_type *));
+        if (!arg_types) {
+            printf("error: failed to allocate arg types for FFI\n");
+            return -1;
+        }
 
-            // All arguments are long long (for integers/pointers)
-            for (int i = 0; i < actual_nargs; i++)
-                ff->arg_types[i] = &ffi_type_sint64;
-
-            ffi_status status = ffi_prep_cif(&ff->cif, FFI_DEFAULT_ABI, actual_nargs,
-                                            return_type, ff->arg_types);
-            if (status != FFI_OK) {
-                printf("error: failed to prepare FFI cif (status=%d)\n", status);
-                return -1;
+        // Use double_arg_mask to set correct types
+        for (int i = 0; i < actual_nargs; i++) {
+            if (i < 64 && (double_arg_mask & (1ULL << i))) {
+                arg_types[i] = &ffi_type_double;
+            } else {
+                arg_types[i] = &ffi_type_sint64;
             }
         }
-        // Use cached cif
-        arg_types = ff->arg_types;
-        memcpy(&cif, &ff->cif, sizeof(ffi_cif));
+
+        ffi_status status = ffi_prep_cif(&cif, FFI_DEFAULT_ABI, actual_nargs,
+                                        return_type, arg_types);
+        if (status != FFI_OK) {
+            printf("error: failed to prepare FFI cif (status=%d)\n", status);
+            free(arg_types);
+            return -1;
+        }
     }
 
     // Pop arguments from stack (they were pushed right-to-left)
@@ -1643,8 +1649,8 @@ int op_CALLF_fn(JCC *vm) {
         vm->ax = result;
     }
 
-    // Free temporary arg_types for variadic functions
-    if (ff->is_variadic && arg_types) {
+    // Free temporary arg_types
+    if (arg_types) {
         free(arg_types);
     }
 #else
