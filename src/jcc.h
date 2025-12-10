@@ -114,6 +114,7 @@ extern "C" {
     X(I2F) \
     X(F2I) \
     X(FPUSH) \
+    X(FPOP3) /* fregs[rd] = pop from stack (reinterpret bits as double) */ \
     X(CALLF) /* Foreign function interface */  \
     /* Memory safety opcodes */ \
     X(CHKB) /* Check array bounds */ \
@@ -657,6 +658,7 @@ struct Obj {
 
     // Local variable
     int offset;
+    bool is_param; // true if this is a function parameter
 
     // Global variable or function
     bool is_function;
