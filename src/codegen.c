@@ -20,6 +20,60 @@
 #include "jcc.h"
 #include "./internal.h"
 
+// ========== Register Allocator ==========
+// Simple linear-scan allocator for expression temporaries
+// Uses T0-T10 for temporaries (11 registers)
+// Spills to stack if all temporaries are in use
+
+// Bitmap of which temp registers are in use
+// Bits 0-10 correspond to T0-T10 (regs 5-9, 26-31)
+static unsigned int temp_reg_in_use = 0;
+
+// Map temp register index (0-10) to actual register number
+static const int temp_reg_map[] = {
+    REG_T0, REG_T1, REG_T2, REG_T3, REG_T4,  // Primary temps (5-9)
+    REG_T5, REG_T6, REG_T7, REG_T8, REG_T9, REG_T10  // Secondary temps (26-31)
+};
+#define NUM_TEMP_REGS 11
+
+// Allocate a temporary register, returns -1 if all in use (need to spill)
+static int alloc_temp_reg(void) {
+    for (int i = 0; i < NUM_TEMP_REGS; i++) {
+        if (!(temp_reg_in_use & (1 << i))) {
+            temp_reg_in_use |= (1 << i);
+            return temp_reg_map[i];
+        }
+    }
+    return -1;  // All in use - caller should spill
+}
+
+// Free a temporary register
+static void free_temp_reg(int reg) {
+    for (int i = 0; i < NUM_TEMP_REGS; i++) {
+        if (temp_reg_map[i] == reg) {
+            temp_reg_in_use &= ~(1 << i);
+            return;
+        }
+    }
+    // Not a temp register - ignore (may be A0-A7 or S0-S7)
+}
+
+// Reset allocator (called at start of each function)
+static void reset_temp_regs(void) {
+    temp_reg_in_use = 0;
+}
+
+// Get count of allocated temp registers (for debugging)
+static int count_allocated_temps(void) {
+    int count = 0;
+    for (int i = 0; i < NUM_TEMP_REGS; i++) {
+        if (temp_reg_in_use & (1 << i))
+            count++;
+    }
+    return count;
+}
+
+
 static void emit(JCC *vm, int instruction) {
     if (!vm || !vm->text_ptr) 
         error("codegen: text segment not initialized");
@@ -140,25 +194,25 @@ static void emit_store3(JCC *vm, Type *ty, int rs_val, int rs_addr) {
 // rd: destination register for loaded value
 // is_deref: true if this is a pointer dereference (triggers security checks)
 static void emit_load3_checked(JCC *vm, Type *ty, int rd, int rs_addr, int is_deref) {
-    // Security checks operate on the address register
-    // For now, we need to sync to ax for the legacy check opcodes
-    // TODO: Add register-based CHKP3/CHKA3/CHKT3 opcodes later
+    // Security checks now use register-based opcodes directly (no bridging)
     if (is_deref && (vm->flags & JCC_POINTER_CHECKS)) {
-        emit_r2ax(vm, rs_addr);  // Sync address to ax for CHKP
-        emit(vm, CHKP);  // Check that pointer is valid
+        emit(vm, CHKP3);
+        *++vm->text_ptr = ENCODE_R(rs_addr);
     }
 
     if (is_deref && (vm->flags & JCC_ALIGNMENT_CHECKS)) {
         size_t type_size = ty->size;
         if (type_size > 1) {
-            emit_r2ax(vm, rs_addr);  // Sync address to ax for CHKA
-            emit_with_arg(vm, CHKA, type_size);
+            emit(vm, CHKA3);
+            *++vm->text_ptr = ENCODE_R(rs_addr);
+            *++vm->text_ptr = type_size;
         }
     }
 
     if (is_deref && (vm->flags & JCC_TYPE_CHECKS)) {
-        emit_r2ax(vm, rs_addr);  // Sync address to ax for CHKT
-        emit_with_arg(vm, CHKT, ty->kind);
+        emit(vm, CHKT3);
+        *++vm->text_ptr = ENCODE_R(rs_addr);
+        *++vm->text_ptr = ty->kind;
     }
 
     // Now do the actual load using registers
@@ -166,6 +220,62 @@ static void emit_load3_checked(JCC *vm, Type *ty, int rd, int rs_addr, int is_de
 }
 // Note: Legacy emit_load() and emit_store() removed - all load/store ops now use
 // register-based emit_load3(), emit_load3_checked(), and emit_store3() helpers
+
+// Emit LEA3: rd = bp + offset (local variable address)
+static void emit_lea3(JCC *vm, int rd, long long offset) {
+    emit(vm, LEA3);
+    *++vm->text_ptr = ENCODE_R(rd);
+    *++vm->text_ptr = offset;
+}
+
+// Emit JZ3: if (rs == 0) jump to target (returns address to patch)
+static long long *emit_jz3(JCC *vm, int rs) {
+    emit(vm, JZ3);
+    *++vm->text_ptr = ENCODE_R(rs);
+    long long *patch_addr = ++vm->text_ptr;
+    *patch_addr = 0;  // Placeholder for target
+    return patch_addr;
+}
+
+// Emit JNZ3: if (rs != 0) jump to target (returns address to patch)
+static long long *emit_jnz3(JCC *vm, int rs) {
+    emit(vm, JNZ3);
+    *++vm->text_ptr = ENCODE_R(rs);
+    long long *patch_addr = ++vm->text_ptr;
+    *patch_addr = 0;  // Placeholder for target
+    return patch_addr;
+}
+
+// Emit I2F3: fregs[rd] = (double)regs[rs]
+static void emit_i2f3(JCC *vm, int rd, int rs) {
+    emit(vm, I2F3);
+    *++vm->text_ptr = ENCODE_RR(rd, rs);
+}
+
+// Emit F2I3: regs[rd] = (long long)fregs[rs]
+static void emit_f2i3(JCC *vm, int rd, int rs) {
+    emit(vm, F2I3);
+    *++vm->text_ptr = ENCODE_RR(rd, rs);
+}
+
+// Emit NOT3: regs[rd] = !regs[rs]
+static void emit_not3(JCC *vm, int rd, int rs) {
+    emit(vm, NOT3);
+    *++vm->text_ptr = ENCODE_RR(rd, rs);
+}
+
+// Emit BNOT3: regs[rd] = ~regs[rs]
+static void emit_bnot3(JCC *vm, int rd, int rs) {
+    emit(vm, BNOT3);
+    *++vm->text_ptr = ENCODE_RR(rd, rs);
+}
+
+// Emit LI3: rd = immediate value
+static void emit_li3(JCC *vm, int rd, long long imm) {
+    emit(vm, LI3);
+    *++vm->text_ptr = ENCODE_R(rd);
+    *++vm->text_ptr = imm;
+}
 
 
 // Emit debug info (source location mapping) for debugger

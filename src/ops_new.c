@@ -791,3 +791,228 @@ int op_FSTR_fn(JCC *vm) {
     *(double *)vm->regs[rs] = vm->fregs[rd];
     return 0;
 }
+
+// ========== Phase 1: New Register-Based Opcodes ==========
+
+int op_LEA3_fn(JCC *vm) {
+    // Load effective address: regs[rd] = bp + immediate
+    // Format: [LEA3] [rd:8|unused:56] [immediate:64]
+    long long operands = *vm->pc++;
+    int rd;
+    DECODE_R(operands, rd);
+    long long offset = *vm->pc++;
+    
+    if (rd != REG_ZERO)
+        vm->regs[rd] = (long long)(vm->bp + offset);
+    return 0;
+}
+
+int op_I2F3_fn(JCC *vm) {
+    // Int to float: fregs[rd] = (double)regs[rs]
+    // Format: [I2F3] [rd:8|rs:8|unused:48]
+    long long operands = *vm->pc++;
+    int rd, rs;
+    DECODE_RR(operands, rd, rs);
+    
+    vm->fregs[rd] = (double)vm->regs[rs];
+    return 0;
+}
+
+int op_F2I3_fn(JCC *vm) {
+    // Float to int: regs[rd] = (long long)fregs[rs]
+    // Format: [F2I3] [rd:8|rs:8|unused:48]
+    long long operands = *vm->pc++;
+    int rd, rs;
+    DECODE_RR(operands, rd, rs);
+    
+    if (rd != REG_ZERO)
+        vm->regs[rd] = (long long)vm->fregs[rs];
+    return 0;
+}
+
+int op_JZ3_fn(JCC *vm) {
+    // Branch if zero: if (regs[rs] == 0) pc = target
+    // Format: [JZ3] [rs:8|unused:56] [target:64]
+    long long operands = *vm->pc++;
+    int rs;
+    DECODE_R(operands, rs);
+    long long target = *vm->pc++;
+    
+    if (vm->regs[rs] == 0)
+        vm->pc = (long long *)target;
+    return 0;
+}
+
+int op_JNZ3_fn(JCC *vm) {
+    // Branch if non-zero: if (regs[rs] != 0) pc = target
+    // Format: [JNZ3] [rs:8|unused:56] [target:64]
+    long long operands = *vm->pc++;
+    int rs;
+    DECODE_R(operands, rs);
+    long long target = *vm->pc++;
+    
+    if (vm->regs[rs] != 0)
+        vm->pc = (long long *)target;
+    return 0;
+}
+
+int op_NOT3_fn(JCC *vm) {
+    // Logical not: regs[rd] = !regs[rs]
+    // Format: [NOT3] [rd:8|rs:8|unused:48]
+    long long operands = *vm->pc++;
+    int rd, rs;
+    DECODE_RR(operands, rd, rs);
+    
+    if (rd != REG_ZERO)
+        vm->regs[rd] = !vm->regs[rs];
+    return 0;
+}
+
+int op_BNOT3_fn(JCC *vm) {
+    // Bitwise not: regs[rd] = ~regs[rs]
+    // Format: [BNOT3] [rd:8|rs:8|unused:48]
+    long long operands = *vm->pc++;
+    int rd, rs;
+    DECODE_RR(operands, rd, rs);
+    
+    if (rd != REG_ZERO)
+        vm->regs[rd] = ~vm->regs[rs];
+    return 0;
+}
+
+// ========== Register-Based Safety Opcodes ==========
+
+int op_CHKP3_fn(JCC *vm) {
+    // Check pointer validity (register-based version of CHKP)
+    // Format: [CHKP3] [rs:8|unused:56]
+    long long operands = *vm->pc++;
+    int rs;
+    DECODE_R(operands, rs);
+    long long ptr = vm->regs[rs];
+    
+    if (!(vm->flags & JCC_POINTER_CHECKS)) {
+        return 0;
+    }
+    
+    if (ptr == 0) {
+        printf("\n========== NULL POINTER DEREFERENCE ==========\n");
+        printf("Attempted to dereference NULL pointer\n");
+        printf("PC: 0x%llx (offset: %lld)\n",
+                (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+        printf("============================================\n");
+        return -1;
+    }
+    
+    // Check if pointer is in heap range
+    if (ptr >= (long long)vm->heap_seg && ptr < (long long)vm->heap_end) {
+        // Find allocation header - need to search backwards
+        AllocHeader *header = ((AllocHeader *)ptr) - 1;
+        
+        // Check if freed (UAF detection)
+        if ((vm->flags & JCC_UAF_DETECTION) && header->magic == 0xDEADBEEF && header->freed) {
+            printf("\n========== USE-AFTER-FREE DETECTED ==========\n");
+            printf("Attempted to access freed memory\n");
+            printf("Address:     0x%llx\n", ptr);
+            printf("Size:        %zu bytes\n", header->size);
+            printf("Allocated at PC offset: %lld\n", header->alloc_pc);
+            printf("Generation:  %d (freed)\n", header->generation);
+            printf("Current PC:  0x%llx (offset: %lld)\n",
+                    (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+            printf("============================================\n");
+            return -1;
+        }
+    }
+    
+    return 0;
+}
+
+int op_CHKA3_fn(JCC *vm) {
+    // Check pointer alignment (register-based version of CHKA)
+    // Format: [CHKA3] [rs:8|unused:56] [alignment:64]
+    long long operands = *vm->pc++;
+    int rs;
+    DECODE_R(operands, rs);
+    size_t alignment = (size_t)*vm->pc++;
+    long long ptr = vm->regs[rs];
+    
+    if (!(vm->flags & JCC_ALIGNMENT_CHECKS)) {
+        return 0;
+    }
+    
+    if (ptr == 0) {
+        return 0;  // NULL will be caught by CHKP3
+    }
+    
+    if (alignment > 1 && (ptr % alignment) != 0) {
+        printf("\n========== ALIGNMENT ERROR ==========\n");
+        printf("Pointer is misaligned for type\n");
+        printf("Address:       0x%llx\n", ptr);
+        printf("Required alignment: %zu bytes\n", alignment);
+        printf("Current PC:    0x%llx (offset: %lld)\n",
+                (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+        printf("=====================================\n");
+        return -1;
+    }
+    
+    return 0;
+}
+
+int op_CHKT3_fn(JCC *vm) {
+    // Check type on dereference (register-based version of CHKT)
+    // Format: [CHKT3] [rs:8|unused:56] [expected_type:64]
+    long long operands = *vm->pc++;
+    int rs;
+    DECODE_R(operands, rs);
+    int expected_type = (int)*vm->pc++;
+    long long ptr = vm->regs[rs];
+    
+    if (!(vm->flags & JCC_TYPE_CHECKS)) {
+        return 0;
+    }
+    
+    if (ptr == 0) {
+        return 0;  // NULL will be caught by CHKP3
+    }
+    
+    // Skip check for void* (TY_VOID) and generic pointers (TY_PTR)
+    if (expected_type == TY_VOID || expected_type == TY_PTR) {
+        return 0;
+    }
+    
+    // Only check heap allocations
+    if (ptr >= (long long)vm->heap_seg && ptr < (long long)vm->heap_end) {
+        AllocHeader *header = ((AllocHeader *)ptr) - 1;
+        
+        if (header->magic == 0xDEADBEEF) {
+            int actual_type = header->type_kind;
+            
+            if (actual_type != TY_VOID && actual_type != TY_PTR) {
+                if (actual_type != expected_type) {
+                    const char *type_names[] = {
+                        "void", "bool", "char", "short", "int", "long",
+                        "float", "double", "long double", "enum", "pointer",
+                        "function", "array", "vla", "struct", "union"
+                    };
+                    
+                    const char *expected_name = (expected_type >= 0 && expected_type < 16)
+                        ? type_names[expected_type] : "unknown";
+                    const char *actual_name = (actual_type >= 0 && actual_type < 16)
+                        ? type_names[actual_type] : "unknown";
+                    
+                    printf("\n========== TYPE MISMATCH DETECTED ==========\n");
+                    printf("Pointer type mismatch on dereference\n");
+                    printf("Address:       0x%llx\n", ptr);
+                    printf("Expected type: %s\n", expected_name);
+                    printf("Actual type:   %s\n", actual_name);
+                    printf("Allocated at PC offset: %lld\n", header->alloc_pc);
+                    printf("Current PC:    0x%llx (offset: %lld)\n",
+                            (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                    printf("============================================\n");
+                    return -1;
+                }
+            }
+        }
+    }
+    
+    return 0;
+}
