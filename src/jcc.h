@@ -190,7 +190,19 @@ extern "C" {
     X(STR_W)  /* *(int*)regs[rs] = regs[rd] (store word) */ \
     X(STR_D)  /* *(long long*)regs[rs] = regs[rd] (store dword) */ \
     X(FLDR)   /* fregs[rd] = *(double*)regs[rs] (float load) */ \
-    X(FSTR)   /* *(double*)regs[rs] = fregs[rd] (float store) */
+    X(FSTR)   /* *(double*)regs[rs] = fregs[rd] (float store) */ \
+    /* New register-based opcodes for accumulator removal */ \
+    X(LEA3)   /* rd = bp + immediate (local variable address) */ \
+    X(I2F3)   /* fregs[rd] = (double)regs[rs] (int to float) */ \
+    X(F2I3)   /* regs[rd] = (long long)fregs[rs] (float to int) */ \
+    X(JZ3)    /* if (regs[rs] == 0) pc = target (branch if zero) */ \
+    X(JNZ3)   /* if (regs[rs] != 0) pc = target (branch if non-zero) */ \
+    X(NOT3)   /* regs[rd] = !regs[rs] (logical not) */ \
+    X(BNOT3)  /* regs[rd] = ~regs[rs] (bitwise not) */ \
+    /* Register-based safety opcodes (read address from register) */ \
+    X(CHKP3)  /* Check pointer validity: regs[rs] (UAF, bounds) */ \
+    X(CHKA3)  /* Check alignment: regs[rs], immediate alignment */ \
+    X(CHKT3)  /* Check type: regs[rs], immediate TypeKind */
 
 /*!
  @enum JCC_OP

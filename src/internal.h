@@ -45,14 +45,25 @@
 
 // ========== Multi-Register VM Infrastructure ==========
 // Register file indices (RISC-V style naming)
+// Layout: 32 registers total
+//   0     - Zero register (writes discarded)
+//   1     - Return address
+//   2     - Stack pointer (unused - we have vm->sp)
+//   3-4   - Reserved
+//   5-9   - Temporaries T0-T4 (caller-saved)
+//   10-17 - Arguments/Return A0-A7 (caller-saved)
+//   18-25 - Saved S0-S7 (callee-saved, preserved across calls)
+//   26-31 - Temporaries T5-T10 (caller-saved)
+
 #define REG_ZERO  0   // Always zero (writes discarded)
 #define REG_RA    1   // Return address
 #define REG_SP    2   // Stack pointer (unused for now - we have vm->sp)
-#define REG_T0    5   // Temporary
+#define REG_T0    5   // Temporary (caller-saved)
 #define REG_T1    6   // Temporary
 #define REG_T2    7   // Temporary
 #define REG_T3    8   // Temporary
-#define REG_A0    10  // Argument/return value (maps to ax)
+#define REG_T4    9   // Temporary
+#define REG_A0    10  // Argument/return value
 #define REG_A1    11  // Argument
 #define REG_A2    12  // Argument
 #define REG_A3    13  // Argument
@@ -60,6 +71,20 @@
 #define REG_A5    15  // Argument
 #define REG_A6    16  // Argument
 #define REG_A7    17  // Argument
+#define REG_S0    18  // Saved (callee-saved)
+#define REG_S1    19  // Saved
+#define REG_S2    20  // Saved
+#define REG_S3    21  // Saved
+#define REG_S4    22  // Saved
+#define REG_S5    23  // Saved
+#define REG_S6    24  // Saved
+#define REG_S7    25  // Saved
+#define REG_T5    26  // Temporary (caller-saved)
+#define REG_T6    27  // Temporary
+#define REG_T7    28  // Temporary
+#define REG_T8    29  // Temporary
+#define REG_T9    30  // Temporary
+#define REG_T10   31  // Temporary
 #define NUM_REGS  32
 
 // Floating-point register file indices (for float/double arguments)
