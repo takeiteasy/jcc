@@ -169,17 +169,20 @@ void debugger_list_breakpoints(JCC *vm) {
 
 void debugger_print_registers(JCC *vm) {
     printf("\n=== Registers ===\n");
-    printf("  ax (int):   0x%016llx (%lld)\n", vm->ax, vm->ax);
-    printf("  fax (fp):   %f\n", vm->fax);
-    printf("  pc:         %p", (void*)vm->pc);
+    printf("  A0 (return):  0x%016llx (%lld)\n", vm->regs[REG_A0], vm->regs[REG_A0]);
+    printf("  FA0 (float):  %f\n", vm->fregs[FREG_A0]);
+    printf("  pc:           %p", (void*)vm->pc);
     if (vm->pc >= vm->text_seg && vm->pc < vm->text_ptr) {
         long long offset = (long long)vm->pc - (long long)vm->text_seg;
         printf(" (offset: %lld)", offset);
     }
     printf("\n");
-    printf("  bp:         %p\n", (void*)vm->bp);
-    printf("  sp:         %p\n", (void*)vm->sp);
-    printf("  cycle:      %lld\n", vm->cycle);
+    printf("  bp:           %p\n", (void*)vm->bp);
+    printf("  sp:           %p\n", (void*)vm->sp);
+    printf("  cycle:        %lld\n", vm->cycle);
+    // Print first few general registers
+    printf("  T0-T3:        %lld, %lld, %lld, %lld\n", 
+           vm->regs[REG_T0], vm->regs[REG_T1], vm->regs[REG_T2], vm->regs[REG_T3]);
     printf("\n");
 }
 
@@ -219,52 +222,6 @@ static int disassemble_instruction(long long *pc, long long *text_seg, long long
     int size = 1; // Default size (just opcode)
     
     switch (op) {
-        // 1 operand (opcode + operand) -> size 2 words
-        case LEA:
-        case IMM:
-        case JMP:
-        case CALL:
-        case JZ:
-        case JNZ:
-        case JMPT:
-        case ENT:
-        case ADJ:
-        case CHKB:
-        case CHKT:
-        case CHKI:
-        case MARKI:
-        case CHKA:
-        case SCOPEIN:
-        case SCOPEOUT:
-        case CHKL:
-        case MARKR:
-        case MARKW:
-            if (pc + 1 < text_end) {
-                printf(" %lld", pc[1]);
-            }
-            size = 2;
-            break;
-            
-        // 3 operands (opcode + 3 args) -> size 4 words
-        case MARKA:
-        case MARKP:
-             if (pc + 3 < text_end) {
-                printf(" %lld, %lld, %lld", pc[1], pc[2], pc[3]);
-             }
-             size = 4;
-             break;
-
-        // Multi-register opcodes (R format: 1 operand word with register encoding)
-        case AX2R:
-        case R2AX:
-        case POP3:
-            if (pc + 1 < text_end) {
-                int rd = (int)(pc[1] & 0xFF);
-                printf(" r%d", rd);
-            }
-            size = 2;
-            break;
-
         // Multi-register opcodes (RRR format: 1 operand word with 3 registers)
         case ADD3:
         case SUB3:
@@ -283,6 +240,9 @@ static int disassemble_instruction(long long *pc, long long *text_seg, long long
         case SGT3:
         case SGE3:
         case MOV3:
+        case NEG3:
+        case NOT3:
+        case BNOT3:
             if (pc + 1 < text_end) {
                 int rd = (int)(pc[1] & 0xFF);
                 int rs1 = (int)((pc[1] >> 8) & 0xFF);
@@ -294,6 +254,8 @@ static int disassemble_instruction(long long *pc, long long *text_seg, long long
 
         // Multi-register opcodes (RI format: 1 register word + 1 immediate word)
         case LI3:
+        case LEA3:
+        case ADDI3:
             if (pc + 2 < text_end) {
                 int rd = (int)(pc[1] & 0xFF);
                 long long imm = pc[2];
@@ -302,9 +264,31 @@ static int disassemble_instruction(long long *pc, long long *text_seg, long long
             size = 3;
             break;
 
+        // Control flow with operand
+        case JMP:
+        case CALL:
+        case JMPT:
+        case JMPI:
+        case ADJ:
+            if (pc + 1 < text_end) {
+                printf(" %lld", pc[1]);
+            }
+            size = 2;
+            break;
+
+        // JZ3/JNZ3: register + target
+        case JZ3:
+        case JNZ3:
+            if (pc + 2 < text_end) {
+                int rs = (int)(pc[1] & 0xFF);
+                printf(" r%d, %lld", rs, pc[2]);
+            }
+            size = 3;
+            break;
+
         // Register-based calling convention opcodes
         case ENT3:
-            // ENT3 now has 2 operands: [stack_size:32|param_count:32] [float_param_mask]
+            // ENT3 has 2 operands: [stack_size:32|param_count:32] [float_param_mask]
             if (pc + 2 < text_end) {
                 int stack_size = (int)(pc[1] & 0xFFFFFFFF);
                 int param_count = (int)((pc[1] >> 32) & 0xFFFFFFFF);
@@ -319,12 +303,87 @@ static int disassemble_instruction(long long *pc, long long *text_seg, long long
             size = 1;
             break;
 
-        case FAX2FR:
-        case FR2FAX:
-            // R format: single register operand
+        // Load/store opcodes (RR format)
+        case LDR_B:
+        case LDR_H:
+        case LDR_W:
+        case LDR_D:
+        case STR_B:
+        case STR_H:
+        case STR_W:
+        case STR_D:
+        case FLDR:
+        case FSTR:
             if (pc + 1 < text_end) {
                 int rd = (int)(pc[1] & 0xFF);
-                printf(" r%d", rd);
+                int rs = (int)((pc[1] >> 8) & 0xFF);
+                printf(" r%d, r%d", rd, rs);
+            }
+            size = 2;
+            break;
+
+        // Float operations (FRRR format)
+        case FADD3:
+        case FSUB3:
+        case FMUL3:
+        case FDIV3:
+        case FEQ3:
+        case FNE3:
+        case FLT3:
+        case FLE3:
+        case FGT3:
+        case FGE3:
+            if (pc + 1 < text_end) {
+                int rd = (int)(pc[1] & 0xFF);
+                int rs1 = (int)((pc[1] >> 8) & 0xFF);
+                int rs2 = (int)((pc[1] >> 16) & 0xFF);
+                printf(" f%d, f%d, f%d", rd, rs1, rs2);
+            }
+            size = 2;
+            break;
+
+        case FNEG3:
+        case I2F3:
+        case F2I3:
+        case FR2R:
+            if (pc + 1 < text_end) {
+                int rd = (int)(pc[1] & 0xFF);
+                int rs = (int)((pc[1] >> 8) & 0xFF);
+                printf(" r%d, r%d", rd, rs);
+            }
+            size = 2;
+            break;
+
+        // Safety opcodes with operand
+        case CHKB:
+        case CHKI:
+        case MARKI:
+        case SCOPEIN:
+        case SCOPEOUT:
+        case CHKL:
+        case MARKR:
+        case MARKW:
+            if (pc + 1 < text_end) {
+                printf(" %lld", pc[1]);
+            }
+            size = 2;
+            break;
+
+        case MARKA:
+        case MARKP:
+             if (pc + 3 < text_end) {
+                printf(" %lld, %lld, %lld", pc[1], pc[2], pc[3]);
+             }
+             size = 4;
+             break;
+
+        // CHKP3/CHKA3/CHKT3 (register-based safety)
+        case CHKP3:
+        case CHKA3:
+        case CHKT3:
+            if (pc + 1 < text_end) {
+                int rs = (int)(pc[1] & 0xFF);
+                printf(" r%d", rs);
             }
             size = 2;
             break;

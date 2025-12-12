@@ -272,7 +272,9 @@ void codegen(JCC *vm, Obj *prog);
 //
 
 void gen_function(JCC *vm, Obj *fn);
-void gen_expr(JCC *vm, Node *node);
+void gen(JCC *vm, Obj *prog);
+// Note: gen_expr is now static in codegen.c with signature:
+// static void gen_expr(JCC *vm, Node *node, int dest_reg);
 
 //
 // vm.c
