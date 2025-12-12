@@ -52,90 +52,43 @@ extern "C" {
 #endif
 
 #define OPS_X \
-    X(LEA) \
-    X(IMM) \
-    X(JMP) \
-    X(CALL) \
-    X(CALLI) \
-    X(JZ) \
-    X(JNZ) \
-    X(JMPT) \
-    X(JMPI) \
-    X(ENT) \
-    X(ADJ) \
-    X(LEV) \
-    X(LI) \
-    X(PUSH) \
-    X(OR) \
-    X(XOR) \
-    X(AND) \
-    X(EQ) \
-    X(NE) \
-    X(LT) \
-    X(GT) \
-    X(LE) \
-    X(GE) \
-    X(SHL) \
-    X(SHR) \
-    X(ADD) \
-    X(SUB) \
-    X(MUL) \
-    X(DIV) \
-    X(MOD) \
+    /* Control flow */ \
+    X(JMP)    /* Unconditional jump */ \
+    X(CALL)   /* Call function (direct) */ \
+    X(CALLI)  /* Call function (indirect via register) */ \
+    X(JMPT)   /* Jump table */ \
+    X(JMPI)   /* Indirect jump */ \
     /* VM memory operations (self-contained, no system calls) */ \
     X(MALC) \
     X(MFRE) \
     X(MCPY) \
     X(REALC) \
     X(CALC) \
-    /* Type conversion instructions */ \
-    /* Sign extend 1/2/4 bytes to 8 bytes */ \
-    X(SX1) \
-    X(SX2) \
-    X(SX4) \
-    /* Zero extend 1/2/4 bytes to 8 bytes */ \
-    X(ZX1) \
-    X(ZX2) \
-    X(ZX4) \
-    /* Floating-point instructions */ \
-    X(FLD) \
-    X(FST) \
-    X(FADD) \
-    X(FSUB) \
-    X(FMUL) \
-    X(FDIV) \
-    X(FNEG) \
-    X(FEQ) \
-    X(FNE) \
-    X(FLT) \
-    X(FLE) \
-    X(FGT) \
-    X(FGE) \
-    X(I2F) \
-    X(F2I) \
-    X(FPUSH) \
-    X(FPOP3) /* fregs[rd] = pop from stack (reinterpret bits as double) */ \
-    X(CALLF) /* Foreign function interface */  \
-    /* Memory safety opcodes */ \
-    X(CHKB) /* Check array bounds */ \
-    X(CHKP) /* Check pointer validity (UAF detection) */ \
-    X(CHKT) /* Check type on dereference */ \
-    X(CHKI) /* Check initialization */ \
-    X(MARKI) /* Mark as initialized */ \
-    X(MARKA) /* Mark address (track stack pointer for dangling detection) */ \
-    X(CHKA) /* Check alignment */ \
-    X(CHKPA) /* Check pointer arithmetic (invalid arithmetic detection) */ \
-    X(MARKP) /* Mark provenance (track pointer origin) */ \
-    /* Stack instrumentation opcodes */                             \
-    X(SCOPEIN) /* Mark scope entry (allocate/activate variables) */ \
+    /* Type conversion instructions (in-register) */ \
+    X(SX1)    /* Sign extend 1 byte to 8 bytes */ \
+    X(SX2)    /* Sign extend 2 bytes to 8 bytes */ \
+    X(SX4)    /* Sign extend 4 bytes to 8 bytes */ \
+    X(ZX1)    /* Zero extend 1 byte to 8 bytes */ \
+    X(ZX2)    /* Zero extend 2 bytes to 8 bytes */ \
+    X(ZX4)    /* Zero extend 4 bytes to 8 bytes */ \
+    X(CALLF)  /* Foreign function interface */ \
+    /* Memory safety opcodes (keep legacy for instrumentation) */ \
+    X(CHKB)   /* Check array bounds */ \
+    X(CHKI)   /* Check initialization */ \
+    X(MARKI)  /* Mark as initialized */ \
+    X(MARKA)  /* Mark address (track stack pointer for dangling detection) */ \
+    X(CHKPA)  /* Check pointer arithmetic (invalid arithmetic detection) */ \
+    X(MARKP)  /* Mark provenance (track pointer origin) */ \
+    /* Stack instrumentation opcodes */ \
+    X(SCOPEIN)  /* Mark scope entry (allocate/activate variables) */ \
     X(SCOPEOUT) /* Mark scope exit (invalidate variables, detect dangling pointers) */ \
-    X(CHKL) /* Check variable liveness before access */ \
-    X(MARKR) /* Mark variable read access */ \
-    X(MARKW) /* Mark variable write access */ \
+    X(CHKL)     /* Check variable liveness before access */ \
+    X(MARKR)    /* Mark variable read access */ \
+    X(MARKW)    /* Mark variable write access */ \
     /* Non-local jump instructions (setjmp/longjmp) */ \
-    X(SETJMP) /* Save execution context to jmp_buf, return 0 */ \
+    X(SETJMP)  /* Save execution context to jmp_buf, return 0 */ \
     X(LONGJMP) /* Restore execution context from jmp_buf, return val */ \
-    /* Multi-register opcodes (dual-mode refactor) */ \
+    /* Register-based arithmetic */ \
     X(ADD3)   /* rd = rs1 + rs2 */ \
     X(SUB3)   /* rd = rs1 - rs2 */ \
     X(MUL3)   /* rd = rs1 * rs2 */ \
@@ -146,41 +99,29 @@ extern "C" {
     X(XOR3)   /* rd = rs1 ^ rs2 */ \
     X(SHL3)   /* rd = rs1 << rs2 */ \
     X(SHR3)   /* rd = rs1 >> rs2 */ \
+    /* Register-based comparisons */ \
     X(SEQ3)   /* rd = (rs1 == rs2) */ \
     X(SNE3)   /* rd = (rs1 != rs2) */ \
     X(SLT3)   /* rd = (rs1 < rs2) */ \
     X(SGE3)   /* rd = (rs1 >= rs2) */ \
     X(SGT3)   /* rd = (rs1 > rs2) */ \
     X(SLE3)   /* rd = (rs1 <= rs2) */ \
+    /* Register operations */ \
     X(LI3)    /* rd = immediate */ \
     X(MOV3)   /* rd = rs1 */ \
-    /* Sync opcodes for bridging ax and register file */ \
-    X(AX2R)   /* rd = ax (copy accumulator to register) */ \
-    X(R2AX)   /* ax = rs1 (copy register to accumulator) */ \
-    X(POP3)   /* rd = pop from stack (for stack→register bridging) */ \
-    /* Register-based calling convention opcodes */ \
-    X(ENT3)   /* Enter function: stack_size|param_count, copies REG_A0-An to stack */ \
-    X(LEV3)   /* Leave function: copies ax to REG_A0, returns */ \
-    /* Floating-point register file opcodes */ \
-    X(FAX2FR) /* fregs[rd] = fax (copy float accumulator to float register) */ \
-    X(FR2FAX) /* fax = fregs[rs1] (copy float register to float accumulator) */ \
-    /* 3-register floating-point arithmetic */ \
-    X(FADD3)  /* fregs[rd] = fregs[rs1] + fregs[rs2] */ \
-    X(FSUB3)  /* fregs[rd] = fregs[rs1] - fregs[rs2] */ \
-    X(FMUL3)  /* fregs[rd] = fregs[rs1] * fregs[rs2] */ \
-    X(FDIV3)  /* fregs[rd] = fregs[rs1] / fregs[rs2] */ \
-    X(FNEG3)  /* fregs[rd] = -fregs[rs1] */ \
-    /* 3-register floating-point comparisons */ \
-    X(FEQ3)   /* rd = (fregs[rs1] == fregs[rs2]) */ \
-    X(FNE3)   /* rd = (fregs[rs1] != fregs[rs2]) */ \
-    X(FLT3)   /* rd = (fregs[rs1] < fregs[rs2]) */ \
-    X(FLE3)   /* rd = (fregs[rs1] <= fregs[rs2]) */ \
-    X(FGT3)   /* rd = (fregs[rs1] > fregs[rs2]) */ \
-    X(FGE3)   /* rd = (fregs[rs1] >= fregs[rs2]) */ \
-    /* Internal operations opcodes */ \
-    X(ADDI3)  /* rd = rs1 + immediate (register + constant offset) */ \
     X(NEG3)   /* rd = -rs1 (integer unary negation) */ \
-    /* Register-based load/store opcodes */ \
+    X(NOT3)   /* rd = !rs (logical not) */ \
+    X(BNOT3)  /* rd = ~rs (bitwise not) */ \
+    X(ADDI3)  /* rd = rs1 + immediate */ \
+    X(LEA3)   /* rd = bp + immediate (local variable address) */ \
+    /* Register-based control flow */ \
+    X(JZ3)    /* if (regs[rs] == 0) pc = target */ \
+    X(JNZ3)   /* if (regs[rs] != 0) pc = target */ \
+    /* Register-based function frame */ \
+    X(ENT3)   /* Enter function: stack_size|param_count */ \
+    X(LEV3)   /* Leave function: return value in REG_A0 */ \
+    X(ADJ)    /* Adjust stack pointer */ \
+    /* Register-based load/store */ \
     X(LDR_B)  /* regs[rd] = *(char*)regs[rs] (load byte, sign-extend) */ \
     X(LDR_H)  /* regs[rd] = *(short*)regs[rs] (load halfword, sign-extend) */ \
     X(LDR_W)  /* regs[rd] = *(int*)regs[rs] (load word, sign-extend) */ \
@@ -189,18 +130,25 @@ extern "C" {
     X(STR_H)  /* *(short*)regs[rs] = regs[rd] (store halfword) */ \
     X(STR_W)  /* *(int*)regs[rs] = regs[rd] (store word) */ \
     X(STR_D)  /* *(long long*)regs[rs] = regs[rd] (store dword) */ \
-    X(FLDR)   /* fregs[rd] = *(double*)regs[rs] (float load) */ \
-    X(FSTR)   /* *(double*)regs[rs] = fregs[rd] (float store) */ \
-    /* New register-based opcodes for accumulator removal */ \
-    X(LEA3)   /* rd = bp + immediate (local variable address) */ \
-    X(I2F3)   /* fregs[rd] = (double)regs[rs] (int to float) */ \
-    X(F2I3)   /* regs[rd] = (long long)fregs[rs] (float to int) */ \
-    X(JZ3)    /* if (regs[rs] == 0) pc = target (branch if zero) */ \
-    X(JNZ3)   /* if (regs[rs] != 0) pc = target (branch if non-zero) */ \
-    X(NOT3)   /* regs[rd] = !regs[rs] (logical not) */ \
-    X(BNOT3)  /* regs[rd] = ~regs[rs] (bitwise not) */ \
-    /* Register-based safety opcodes (read address from register) */ \
-    X(CHKP3)  /* Check pointer validity: regs[rs] (UAF, bounds) */ \
+    /* Floating-point register operations */ \
+    X(FLDR)   /* fregs[rd] = *(double*)regs[rs] */ \
+    X(FSTR)   /* *(double*)regs[rs] = fregs[rd] */ \
+    X(FADD3)  /* fregs[rd] = fregs[rs1] + fregs[rs2] */ \
+    X(FSUB3)  /* fregs[rd] = fregs[rs1] - fregs[rs2] */ \
+    X(FMUL3)  /* fregs[rd] = fregs[rs1] * fregs[rs2] */ \
+    X(FDIV3)  /* fregs[rd] = fregs[rs1] / fregs[rs2] */ \
+    X(FNEG3)  /* fregs[rd] = -fregs[rs1] */ \
+    X(FEQ3)   /* rd = (fregs[rs1] == fregs[rs2]) */ \
+    X(FNE3)   /* rd = (fregs[rs1] != fregs[rs2]) */ \
+    X(FLT3)   /* rd = (fregs[rs1] < fregs[rs2]) */ \
+    X(FLE3)   /* rd = (fregs[rs1] <= fregs[rs2]) */ \
+    X(FGT3)   /* rd = (fregs[rs1] > fregs[rs2]) */ \
+    X(FGE3)   /* rd = (fregs[rs1] >= fregs[rs2]) */ \
+    X(I2F3)   /* fregs[rd] = (double)regs[rs] */ \
+    X(F2I3)   /* regs[rd] = (long long)fregs[rs] */ \
+    X(FR2R)   /* regs[rd] = *(long long*)&fregs[rs] (bit-pattern transfer) */ \
+    /* Register-based safety opcodes */ \
+    X(CHKP3)  /* Check pointer validity: regs[rs] */ \
     X(CHKA3)  /* Check alignment: regs[rs], immediate alignment */ \
     X(CHKT3)  /* Check type: regs[rs], immediate TypeKind */
 
@@ -1222,6 +1170,7 @@ typedef struct Compiler {
     long current_switch_min;            // Minimum case value
     long current_switch_size;           // Jump table size
     Node *current_switch_default;       // Default case node
+    long long *current_default_patch;   // Patch location for default case jump
 
     // Switch statement code generation (for sparse switches)
     long long *current_sparse_case_table;   // Array of jump addresses
@@ -1265,11 +1214,9 @@ typedef struct Compiler {
              `JCC *` as the first parameter.
 */
 struct JCC {
-    // VM Registers
-    long long ax;              // Accumulator register (integer)
-    double fax;                // Floating-point accumulator register
+    // VM Registers (pure register-based architecture)
     long long regs[32];        // General-purpose register file (NUM_REGS)
-    double fregs[32];          // Floating-point register file (for float args)
+    double fregs[32];          // Floating-point register file
     long long *pc;             // Program counter
     long long *bp;             // Base pointer (frame pointer)
     long long *sp;             // Stack pointer

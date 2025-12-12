@@ -66,19 +66,17 @@ static int eval1(JCC *vm) {
 
     // Debug printing
     if (vm->debug_vm) {
-        printf("%lld> %.5s", vm->cycle,
-                &"LEA  ,IMM  ,JMP  ,CALL ,CALI ,JZ   ,JNZ  ,JMPT ,JMPI ,ENT  ,ADJ  ,LEV  ,LI   ,LC   ,LS   ,LW   ,SI   ,SC   ,SS   ,SW   ,PUSH ,"
-                "OR   ,XOR  ,AND  ,EQ   ,NE   ,LT   ,GT   ,LE   ,GE   ,SHL  ,SHR  ,ADD  ,SUB  ,MUL  ,DIV  ,MOD  ,"
-                "MALC ,MFRE ,MCPY ,"
-                "SX1  ,SX2  ,SX4  ,ZX1  ,ZX2  ,ZX4  ,"
-                "FLD  ,FST  ,FADD ,FSUB ,FMUL ,FDIV ,FNEG ,FEQ  ,FNE  ,FLT  ,FLE  ,FGT  ,FGE  ,I2F  ,F2I  ,FPSH ,"
-                "CALLF,CHKB ,CHKP ,CHKT ,CHKI ,MARKI,MARKA,CHKA ,CHKPA,MARKP,"
-                "SCPIN,SCPOT,CHKL ,MARKR,MARKW,"
-                "SETJP,LONJP"[op * 6]);
-        if (op <= ADJ || op == JMPT || op == CHKB || op == CHKT || op == CHKI || op == MARKI || op == MARKA || op == CHKA || op == MARKP || op == SCOPEIN || op == SCOPEOUT || op == CHKL || op == MARKR || op == MARKW)
-            printf(" %lld\n", *vm->pc);
-        else
-            printf("\n");
+        // Print opcode name (simplified for new opcode set)
+        static const char *names[] = {
+#define X(NAME) #NAME,
+            OPS_X
+#undef X
+        };
+        if (op >= 0 && op < (int)(sizeof(names)/sizeof(names[0]))) {
+            printf("%lld> %s\n", vm->cycle, names[op]);
+        } else {
+            printf("%lld> OP_%d\n", vm->cycle, op);
+        }
     }
 
     goto *op_table[op];
@@ -92,9 +90,9 @@ int vm_eval(JCC *vm) {
     int result = 0;
     vm->cycle = 0;
     while ((result = eval1(vm)) == 0) {
-        // Check if program has exited (pc set to NULL by LEV)
+        // Check if program has exited (pc set to NULL by LEV3)
         if (vm->pc == NULL || vm->pc == 0) {
-            return (int)vm->ax;
+            return (int)vm->regs[REG_A0];  // Return value in REG_A0
         }
     }
     return result;
