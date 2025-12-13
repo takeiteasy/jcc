@@ -116,7 +116,8 @@ void cc_init(JCC *vm, uint32_t flags) {
 
     // Return buffer pool will be allocated in data segment during codegen
     vm->compiler.return_buffer_size = 1024;
-    vm->compiler.return_buffer_index = 0;
+    vm->compiler.return_buffer_index = 0;  // Compile-time index (unused with RETBUF)
+    vm->runtime_return_buffer_index = 0;   // Runtime rotation index for RETBUF opcode
     for (int i = 0; i < RETURN_BUFFER_POOL_SIZE; i++) {
         vm->compiler.return_buffer_pool[i] = NULL;  // Will be set to data segment locations
     }

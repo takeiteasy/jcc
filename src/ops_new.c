@@ -1635,6 +1635,18 @@ int op_CALLF_fn(JCC *vm) {
     return 0;
 }
 
+// ========== Struct Return Buffer Support ==========
+
+int op_RETBUF_fn(JCC *vm) {
+    // Get next return buffer from rotating pool at runtime
+    // This ensures chained struct-returning calls (e.g., f(g(), h()))
+    // get different buffers automatically
+    int idx = vm->runtime_return_buffer_index;
+    vm->runtime_return_buffer_index = (idx + 1) % RETURN_BUFFER_POOL_SIZE;
+    vm->regs[REG_A0] = (long long)vm->compiler.return_buffer_pool[idx];
+    return 0;
+}
+
 // ========== Random Canary Generation ==========
 
 long long generate_random_canary(void) {
