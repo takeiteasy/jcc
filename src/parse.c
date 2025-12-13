@@ -3863,6 +3863,18 @@ static Token *function(JCC *vm, Token *tok, Type *basety, VarAttr *attr) {
         error_tok(vm, ty->name_pos, "function name omitted");
     char *name_str = get_ident(vm, ty->name);
 
+    // Check if this is a nested function (defined inside another function)
+    Obj *parent_fn = vm->compiler.current_fn;
+    bool is_nested = (parent_fn != NULL);
+    Obj *saved_locals = NULL;
+    int saved_nesting_depth = 0;
+    
+    if (is_nested) {
+        // Save parent's locals - we're about to start a new locals chain
+        saved_locals = vm->compiler.locals;
+        saved_nesting_depth = vm->compiler.fn_nesting_depth;
+    }
+
     Obj *fn = find_func(vm, name_str, ty->name->len);
     if (fn) {
         // Redeclaration
@@ -3882,6 +3894,19 @@ static Token *function(JCC *vm, Token *tok, Type *basety, VarAttr *attr) {
         fn->is_constexpr = attr->is_constexpr;
     }
 
+    // Set up nested function tracking
+    if (is_nested) {
+        fn->parent_fn = parent_fn;
+        fn->is_nested = true;
+        fn->nesting_depth = vm->compiler.fn_nesting_depth + 1;
+        // Nested functions are implicitly static (not visible outside)
+        fn->is_static = true;
+    } else {
+        fn->parent_fn = NULL;
+        fn->is_nested = false;
+        fn->nesting_depth = 0;
+    }
+
     fn->is_root = !(fn->is_static && fn->is_inline);
 
     if (consume(vm, &tok, tok, ";"))
@@ -3889,8 +3914,21 @@ static Token *function(JCC *vm, Token *tok, Type *basety, VarAttr *attr) {
 
     vm->compiler.current_fn = fn;
     vm->compiler.locals = NULL;
+    if (is_nested)
+        vm->compiler.fn_nesting_depth++;
+    
     enter_scope(vm);
+    
     create_param_lvars(vm, ty->params);
+
+    // For nested functions, create a hidden __static_link parameter
+    // This holds a pointer to the parent function's stack frame (bp)
+    // IMPORTANT: This must be added AFTER create_param_lvars because new_lvar prepends
+    // to the locals list. We want __static_link to be at the HEAD of the list (offset -1)
+    // to match where ENT3 spills REG_A0.
+    if (is_nested) {
+        new_lvar(vm, "__static_link", 13, pointer_to(vm, ty_void));
+    }
 
     // Note: Struct/union returns are handled via return_buffer in codegen.c
     // The hidden parameter approach was incomplete (caller never provided it),
@@ -3921,6 +3959,18 @@ static Token *function(JCC *vm, Token *tok, Type *basety, VarAttr *attr) {
     fn->locals = vm->compiler.locals;
     leave_scope(vm);
     resolve_goto_labels(vm);
+    
+    // Restore parent function context if this was a nested function
+    if (is_nested) {
+        vm->compiler.current_fn = parent_fn;
+        vm->compiler.locals = saved_locals;
+        vm->compiler.fn_nesting_depth = saved_nesting_depth;
+    } else {
+        // CRITICAL: Reset current_fn to NULL for top-level functions!
+        // Otherwise the next top-level function will incorrectly think it's nested.
+        vm->compiler.current_fn = NULL;
+    }
+    
     return tok;
 }
 

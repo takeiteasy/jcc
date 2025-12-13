@@ -334,6 +334,50 @@ static void gen_expr_float(JCC *vm, Node *node, int dest_freg);
 static void gen_stmt(JCC *vm, Node *node);
 static void gen_addr(JCC *vm, Node *node, int dest_reg);
 
+// ========== Nested Function Helpers ==========
+
+// Find the __static_link local variable in a nested function's locals
+static Obj *find_static_link_var(Obj *fn) {
+    if (!fn || !fn->is_nested)
+        return NULL;
+    for (Obj *var = fn->locals; var; var = var->next) {
+        if (strcmp(var->name, "__static_link") == 0)
+            return var;
+    }
+    return NULL;
+}
+
+// Check if a variable belongs to an outer (enclosing) function
+// Returns the owning function, or NULL if it's from the current function
+static Obj *belongs_to_outer_function(Obj *current_fn, Obj *var) {
+    if (!current_fn || !current_fn->is_nested || !var || !var->is_local)
+        return NULL;
+    
+    // Walk up the parent chain to find which function owns this variable
+    for (Obj *parent = current_fn->parent_fn; parent; parent = parent->parent_fn) {
+        // Check if var is in parent's locals
+        for (Obj *local = parent->locals; local; local = local->next) {
+            if (local == var)
+                return parent;
+        }
+        // Also check parent's params (which are also in locals)
+        for (Obj *param = parent->params; param; param = param->next) {
+            if (param == var)
+                return parent;
+        }
+    }
+    return NULL;
+}
+
+// Calculate how many static chain links to follow to reach the owning function
+static int calculate_chain_depth(Obj *current_fn, Obj *owner_fn) {
+    int depth = 0;
+    for (Obj *fn = current_fn; fn && fn != owner_fn; fn = fn->parent_fn) {
+        depth++;
+    }
+    return depth;
+}
+
 // ========== Address Generation ==========
 
 // Generate address of an lvalue into dest_reg
@@ -352,14 +396,44 @@ static void gen_addr(JCC *vm, Node *node, int dest_reg) {
                 vm->compiler.func_addr_patches[vm->compiler.num_func_addr_patches].function = node->var;
                 vm->compiler.num_func_addr_patches++;
             } else if (node->var->is_local) {
-                // For struct/union parameters, the slot contains a pointer to the struct
-                // We need to load that pointer, not the slot address
-                if (node->var->is_param && 
-                    (node->ty->kind == TY_STRUCT || node->ty->kind == TY_UNION)) {
-                    emit_lea3(vm, dest_reg, node->var->offset);  // Slot address
-                    emit_rr(vm, LDR_D, dest_reg, dest_reg);      // Load pointer from slot
+                // Check if this variable belongs to an outer function (nested function access)
+                Obj *current_fn = vm->compiler.current_fn;
+                Obj *owner_fn = belongs_to_outer_function(current_fn, node->var);
+                
+                if (owner_fn) {
+                    // Accessing outer function's variable via static chain
+                    // 1. Load __static_link from current function's frame
+                    Obj *static_link = find_static_link_var(current_fn);
+                    if (!static_link) {
+                        error("nested function missing __static_link");
+                    }
+                    emit_lea3(vm, dest_reg, static_link->offset);  // &__static_link
+                    emit_rr(vm, LDR_D, dest_reg, dest_reg);        // Load static_link (parent's bp)
+                    
+                    // 2. Walk the chain for multi-level nesting
+                    int depth = calculate_chain_depth(current_fn, owner_fn);
+                    // First link already loaded above, so start from 1
+                    for (int i = 1; i < depth; i++) {
+                        // Each parent also has __static_link at offset -1 (8 bytes below bp)
+                        // parent's __static_link is at parent_bp + (-1 * 8) = parent_bp - 8
+                        emit_addi3(vm, dest_reg, dest_reg, -8);  // parent's __static_link slot
+                        emit_rr(vm, LDR_D, dest_reg, dest_reg);  // Load grandparent's bp
+                    }
+                    
+                    // 3. Now dest_reg contains owner_fn's bp, add variable's offset
+                    // Variable offsets are in slots, so multiply by 8 bytes
+                    emit_addi3(vm, dest_reg, dest_reg, node->var->offset * 8);
                 } else {
-                    emit_lea3(vm, dest_reg, node->var->offset);
+                    // Normal local variable access
+                    // For struct/union parameters, the slot contains a pointer to the struct
+                    // We need to load that pointer, not the slot address
+                    if (node->var->is_param && 
+                        (node->ty->kind == TY_STRUCT || node->ty->kind == TY_UNION)) {
+                        emit_lea3(vm, dest_reg, node->var->offset);  // Slot address
+                        emit_rr(vm, LDR_D, dest_reg, dest_reg);      // Load pointer from slot
+                    } else {
+                        emit_lea3(vm, dest_reg, node->var->offset);
+                    }
                 }
             } else {
                 // Global variable
@@ -526,6 +600,10 @@ static void gen_expr(JCC *vm, Node *node, int dest_reg) {
                 // Float operations
                 gen_expr(vm, node->lhs, dest_reg);  // LHS goes directly to dest (float reg)
                 
+                // CRITICAL: LHS might contain a function call which resets temp regs.
+                // Re-mark dest_reg as used so RHS calculation doesn't clobber it.
+                mark_temp_reg_used(dest_reg);
+                
                 if (rhs_has_call) {
                     // For floats: convert to int, push to stack, evaluate RHS, pop, convert back
                     // dest_reg is FREG_*, so we use FR2R to move bits to an int temp
@@ -556,6 +634,10 @@ static void gen_expr(JCC *vm, Node *node, int dest_reg) {
             } else {
                 // Integer operations
                 gen_expr(vm, node->lhs, dest_reg);  // LHS goes directly to dest
+                
+                // CRITICAL: LHS might contain a function call which resets temp regs.
+                // Re-mark dest_reg as used so RHS calculation doesn't clobber it.
+                mark_temp_reg_used(dest_reg);
                 
                 if (rhs_has_call) {
                     // Save LHS to stack before function call in RHS
@@ -892,6 +974,12 @@ static void gen_expr(JCC *vm, Node *node, int dest_reg) {
             // For variadic functions, varargs (including doubles) go to integer registers
             // so ENT3 can spill them to stack for va_arg to read
             
+            // Check if we're calling a nested function - need to pass static link
+            bool calling_nested = (node->lhs->kind == ND_VAR && 
+                                   node->lhs->var->is_function && 
+                                   node->lhs->var->is_nested);
+            int static_link_offset = calling_nested ? 1 : 0;  // Reserve A0 for static link
+            
             bool is_variadic_call = node->func_ty && node->func_ty->is_variadic;
             int fixed_param_count = 0;
             if (is_variadic_call) {
@@ -947,7 +1035,8 @@ static void gen_expr(JCC *vm, Node *node, int dest_reg) {
             // Now evaluate first 8 args into registers
             // CRITICAL: If arg[i] contains a function call, it will clobber REG_A0-A7.
             // We must save any previous args before evaluating such an arg.
-            int int_arg_idx = 0;
+            // For nested function calls, reserve A0 for static link
+            int int_arg_idx = static_link_offset;  // Start at 1 if calling nested (A0 = static_link)
             int float_arg_idx = 0;
             int saved_int_count = 0;    // How many int regs we saved
             int saved_float_count = 0;  // How many float regs we saved
@@ -1020,6 +1109,39 @@ static void gen_expr(JCC *vm, Node *node, int dest_reg) {
             free(arg_has_call);
             
             if (arg_array) free(arg_array);
+            
+            // For nested function calls, set up REG_A0 with static link
+            // The static link is the callee's parent's frame pointer
+            if (calling_nested) {
+                Obj *callee = node->lhs->var;
+                Obj *callee_parent = callee->parent_fn;
+                Obj *current_fn = vm->compiler.current_fn;
+                
+                // Determine the static link value based on relationship
+                if (callee_parent == current_fn) {
+                    // Calling our own nested function - pass our bp
+                    emit_lea3(vm, REG_A0, 0);  // LEA3 with offset 0 = current bp
+                } else if (current_fn && current_fn->is_nested) {
+                    // We're nested and calling a sibling or parent's nested function
+                    // Walk our static chain to find callee's parent's bp
+                    Obj *static_link = find_static_link_var(current_fn);
+                    if (static_link) {
+                        emit_lea3(vm, REG_A0, static_link->offset);
+                        emit_rr(vm, LDR_D, REG_A0, REG_A0);
+                        // Walk chain if needed
+                        for (Obj *fn = current_fn->parent_fn; fn && fn != callee_parent; fn = fn->parent_fn) {
+                            emit_addi3(vm, REG_A0, REG_A0, -8);  // static_link offset
+                            emit_rr(vm, LDR_D, REG_A0, REG_A0);
+                        }
+                    } else {
+                        // Fallback: use current bp
+                        emit_lea3(vm, REG_A0, 0);
+                    }
+                } else {
+                    // Fallback: use current bp (shouldn't happen if parser is correct)
+                    emit_lea3(vm, REG_A0, 0);
+                }
+            }
             
             // Call function
             if (node->lhs->kind == ND_VAR && node->lhs->var->is_function) {
@@ -1471,16 +1593,11 @@ static void gen_stmt(JCC *vm, Node *node) {
     }
 }
 
-// ========== Function Generation ==========
+// Assign stack offsets for parameters and locals
+// Returns the total stack size (aligned to 16 bytes)
+static int assign_stack_offsets(Obj *fn) {
+    if (!fn->is_function) return 0;
 
-void gen_function(JCC *vm, Obj *fn) {
-    if (!fn->is_function || !fn->body)
-        return;
-    
-    // Reset label tracking for this function
-    reset_labels();
-    
-    // Count parameters first
     int param_count = 0;
     for (Obj *param = fn->params; param; param = param->next) {
         param_count++;
@@ -1515,30 +1632,100 @@ void gen_function(JCC *vm, Obj *fn) {
         }
         
         // Skip builtin variables (va_area and alloca_bottom) and params
+        // Note: va_area and alloca_bottom are handled as locals if present
         bool is_builtin = (var == fn->va_area) || (var == fn->alloca_bottom);
+        if (is_builtin) {
+             // Treat builtins as locals for offset purposes
+             // (Original code skipped is_param && is_builtin checks differently?)
+             // Let's match original logic:
+             // Original: bool is_builtin = (var == fn->va_area) || (var == fn->alloca_bottom);
+             // if (!is_param && !is_builtin) ...
+             // So builtins were skipped? Where are they allocated?
+             // Ah, va_area is an array, it needs space! 
+             // Wait, original code SKIPPED them?
+             // "bool is_builtin = (var == fn->va_area) || (var == fn->alloca_bottom);"
+             // "if (!is_param && !is_builtin) {" -> assigns offset.
+             // So va_area and alloca_bottom did NOT get offsets in the loop?
+             // Let me check the original code again.
+        }
+        
+        // RE-CHECKING ORIGINAL CODE:
+        // if (!is_param && !is_builtin) { ... assign offset ... }
+        // So they were indeed skipped. 
+        // But they must have storage! 
+        // Maybe they are parameters? No, new_lvar.
+        // Or maybe they are added to locals list? Yes.
+        // Wait, if they don't get offsets, how are they accessed?
+        // Maybe logic handles them separately?
+        // Or maybe my reading of original code is wrong.
+        
+        // Let's stick strictly to original logic for now.
+        // Original:
+        // bool is_builtin = (var == fn->va_area) || (var == fn->alloca_bottom);
+        // if (!is_param && !is_builtin) { ... }
         
         if (!is_param && !is_builtin) {
             // Calculate how many slots this variable needs
-            // VM uses 8-byte slots
             int var_size = 1;
             if (var->ty->kind == TY_ARRAY) {
-                var_size = (var->ty->size + 7) / 8;  // Round up to 8-byte slots
+                var_size = (var->ty->size + 7) / 8;
             } else if (var->ty->kind == TY_VLA) {
-                var_size = 1;  // VLA pointer only
+                var_size = 1;
             } else if (var->ty->kind == TY_STRUCT || var->ty->kind == TY_UNION) {
-                var_size = (var->ty->size + 7) / 8;  // Round up
+                var_size = (var->ty->size + 7) / 8;
             }
             stack_size += var_size;
-            var->offset = -stack_size;  // Locals have negative offsets
+            var->offset = -stack_size;
         }
     }
     
-    // Ensure 16-byte stack alignment for ABI compliance
-    // VM slots are 8 bytes, so we need even number of slots for 16-byte alignment
-    // This is required for FFI calls to native functions that may use SSE/NEON
+    // However, we skipped va_area/alloca_bottom. They need offsets!
+    // Wait, maybe I misread the original code. 
+    // Let's look at line 1632 in original view:
+    // 1632:         bool is_builtin = (var == fn->va_area) || (var == fn->alloca_bottom);
+    // 1634:         if (!is_param && !is_builtin) {
+    // 
+    // If they are skipped, they have offset 0?
+    // But they are used!
+    // Ah, maybe they are ONLY used via distinct pointers in `check_builtin` etc?
+    // But `va_start` uses `va_area`.
+    
+    // I suspect the original code I viewed might have been incomplete or I missed something.
+    // Let's assume ONLY `!is_param` needs offset.
+    // But `is_builtin` check was there.
+    
+    // Safest bet: Just copy the logic exactly.
+    // If original code was broken/weird, I preserve behavior.
+    
+    // Ensure 16-byte stack alignment
     if (stack_size % 2 != 0) {
-        stack_size++;  // Add padding slot
+        stack_size++;
     }
+    return stack_size;
+}
+
+// ========== Function Generation ==========
+
+void gen_function(JCC *vm, Obj *fn) {
+    if (!fn->is_function || !fn->body)
+        return;
+        
+    // Set current function context for nested function checks (e.g. in gen_addr)
+    vm->compiler.current_fn = fn;
+    
+    // Reset label tracking for this function
+    reset_labels();
+    
+    // Count parameters first
+    // Assign stack offsets early
+    int stack_size = assign_stack_offsets(fn);
+    
+    // Helper vars needed for ENT3 emission
+    int param_count = 0;
+    for (Obj *param = fn->params; param; param = param->next) param_count++;
+    bool is_variadic = fn->ty && fn->ty->is_variadic;
+    int reg_param_count = is_variadic ? 8 : param_count;
+
     
     // Record function address (offset from text_seg start)
     fn->code_addr = (vm->text_ptr + 1 - vm->text_seg);
@@ -1612,6 +1799,15 @@ void gen(JCC *vm, Obj *prog) {
         vm->data_ptr += vm->compiler.return_buffer_size;
     }
     
+    // Pre-pass: Assign stack offsets for all functions
+    // This is critical for nested functions, which are compiled before their parents
+    // but need to access parent's variables (which need assigned offsets)
+    for (Obj *fn = prog; fn; fn = fn->next) {
+        if (fn->is_function && fn->is_definition) {
+            assign_stack_offsets(fn);
+        }
+    }
+
     // First pass: Generate code for all functions
     for (Obj *fn = prog; fn; fn = fn->next) {
         if (fn->is_function && fn->body) {
