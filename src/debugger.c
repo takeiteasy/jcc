@@ -388,6 +388,50 @@ static int disassemble_instruction(long long *pc, long long *text_seg, long long
             size = 2;
             break;
 
+        // PSH3/POP3 (register-based stack operations)
+        case PSH3:
+        case POP3:
+            if (pc + 1 < text_end) {
+                int rs = (int)(pc[1] & 0xFF);
+                printf(" r%d", rs);
+            }
+            size = 2;
+            break;
+            
+        // Type conversion
+        case SX1:
+        case SX2:
+        case SX4:
+        case ZX1:
+        case ZX2:
+        case ZX4:
+            if (pc + 1 < text_end) {
+                int rd = (int)(pc[1] & 0xFF);
+                int rs = (int)((pc[1] >> 8) & 0xFF);
+                printf(" r%d, r%d", rd, rs);
+            }
+            size = 2;
+            break;
+
+        // CALLI (indirect call via register)
+        case CALLI:
+            if (pc + 1 < text_end) {
+                int rs = (int)(pc[1] & 0xFF);
+                printf(" r%d", rs);
+            }
+            size = 2;
+            break;
+
+        // R2FR (int to float bit transfer - already covered by FR2R case)
+        case R2FR:
+            if (pc + 1 < text_end) {
+                int rd = (int)(pc[1] & 0xFF);
+                int rs = (int)((pc[1] >> 8) & 0xFF);
+                printf(" f%d, r%d", rd, rs);
+            }
+            size = 2;
+            break;
+
         default:
             // 0 operands (size 1)
             size = 1;
