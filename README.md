@@ -19,6 +19,9 @@ See [here](https://takeiteasy.github.io/jcc) for some basic documentation on the
 - Tonnes of memory safety features (see [SAFETY.md](./SAFETY.md))
   - Includes preset safety levels, `-0, -1, -2, 3` (0 is no safety, and is default)
   - Safety features come with an overhead
+- Bytecode optimization passes (see [OPTIMIZATION.md](./OPTIMIZATION.md))
+  - `--optimize[=LEVEL]` with levels 0-3 (disabled by default)
+  - Constant folding, peephole optimization, dead code elimination
 - Optional libcurl integration, include headers from URL
   - `#include <https://raw.githubusercontent.com/user/repo/main/header.h>`
   - Build with `make JCC_HAS_CURL=1`
@@ -203,8 +206,6 @@ JCC has a custom standard library that is located in `include`. It is just a col
   - No plans for any other systems, but will accept patches
 - Support for pthread + internal thread support
   - Thread safety features (race condition checks, etc)
-- Optimisation pass for bytecode
-  - Peephole, code folding, dead code elimination, etc
 - Hot reloading for FFI functions + compiled functions?
 - Multithreaded parser?
 

@@ -70,6 +70,13 @@ static void usage(const char *argv0, int exit_code) {
     printf("\nPreprocessor Options:\n");
     printf("\t   --embed-limit=SIZE        Set #embed file size warning limit (e.g., 50MB, 100mb, default: 10MB)\n");
     printf("\t   --embed-hard-limit        Make #embed limit a hard error instead of warning\n");
+    printf("\nOptimization Levels:\n");
+    printf("\t   --optimize[=LEVEL]        Enable bytecode optimization (default: disabled)\n");
+    printf("\t                             LEVEL: 0=none, 1=basic, 2=standard, 3=aggressive\n");
+    printf("\t                             -O0: No optimization\n");
+    printf("\t                             -O1: Constant folding only\n");
+    printf("\t                             -O2: Constant folding + peephole\n");
+    printf("\t                             -O3: All optimizations (including dead code elimination)\n");
     printf("\nExample:\n");
     printf("\t%s -o hello hello.c\n", argv0);
     printf("\t%s -I ./include -D DEBUG -o prog prog.c\n", argv0);
@@ -205,6 +212,7 @@ int main(int argc, const char* argv[]) {
     int warnings_as_errors = 0; // --Werror
     size_t embed_limit = 0; // --embed-limit (0 = use default)
     int embed_hard_error = 0; // --embed-hard-limit
+    int opt_level = 0; // -O0/-O1/-O2/-O3 (default: 0 = no optimization)
 
     if (argc <= 1)
         usage(argv[0], 1);
@@ -253,6 +261,7 @@ int main(int argc, const char* argv[]) {
         {"Werror", no_argument, 0, 1011},
         {"embed-limit", required_argument, 0, 1014},
         {"embed-hard-limit", no_argument, 0, 1015},
+        {"optimize", optional_argument, 0, 1016},
         {0, 0, 0, 0}
     };
 
@@ -429,6 +438,17 @@ int main(int argc, const char* argv[]) {
         case 1015:  // --embed-hard-limit
             embed_hard_error = 1;
             break;
+        case 1016:  // --optimize (or -O)
+            if (optarg == NULL) {
+                // Just -O or --optimize without argument means -O1
+                opt_level = 1;
+            } else if (optarg[0] >= '0' && optarg[0] <= '3' && optarg[1] == '\0') {
+                opt_level = optarg[0] - '0';
+            } else {
+                fprintf(stderr, "error: invalid optimization level '%s' (use 0, 1, 2, or 3)\n", optarg);
+                usage(argv[0], 1);
+            }
+            break;
         case '?':
             if (optopt)
                 fprintf(stderr, "error: option -%c requires an argument\n", optopt);
@@ -502,6 +522,9 @@ int main(int argc, const char* argv[]) {
     if (embed_hard_error) {
         vm.compiler.embed_hard_error = true;
     }
+
+    // Set optimization level
+    vm.compiler.opt_level = opt_level;
 
     // If random canaries are enabled, regenerate the stack canary
     if (vm.flags & JCC_RANDOM_CANARIES) {

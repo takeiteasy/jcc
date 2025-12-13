@@ -283,6 +283,12 @@ void gen(JCC *vm, Obj *prog);
 int vm_eval(JCC *vm);
 
 //
+// optimize.c
+//
+
+void cc_optimize(JCC *vm, int level);
+
+//
 // debugger.c
 //
 
