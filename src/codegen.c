@@ -102,7 +102,30 @@ static void reset_temp_regs(void) {
     temp_reg_in_use = 0;
 }
 
-// ========== Label Tracking for break/continue ==========
+// ========== Function Call Detection ==========
+// Check if expression tree contains a function call (recursively)
+// Used to determine if we need to save LHS before evaluating RHS
+
+static bool contains_funcall(Node *node) {
+    if (!node) return false;
+    
+    if (node->kind == ND_FUNCALL) return true;
+    
+    // Check children
+    if (contains_funcall(node->lhs)) return true;
+    if (contains_funcall(node->rhs)) return true;
+    if (contains_funcall(node->cond)) return true;
+    if (contains_funcall(node->then)) return true;
+    if (contains_funcall(node->els)) return true;
+    
+    // Check arguments for nested calls
+    for (Node *arg = node->args; arg; arg = arg->next) {
+        if (contains_funcall(arg)) return true;
+    }
+    
+    return false;
+}
+
 
 #define MAX_LABELS 256
 #define MAX_LABEL_PATCHES 1024
@@ -240,13 +263,17 @@ static void emit_mov3(JCC *vm, int rd, int rs) {
 }
 
 // Load operations based on type
+// Load operations based on type
 static void emit_load(JCC *vm, Type *ty, int rd, int rs_addr) {
     if (ty->kind == TY_CHAR) {
         emit_rr(vm, LDR_B, rd, rs_addr);
+        if (ty->is_unsigned) emit_rr(vm, ZX1, rd, rd);
     } else if (ty->kind == TY_SHORT) {
         emit_rr(vm, LDR_H, rd, rs_addr);
+        if (ty->is_unsigned) emit_rr(vm, ZX2, rd, rd);
     } else if (ty->kind == TY_INT || ty->kind == TY_ENUM) {
         emit_rr(vm, LDR_W, rd, rs_addr);
+        if (ty->is_unsigned) emit_rr(vm, ZX4, rd, rd);
     } else if (is_flonum(ty)) {
         emit_rr(vm, FLDR, rd, rs_addr);
     } else {
@@ -286,6 +313,19 @@ static long long *emit_jnz3(JCC *vm, int rs) {
     *patch = 0;
     return patch;
 }
+
+// PSH3: push register value onto stack
+static void emit_psh3(JCC *vm, int rs) {
+    emit(vm, PSH3);
+    *++vm->text_ptr = ENCODE_R(rs);
+}
+
+// POP3: pop stack value into register
+static void emit_pop3(JCC *vm, int rd) {
+    emit(vm, POP3);
+    *++vm->text_ptr = ENCODE_R(rd);
+}
+
 
 // ========== Forward Declarations ==========
 
@@ -472,14 +512,33 @@ static void gen_expr(JCC *vm, Node *node, int dest_reg) {
         case ND_NE:
         case ND_LT:
         case ND_LE: {
-            // Optimization: use dest_reg for LHS to save a temp register
-            // Only allocate temp for RHS
+            // Check if RHS contains a function call - if so, we need to save LHS
+            // because function calls clobber caller-saved temp registers
+            bool rhs_has_call = contains_funcall(node->rhs);
+            
+            // Mark dest_reg as used so we don't allocate the same register for RHS
+            // This is critical for statement expressions where temp regs might have been reset
+            mark_temp_reg_used(dest_reg);
+            
             int r_rhs = alloc_temp_reg();
             
             if (is_flonum(node->lhs->ty)) {
                 // Float operations
-                gen_expr(vm, node->lhs, dest_reg);  // LHS goes directly to dest
-                gen_expr(vm, node->rhs, r_rhs);
+                gen_expr(vm, node->lhs, dest_reg);  // LHS goes directly to dest (float reg)
+                
+                if (rhs_has_call) {
+                    // For floats: convert to int, push to stack, evaluate RHS, pop, convert back
+                    // dest_reg is FREG_*, so we use FR2R to move bits to an int temp
+                    int r_temp = alloc_temp_reg();
+                    emit_rr(vm, FR2R, r_temp, dest_reg);  // Float bits -> int reg
+                    emit_psh3(vm, r_temp);                 // Push int reg to stack
+                    gen_expr(vm, node->rhs, r_rhs);        // Evaluate RHS (may clobber all)
+                    emit_pop3(vm, r_temp);                 // Pop saved bits into int reg
+                    emit_rr(vm, R2FR, dest_reg, r_temp);   // Int bits -> float reg
+                    free_temp_reg(r_temp);
+                } else {
+                    gen_expr(vm, node->rhs, r_rhs);
+                }
                 
                 int fop;
                 switch (node->kind) {
@@ -497,7 +556,16 @@ static void gen_expr(JCC *vm, Node *node, int dest_reg) {
             } else {
                 // Integer operations
                 gen_expr(vm, node->lhs, dest_reg);  // LHS goes directly to dest
-                gen_expr(vm, node->rhs, r_rhs);
+                
+                if (rhs_has_call) {
+                    // Save LHS to stack before function call in RHS
+                    emit_psh3(vm, dest_reg);
+                    gen_expr(vm, node->rhs, r_rhs);
+                    // Restore saved LHS from stack
+                    emit_pop3(vm, dest_reg);
+                } else {
+                    gen_expr(vm, node->rhs, r_rhs);
+                }
                 
                 int op;
                 switch (node->kind) {
@@ -558,7 +626,9 @@ static void gen_expr(JCC *vm, Node *node, int dest_reg) {
             // First, evaluate RHS into a temporary or dest_reg
             int r_val = dest_reg;
             bool need_free = false;
-            if (dest_reg == REG_ZERO) {
+            // Use a temp reg if dest_reg is zero or if we need to preserve it (though dest_reg is output)
+            // But critically, if LHS is a bitfield, we definitely need temp regs for RMW
+            if (dest_reg == REG_ZERO || (node->lhs->kind == ND_MEMBER && node->lhs->member->is_bitfield)) {
                 r_val = alloc_temp_reg();
                 need_free = true;
             }
@@ -572,10 +642,55 @@ static void gen_expr(JCC *vm, Node *node, int dest_reg) {
             int r_addr = alloc_temp_reg();
             gen_addr(vm, node->lhs, r_addr);
             
-            // Store value to address
-            emit_store(vm, node->ty, r_val, r_addr);
+            // Handle Bitfields specially (Read-Modify-Write)
+            if (node->lhs->kind == ND_MEMBER && node->lhs->member->is_bitfield) {
+                Member *mem = node->lhs->member;
+                int r_container = alloc_temp_reg();
+                
+                // Load container value
+                emit_load(vm, mem->ty, r_container, r_addr); // Use member type (container)
+                
+                // Clear the bitfield bits: container &= ~(mask << bit_offset)
+                int r_mask = alloc_temp_reg();
+                long long mask = ((1ULL << mem->bit_width) - 1);
+                emit_li3(vm, r_mask, ~(mask << mem->bit_offset));
+                emit_rrr(vm, AND3, r_container, r_container, r_mask);
+                
+                // Prepare new value: (val & mask) << bit_offset
+                int r_new = alloc_temp_reg();
+                emit_mov3(vm, r_new, r_val);
+                emit_li3(vm, r_mask, mask); // Reuse r_mask for positive mask
+                emit_rrr(vm, AND3, r_new, r_new, r_mask); // Truncate val to width
+                // Shift new value into position
+                if (mem->bit_offset > 0) {
+                     int r_shift = alloc_temp_reg();
+                     emit_li3(vm, r_shift, mem->bit_offset);
+                     emit_rrr(vm, SHL3, r_new, r_new, r_shift);
+                     free_temp_reg(r_shift);
+                }
+                
+                // OR new value into container
+                emit_rrr(vm, OR3, r_container, r_container, r_new);
+                
+                // Store back
+                emit_store(vm, mem->ty, r_container, r_addr); // Use member type (container)
+                
+                free_temp_reg(r_new);
+                free_temp_reg(r_mask);
+                free_temp_reg(r_container);
+            } else {
+                // Standard store
+                emit_store(vm, node->ty, r_val, r_addr);
+            }
             
             free_temp_reg(r_addr);
+            
+            // Assignment result is the value
+            // If bitfield, r_val holds the RHS value, which is correct
+            if (dest_reg != REG_ZERO && dest_reg != r_val) {
+                emit_mov3(vm, dest_reg, r_val);
+            }
+            
             if (need_free) {
                 free_temp_reg(r_val);
             }
@@ -600,16 +715,51 @@ static void gen_expr(JCC *vm, Node *node, int dest_reg) {
         }
         
         case ND_COMMA:
-            gen_expr(vm, node->lhs, REG_ZERO);  // Discard
+            gen_expr(vm, node->lhs, REG_ZERO);  // Discard result
             gen_expr(vm, node->rhs, dest_reg);
             return;
             
         case ND_MEMBER:
             gen_addr(vm, node, dest_reg);
-            if (node->ty->kind != TY_ARRAY &&
-                node->ty->kind != TY_STRUCT &&
-                node->ty->kind != TY_UNION) {
-                emit_load(vm, node->ty, dest_reg, dest_reg);
+            
+            if (node->member->is_bitfield) {
+                Member *mem = node->member;
+                // Load container value
+                emit_load(vm, mem->ty, dest_reg, dest_reg);
+                
+                if (mem->ty->is_unsigned) {
+                    // Unsigned: (val >> bit_offset) & mask
+                    if (mem->bit_offset > 0) {
+                        int r_shift = alloc_temp_reg();
+                        emit_li3(vm, r_shift, mem->bit_offset);
+                        emit_rrr(vm, SHR3, dest_reg, dest_reg, r_shift); // Logical shift right
+                        free_temp_reg(r_shift);
+                    }
+                    long long mask = (1ULL << mem->bit_width) - 1;
+                    int r_mask = alloc_temp_reg();
+                    emit_li3(vm, r_mask, mask);
+                    emit_rrr(vm, AND3, dest_reg, dest_reg, r_mask);
+                    free_temp_reg(r_mask);
+                } else {
+                    // Signed: (val << (64 - width - offset)) >> (64 - width)
+                    int r_shift = alloc_temp_reg();
+                    int left_shift = 64 - mem->bit_width - mem->bit_offset;
+                    int right_shift = 64 - mem->bit_width;
+                    
+                    emit_li3(vm, r_shift, left_shift);
+                    emit_rrr(vm, SHL3, dest_reg, dest_reg, r_shift);
+                    
+                    emit_li3(vm, r_shift, right_shift);
+                    emit_rrr(vm, SHR3, dest_reg, dest_reg, r_shift); // Arithmetic shift preserves sign
+                    free_temp_reg(r_shift);
+                }
+            } else {
+                // Standard member
+                if (node->ty->kind != TY_ARRAY &&
+                    node->ty->kind != TY_STRUCT &&
+                    node->ty->kind != TY_UNION) {
+                    emit_load(vm, node->ty, dest_reg, dest_reg);
+                }
             }
             return;
             
@@ -622,6 +772,17 @@ static void gen_expr(JCC *vm, Node *node, int dest_reg) {
             } else if (!is_flonum(node->ty) && is_flonum(node->lhs->ty)) {
                 // float -> int
                 emit_rr(vm, F2I3, dest_reg, dest_reg);
+            } else if (!is_flonum(node->ty) && !is_flonum(node->lhs->ty)) {
+                // Integer conversion - handle truncation/extension
+                if (node->ty->kind == TY_CHAR) {
+                    emit_rr(vm, node->ty->is_unsigned ? ZX1 : SX1, dest_reg, dest_reg);
+                } else if (node->ty->kind == TY_SHORT) {
+                    emit_rr(vm, node->ty->is_unsigned ? ZX2 : SX2, dest_reg, dest_reg);
+                } else if (node->ty->kind == TY_INT) {
+                    emit_rr(vm, node->ty->is_unsigned ? ZX4 : SX4, dest_reg, dest_reg);
+                } else if (node->ty->kind == TY_BOOL) {
+                    emit_rr(vm, SNE3, dest_reg, REG_ZERO); // dest_reg = (dest_reg != 0)
+                }
             }
             return;
             
@@ -739,19 +900,78 @@ static void gen_expr(JCC *vm, Node *node, int dest_reg) {
                 }
             }
             
-            // Track separate int and float register indices
+            // Count total args and collect into array for indexed access
+            int nargs = 0;
+            for (Node *a = node->args; a; a = a->next) nargs++;
+            
+            Node **arg_array = NULL;
+            if (nargs > 0) {
+                arg_array = calloc(nargs, sizeof(Node*));
+                if (!arg_array) error("out of memory");
+                int idx = 0;
+                for (Node *a = node->args; a; a = a->next) {
+                    arg_array[idx++] = a;
+                }
+            }
+            
+            // Calculate how many args go on stack (args 8+)
+            int num_stack_args = (nargs > 8) ? (nargs - 8) : 0;
+            
+            // Push overflow args (8+) right-to-left BEFORE register args
+            // Stack grows downward, so push last arg first
+            // After all pushes and CALL, these will be at bp[+2], bp[+3], etc.
+            if (num_stack_args > 0) {
+                for (int j = nargs - 1; j >= 8; j--) {
+                    Node *arg = arg_array[j];
+                    if (is_flonum(arg->ty)) {
+                        // Float arg: evaluate to float reg, move bits to int reg, push
+                        int freg = FREG_A0;  // Use as scratch
+                        gen_expr(vm, arg, freg);
+                        emit_rr(vm, FR2R, REG_T0, freg);  // Move bits to REG_T0
+                        emit_psh3(vm, REG_T0);
+                    } else {
+                        // Integer/pointer arg: evaluate to temp reg, push
+                        gen_expr(vm, arg, REG_T0);
+                        emit_psh3(vm, REG_T0);
+                    }
+                }
+            }
+            
+            // Check which arguments contain function calls (to handle register clobbering)
+            bool *arg_has_call = calloc(nargs, sizeof(bool));
+            if (!arg_has_call && nargs > 0) error("out of memory");
+            for (int i = 0; i < nargs; i++) {
+                arg_has_call[i] = contains_funcall(arg_array[i]);
+            }
+            
+            // Now evaluate first 8 args into registers
+            // CRITICAL: If arg[i] contains a function call, it will clobber REG_A0-A7.
+            // We must save any previous args before evaluating such an arg.
             int int_arg_idx = 0;
             int float_arg_idx = 0;
-            int arg_idx = 0;
+            int saved_int_count = 0;    // How many int regs we saved
+            int saved_float_count = 0;  // How many float regs we saved
             
-            for (Node *arg = node->args; arg; arg = arg->next, arg_idx++) {
-                if (int_arg_idx >= 8 && float_arg_idx >= 8) {
-                    // No more registers available - skip
-                    // TODO: Support stack args for internal calls
-                    continue;
-                }
+            for (int i = 0; i < nargs && i < 8; i++) {
+                Node *arg = arg_array[i];
+                bool is_vararg = is_variadic_call && (i >= fixed_param_count);
                 
-                bool is_vararg = is_variadic_call && (arg_idx >= fixed_param_count);
+                // Before evaluating this arg, check if it contains a function call.
+                // If so, save all previously-evaluated arg registers to the stack.
+                if (arg_has_call[i] && (int_arg_idx > 0 || float_arg_idx > 0)) {
+                    // Push int regs in reverse order (so we pop in correct order later)
+                    for (int j = int_arg_idx - 1; j >= 0; j--) {
+                        emit_psh3(vm, REG_A0 + j);
+                    }
+                    saved_int_count = int_arg_idx;
+                    
+                    // Push float regs: convert to int bits, push
+                    for (int j = float_arg_idx - 1; j >= 0; j--) {
+                        emit_rr(vm, FR2R, REG_T0, FREG_A0 + j);
+                        emit_psh3(vm, REG_T0);
+                    }
+                    saved_float_count = float_arg_idx;
+                }
                 
                 if (is_flonum(arg->ty)) {
                     if (is_vararg) {
@@ -779,7 +999,27 @@ static void gen_expr(JCC *vm, Node *node, int dest_reg) {
                         int_arg_idx++;
                     }
                 }
+                
+                // After evaluating this arg, if we saved previous regs, restore them now.
+                // This ensures all arg regs have correct values after each step.
+                if (arg_has_call[i] && (saved_int_count > 0 || saved_float_count > 0)) {
+                    // Restore float regs (were pushed last, pop first)
+                    for (int j = 0; j < saved_float_count; j++) {
+                        emit_pop3(vm, REG_T0);
+                        emit_rr(vm, R2FR, FREG_A0 + j, REG_T0);
+                    }
+                    // Restore int regs
+                    for (int j = 0; j < saved_int_count; j++) {
+                        emit_pop3(vm, REG_A0 + j);
+                    }
+                    saved_int_count = 0;
+                    saved_float_count = 0;
+                }
             }
+            
+            free(arg_has_call);
+            
+            if (arg_array) free(arg_array);
             
             // Call function
             if (node->lhs->kind == ND_VAR && node->lhs->var->is_function) {
@@ -804,9 +1044,35 @@ static void gen_expr(JCC *vm, Node *node, int dest_reg) {
                 free_temp_reg(r_fn);
             }
             
+            // Clean up stack args pushed before the call
+            if (num_stack_args > 0) {
+                emit_with_arg(vm, ADJ, num_stack_args);
+            }
+            
             // Function calls clobber all temp registers (caller-saved)
             // Reset allocator so caller will recompute any addresses it needs
             reset_temp_regs();
+            
+            // For struct/union returns, copy from the callee's return buffer to caller's local ret_buffer.
+            // This is critical for chained calls like f(g(), h()) where both g() and h() return structs -
+            // without this, h()'s return would overwrite g()'s in the shared return buffer.
+            if (node->ret_buffer && node->ty && 
+                (node->ty->kind == TY_STRUCT || node->ty->kind == TY_UNION)) {
+                // REG_A0 contains address of callee's return buffer
+                // Copy to our local ret_buffer
+                int r_dest = alloc_temp_reg();
+                emit_lea3(vm, r_dest, node->ret_buffer->offset);  // dest = address of our local ret_buffer
+                
+                // MCPY uses registers: dest in REG_A0, src in REG_A1, count in REG_A2
+                // But REG_A0 currently has the source (callee's buffer), so save it first
+                emit_mov3(vm, REG_A1, REG_A0);        // src = callee's return buffer
+                emit_mov3(vm, REG_A0, r_dest);        // dest = our local ret_buffer
+                emit_li3(vm, REG_A2, node->ty->size); // count = struct size
+                emit(vm, MCPY);
+                
+                // REG_A0 now points to our local copy, which is what we want for further use
+                free_temp_reg(r_dest);
+            }
             
             // Result in REG_A0/FREG_A0
             if (is_flonum(node->ty)) {

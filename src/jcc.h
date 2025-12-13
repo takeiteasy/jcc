@@ -121,6 +121,8 @@ extern "C" {
     X(ENT3)   /* Enter function: stack_size|param_count */ \
     X(LEV3)   /* Leave function: return value in REG_A0 */ \
     X(ADJ)    /* Adjust stack pointer */ \
+    X(PSH3)   /* Push regs[rs] onto stack: *--sp = regs[rs] */ \
+    X(POP3)   /* Pop from stack into regs[rd]: rd = *sp++ */ \
     /* Register-based load/store */ \
     X(LDR_B)  /* regs[rd] = *(char*)regs[rs] (load byte, sign-extend) */ \
     X(LDR_H)  /* regs[rd] = *(short*)regs[rs] (load halfword, sign-extend) */ \
@@ -147,6 +149,7 @@ extern "C" {
     X(I2F3)   /* fregs[rd] = (double)regs[rs] */ \
     X(F2I3)   /* regs[rd] = (long long)fregs[rs] */ \
     X(FR2R)   /* regs[rd] = *(long long*)&fregs[rs] (bit-pattern transfer) */ \
+    X(R2FR)   /* fregs[rd] = *(double*)&regs[rs] (bit-pattern transfer, reverse of FR2R) */ \
     /* Register-based safety opcodes */ \
     X(CHKP3)  /* Check pointer validity: regs[rs] */ \
     X(CHKA3)  /* Check alignment: regs[rs], immediate alignment */ \

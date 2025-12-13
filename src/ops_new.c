@@ -780,6 +780,20 @@ int op_FR2R_fn(JCC *vm) {
     return 0;
 }
 
+int op_R2FR_fn(JCC *vm) {
+    // Integer register to float register (bit-pattern transfer, no conversion)
+    // Format: [R2FR] [rd:8|rs:8|unused:48]
+    // Copies the raw bits from integer register to a double (reverse of FR2R)
+    long long operands = *vm->pc++;
+    int rd, rs;
+    DECODE_RR(operands, rd, rs);
+    
+    union { double d; long long ll; } conv;
+    conv.ll = vm->regs[rs];
+    vm->fregs[rd] = conv.d;
+    return 0;
+}
+
 int op_JZ3_fn(JCC *vm) {
     // Branch if zero: if (regs[rs] == 0) pc = target
     // Format: [JZ3] [rs:8|unused:56] [target:64]
@@ -1023,41 +1037,85 @@ int op_ADJ_fn(JCC *vm) {
     return 0;
 }
 
+int op_PSH3_fn(JCC *vm) {
+    // Push register value onto stack: *--sp = regs[rs]
+    // Format: [PSH3] [rs:8|unused:56]
+    long long operands = *vm->pc++;
+    int rs;
+    DECODE_R(operands, rs);
+    *--vm->sp = vm->regs[rs];
+    return 0;
+}
+
+int op_POP3_fn(JCC *vm) {
+    // Pop from stack into register: regs[rd] = *sp++
+    // Format: [POP3] [rd:8|unused:56]
+    long long operands = *vm->pc++;
+    int rd;
+    DECODE_R(operands, rd);
+    vm->regs[rd] = *vm->sp++;
+    return 0;
+}
+
 // ========== Type Conversion Opcodes ==========
 
 int op_SX1_fn(JCC *vm) {
-    // Sign extend 1 byte to 8 bytes (in REG_A0)
-    vm->regs[REG_A0] = (long long)(char)vm->regs[REG_A0];
+    // Sign extend 1 byte to 8 bytes: regs[rd] = (long long)(char)regs[rs]
+    // Format: [SX1] [rd:8|rs:8|unused:48]
+    long long operands = *vm->pc++;
+    int rd, rs;
+    DECODE_RR(operands, rd, rs);
+    vm->regs[rd] = (long long)(char)vm->regs[rs];
     return 0;
 }
 
 int op_SX2_fn(JCC *vm) {
-    // Sign extend 2 bytes to 8 bytes (in REG_A0)
-    vm->regs[REG_A0] = (long long)(short)vm->regs[REG_A0];
+    // Sign extend 2 bytes to 8 bytes: regs[rd] = (long long)(short)regs[rs]
+    // Format: [SX2] [rd:8|rs:8|unused:48]
+    long long operands = *vm->pc++;
+    int rd, rs;
+    DECODE_RR(operands, rd, rs);
+    vm->regs[rd] = (long long)(short)vm->regs[rs];
     return 0;
 }
 
 int op_SX4_fn(JCC *vm) {
-    // Sign extend 4 bytes to 8 bytes (in REG_A0)
-    vm->regs[REG_A0] = (long long)(int)vm->regs[REG_A0];
+    // Sign extend 4 bytes to 8 bytes: regs[rd] = (long long)(int)regs[rs]
+    // Format: [SX4] [rd:8|rs:8|unused:48]
+    long long operands = *vm->pc++;
+    int rd, rs;
+    DECODE_RR(operands, rd, rs);
+    vm->regs[rd] = (long long)(int)vm->regs[rs];
     return 0;
 }
 
 int op_ZX1_fn(JCC *vm) {
-    // Zero extend 1 byte to 8 bytes (in REG_A0)
-    vm->regs[REG_A0] = (long long)(unsigned char)vm->regs[REG_A0];
+    // Zero extend 1 byte to 8 bytes: regs[rd] = (long long)(unsigned char)regs[rs]
+    // Format: [ZX1] [rd:8|rs:8|unused:48]
+    long long operands = *vm->pc++;
+    int rd, rs;
+    DECODE_RR(operands, rd, rs);
+    vm->regs[rd] = (long long)(unsigned char)vm->regs[rs];
     return 0;
 }
 
 int op_ZX2_fn(JCC *vm) {
-    // Zero extend 2 bytes to 8 bytes (in REG_A0)
-    vm->regs[REG_A0] = (long long)(unsigned short)vm->regs[REG_A0];
+    // Zero extend 2 bytes to 8 bytes: regs[rd] = (long long)(unsigned short)regs[rs]
+    // Format: [ZX2] [rd:8|rs:8|unused:48]
+    long long operands = *vm->pc++;
+    int rd, rs;
+    DECODE_RR(operands, rd, rs);
+    vm->regs[rd] = (long long)(unsigned short)vm->regs[rs];
     return 0;
 }
 
 int op_ZX4_fn(JCC *vm) {
-    // Zero extend 4 bytes to 8 bytes (in REG_A0)
-    vm->regs[REG_A0] = (long long)(unsigned int)vm->regs[REG_A0];
+    // Zero extend 4 bytes to 8 bytes: regs[rd] = (long long)(unsigned int)regs[rs]
+    // Format: [ZX4] [rd:8|rs:8|unused:48]
+    long long operands = *vm->pc++;
+    int rd, rs;
+    DECODE_RR(operands, rd, rs);
+    vm->regs[rd] = (long long)(unsigned int)vm->regs[rs];
     return 0;
 }
 
