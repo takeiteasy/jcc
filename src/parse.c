@@ -494,6 +494,7 @@ static Type *declspec(JCC *vm, Token **rest, Token *tok, VarAttr *attr) {
     int counter = 0;
     bool is_atomic = false;
     bool is_const = false;
+    bool is_volatile = false;
 
     while (is_typename(vm, tok)) {
         // Handle __attribute__ at the beginning of declspec
@@ -541,9 +542,14 @@ static Type *declspec(JCC *vm, Token **rest, Token *tok, VarAttr *attr) {
             continue;
         }
 
+        // Handle volatile qualifier
+        if (consume(vm, &tok, tok, "volatile")) {
+            is_volatile = true;
+            continue;
+        }
+
         // These keywords are recognized but ignored.
-        if (consume(vm, &tok, tok, "volatile") ||
-            consume(vm, &tok, tok, "auto") || consume(vm, &tok, tok, "register") ||
+        if (consume(vm, &tok, tok, "auto") || consume(vm, &tok, tok, "register") ||
             consume(vm, &tok, tok, "restrict") || consume(vm, &tok, tok, "__restrict") ||
             consume(vm, &tok, tok, "__restrict__") || consume(vm, &tok, tok, "_Noreturn"))
             continue;
@@ -696,6 +702,11 @@ static Type *declspec(JCC *vm, Token **rest, Token *tok, VarAttr *attr) {
         ty->is_const = true;
     }
 
+    if (is_volatile) {
+        ty = copy_type(vm, ty);
+        ty->is_volatile = true;
+    }
+
     *rest = tok;
     return ty;
 }
@@ -790,13 +801,17 @@ static Type *type_suffix(JCC *vm, Token **rest, Token *tok, Type *ty) {
 static Type *pointers(JCC *vm, Token **rest, Token *tok, Type *ty) {
     while (consume(vm, &tok, tok, "*")) {
         ty = pointer_to(vm, ty);
-        // Handle const qualification on the pointer itself
+        // Handle const/volatile qualification on the pointer itself
         // Example: "int *const p" makes the pointer const, not the pointee
+        // Example: "int *volatile p" makes the pointer volatile
         while (equal(tok, "const") || equal(tok, "volatile") || equal(tok, "restrict") ||
                equal(tok, "__restrict") || equal(tok, "__restrict__")) {
             if (equal(tok, "const")) {
                 ty = copy_type(vm, ty);
                 ty->is_const = true;
+            } else if (equal(tok, "volatile")) {
+                ty = copy_type(vm, ty);
+                ty->is_volatile = true;
             }
             tok = tok->next;
         }
@@ -974,9 +989,9 @@ static Type *typeof_unqual_specifier(JCC *vm, Token **rest, Token *tok) {
     Type *ty = typeof_specifier(vm, rest, tok);
     // Copy the type to avoid mutating the original
     ty = copy_type(vm, ty);
-    // Remove all qualifiers (only is_const is tracked in Type struct)
+    // Remove all qualifiers
     ty->is_const = false;
-    // Note: volatile and restrict are parsed but not stored in Type
+    ty->is_volatile = false;
     return ty;
 }
 

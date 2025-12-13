@@ -81,7 +81,7 @@ See [here](https://takeiteasy.github.io/jcc) for some basic documentation on the
 - `const` (const-correctness in type system and codegen)
 - `inline` (parsed and generated normally, behaves like static, no special optimization)
 - `register` (accepted and ignored, no special optimization)
-- `volatile` (accepted and ignored, VM doesn't optimize across statements)
+- `volatile` (tracked in type system, prevents optimization of accesses)
 - `restrict` (accepted and ignored, aliasing not tracked)
 
 ### Other Features
@@ -201,12 +201,12 @@ JCC has a custom standard library that is located in `include`. It is just a col
 - Support more architectures for native FFI
   - x86_64 (System V + Windows) + x86_64 (legacy System V only)
   - No plans for any other systems, but will accept patches
-- Refactor VM from single accumulator (ax/fx) to multiple register
 - Support for pthread + internal thread support
   - Thread safety features (race condition checks, etc)
 - Optimisation pass for bytecode
   - Peephole, code folding, dead code elimination, etc
-- Hot reloading for FFI functions + compiled functions
+- Hot reloading for FFI functions + compiled functions?
+- Multithreaded parser?
 
 ## Building
 

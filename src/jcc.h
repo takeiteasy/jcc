@@ -153,7 +153,9 @@ extern "C" {
     /* Register-based safety opcodes */ \
     X(CHKP3)  /* Check pointer validity: regs[rs] */ \
     X(CHKA3)  /* Check alignment: regs[rs], immediate alignment */ \
-    X(CHKT3)  /* Check type: regs[rs], immediate TypeKind */
+    X(CHKT3)  /* Check type: regs[rs], immediate TypeKind */ \
+    /* Struct return buffer support */ \
+    X(RETBUF) /* Get next return buffer: REG_A0 = rotating pool buffer */
 
 /*!
  @enum JCC_OP
@@ -409,6 +411,7 @@ struct Type {
     bool is_unsigned;   // unsigned or signed
     bool is_atomic;     // true if _Atomic
     bool is_const;      // true if const-qualified
+    bool is_volatile;   // true if volatile-qualified
     struct Type *origin;       // for type compatibility check
 
     // Pointer-to or array-of type. We intentionally use the same member
@@ -1281,6 +1284,9 @@ struct JCC {
     long long stack_high_water;         // Maximum stack usage tracking
     ScopeVarList *scope_vars;           // Array of per-scope variable lists
     int scope_vars_capacity;            // Capacity of scope_vars array
+
+    // Struct return buffer runtime state (runtime rotation for clean chained calls)
+    int runtime_return_buffer_index;    // Runtime rotating index for return buffers
 
 
     // Debugger state (enable via JCC_ENABLE_DEBUGGER flag)

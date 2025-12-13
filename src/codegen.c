@@ -1053,26 +1053,9 @@ static void gen_expr(JCC *vm, Node *node, int dest_reg) {
             // Reset allocator so caller will recompute any addresses it needs
             reset_temp_regs();
             
-            // For struct/union returns, copy from the callee's return buffer to caller's local ret_buffer.
-            // This is critical for chained calls like f(g(), h()) where both g() and h() return structs -
-            // without this, h()'s return would overwrite g()'s in the shared return buffer.
-            if (node->ret_buffer && node->ty && 
-                (node->ty->kind == TY_STRUCT || node->ty->kind == TY_UNION)) {
-                // REG_A0 contains address of callee's return buffer
-                // Copy to our local ret_buffer
-                int r_dest = alloc_temp_reg();
-                emit_lea3(vm, r_dest, node->ret_buffer->offset);  // dest = address of our local ret_buffer
-                
-                // MCPY uses registers: dest in REG_A0, src in REG_A1, count in REG_A2
-                // But REG_A0 currently has the source (callee's buffer), so save it first
-                emit_mov3(vm, REG_A1, REG_A0);        // src = callee's return buffer
-                emit_mov3(vm, REG_A0, r_dest);        // dest = our local ret_buffer
-                emit_li3(vm, REG_A2, node->ty->size); // count = struct size
-                emit(vm, MCPY);
-                
-                // REG_A0 now points to our local copy, which is what we want for further use
-                free_temp_reg(r_dest);
-            }
+            // Note: With runtime return buffer rotation (RETBUF opcode), chained calls like
+            // f(g(), h()) automatically get different buffers for g() and h()'s results.
+            // No caller-side copy is needed.
             
             // Result in REG_A0/FREG_A0
             if (is_flonum(node->ty)) {
@@ -1207,26 +1190,30 @@ static void gen_stmt(JCC *vm, Node *node) {
         case ND_RETURN:
             reset_temp_regs();
             if (node->lhs) {
-                // If returning struct/union, copy to return buffer
+                // If returning struct/union, copy to return buffer at runtime
                 if (node->lhs->ty && (node->lhs->ty->kind == TY_STRUCT || node->lhs->ty->kind == TY_UNION)) {
-                    // Get next buffer from pool (rotating)
-                    char *buffer = vm->compiler.return_buffer_pool[vm->compiler.return_buffer_index];
-                    vm->compiler.return_buffer_index = (vm->compiler.return_buffer_index + 1) % RETURN_BUFFER_POOL_SIZE;
-                    
                     // Evaluate source (struct address) into a temp register first
                     int r_src = alloc_temp_reg();
                     gen_expr(vm, node->lhs, r_src);
                     
+                    // Get next buffer from rotating pool at runtime
+                    // RETBUF puts the buffer address in REG_A0
+                    emit(vm, RETBUF);
+                    int r_dest = alloc_temp_reg();
+                    emit_mov3(vm, r_dest, REG_A0);  // Save buffer address
+                    
                     // MCPY uses registers: dest in REG_A0, src in REG_A1, count in REG_A2
-                    emit_li3(vm, REG_A0, (long long)buffer);  // dest
-                    emit_mov3(vm, REG_A1, r_src);             // src
+                    // REG_A0 already has dest from RETBUF, but we saved it to r_dest
+                    emit_mov3(vm, REG_A1, r_src);              // src = struct address
                     emit_li3(vm, REG_A2, node->lhs->ty->size); // count
+                    emit_mov3(vm, REG_A0, r_dest);             // dest = buffer address
                     emit(vm, MCPY);
                     
-                    free_temp_reg(r_src);
+                    // Return buffer address in REG_A0 (already there from r_dest)
+                    emit_mov3(vm, REG_A0, r_dest);
                     
-                    // Return buffer address in REG_A0
-                    emit_li3(vm, REG_A0, (long long)buffer);
+                    free_temp_reg(r_src);
+                    free_temp_reg(r_dest);
                 } else if (is_flonum(node->lhs->ty)) {
                     gen_expr(vm, node->lhs, FREG_A0);
                 } else {
@@ -1544,6 +1531,13 @@ void gen_function(JCC *vm, Obj *fn) {
             stack_size += var_size;
             var->offset = -stack_size;  // Locals have negative offsets
         }
+    }
+    
+    // Ensure 16-byte stack alignment for ABI compliance
+    // VM slots are 8 bytes, so we need even number of slots for 16-byte alignment
+    // This is required for FFI calls to native functions that may use SSE/NEON
+    if (stack_size % 2 != 0) {
+        stack_size++;  // Add padding slot
     }
     
     // Record function address (offset from text_seg start)
