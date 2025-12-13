@@ -626,6 +626,7 @@ struct Obj {
     // Local variable
     int offset;
     bool is_param; // true if this is a function parameter
+    bool is_captured; // true if accessed by a nested function (for optimization hints)
 
     // Global variable or function
     bool is_function;
@@ -648,6 +649,11 @@ struct Obj {
     Obj *va_area;
     Obj *alloca_bottom;
     int stack_size;
+
+    // Nested function support (GNU C extension)
+    struct Obj *parent_fn;    // Enclosing function (NULL if top-level)
+    bool is_nested;           // True if defined inside another function
+    int nesting_depth;        // 0 = top-level, 1 = one level deep, etc.
 
     // Static inline function
     bool is_live;
@@ -1128,6 +1134,7 @@ typedef struct Compiler {
     Scope *scope;                       // Current scope
     Obj *initializing_var;              // Variable being initialized (for const initialization)
     Obj *current_fn;                    // Function being parsed
+    int fn_nesting_depth;               // Current function nesting depth (0 = top-level)
     Node *gotos;                        // Goto statements in current function
     Node *labels;                       // Labels in current function
     char *brk_label;                    // Current break jump target

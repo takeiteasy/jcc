@@ -83,9 +83,9 @@ See [here](https://takeiteasy.github.io/jcc) for some basic documentation on the
 - `extern` (external linkage for multi-file projects)
 - `const` (const-correctness in type system and codegen)
 - `inline` (parsed and generated normally, behaves like static, no special optimization)
-- `register` (accepted and ignored, no special optimization)
 - `volatile` (tracked in type system, prevents optimization of accesses)
-- `restrict` (accepted and ignored, aliasing not tracked)
+- `register` (accepted and ***ignored***, no special optimization)
+- `restrict` (accepted and ***ignored***, aliasing not tracked)
 
 ### Other Features
 
@@ -166,25 +166,20 @@ JCC provides two modes for variadic foreign functions:
 
 - `typeof` operator (compile-time type inquiry for variables and expressions)
 - `typeof_unqual` - typeof that removes type qualifiers
-- `[[...]]` - C23 attributes, like GNU attributes, are parsed but ignored
+- `[[...]]` - C23 attributes, like GNU attributes, are parsed but ***ignored***
 - Binary literals (0b10101010)
 - Digit separators with single quotes (1'000'000)
 - `#embed` directive (C23) - Binary resource inclusion
-  - Example: `unsigned char data[] = { #embed "file.bin" };`
-  - Supports `limit(N)` parameter to restrict bytes
-  - Supports `prefix(...)` to insert tokens before byte sequence
-  - Supports `suffix(...)` to insert tokens after byte sequence
-  - Supports `if_empty(...)` for empty file fallback values
-  - `__has_embed("file")` macro for file availability checks
 
 ### GNU Extensions
 
 - Statement expressions `({...})`
-- `__attribute__((...))` for functions and variables (currently ignored, parsed only)
+- `__attribute__((...))` for functions and variables (currently ***ignored***, parsed only)
 - Labels as values `&&label` - Get the address of a label for computed goto
 - Computed goto `goto *expr;` - Jump to an address computed at runtime
 - Switch case ranges `case 1 ... 5:` - Match ranges of values in switch statements
 - Zero-length arrays `int arr[0];` - Flexible array member alternative
+- Nested functions - Define functions inside other functions with access to parent variables
 
 ### Thread Support
 
@@ -200,7 +195,11 @@ JCC has a custom standard library that is located in `include`. It is just a col
 ## TODO
 
 - Blocks/closures (`^{}`) - Complex feature requiring variable capture and closure runtime
-- Nested functions - Requires static chain or trampolines for accessing parent scope
+- Preprocessor support for `__has_include`, `__has_include_next`, `__has_extension`, `__has_feature`
+- Support for `_Defer` statement
+- Support for `_Pragma` statement
+- Support for (some) C23 `[[...]]` and GNU `__attribute__((...))` attributes
+- Proper inlining support
 - Support more architectures for native FFI
   - x86_64 (System V + Windows) + x86_64 (legacy System V only)
   - No plans for any other systems, but will accept patches
