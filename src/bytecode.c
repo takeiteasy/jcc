@@ -102,4 +102,9 @@ void cc_compile(JCC *vm, Obj *prog) {
     
     // Generate bytecode from AST using new register-based codegen
     gen(vm, prog);
+
+    // Run optimizer if enabled
+    if (vm->compiler.opt_level > 0) {
+        cc_optimize(vm, vm->compiler.opt_level);
+    }
 }

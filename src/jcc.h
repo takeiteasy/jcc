@@ -1208,6 +1208,9 @@ typedef struct Compiler {
     // Per-instance state (moved from static globals for thread-safety)
     int unique_name_counter;            // Counter for new_unique_name()
     int counter_macro_value;            // __COUNTER__ macro value
+
+    // Optimization settings
+    int opt_level;                      // Optimization level (0=none, 1=basic, 2=standard, 3=aggressive)
 } Compiler;
 
 /*!
