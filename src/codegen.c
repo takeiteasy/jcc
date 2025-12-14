@@ -330,7 +330,6 @@ static void emit_pop3(JCC *vm, int rd) {
 // ========== Forward Declarations ==========
 
 static void gen_expr(JCC *vm, Node *node, int dest_reg);
-static void gen_expr_float(JCC *vm, Node *node, int dest_freg);
 static void gen_stmt(JCC *vm, Node *node);
 static void gen_addr(JCC *vm, Node *node, int dest_reg);
 

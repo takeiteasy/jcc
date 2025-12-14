@@ -118,8 +118,9 @@ bool is_compatible(Type *t1, Type *t2) {
                 return false;
             return t1->array_len < 0 && t2->array_len < 0 &&
             t1->array_len == t2->array_len;
+        default:
+            return false;
     }
-    return false;
 }
 
 Type *copy_type(JCC *vm, Type *ty) {
@@ -467,6 +468,8 @@ void add_type(JCC *vm, Node *node) {
             if (node->lhs->ty->kind != TY_PTR)
                 error_tok(vm, node->cas_addr->tok, "pointer expected");
             node->ty = node->lhs->ty->base;
+            return;
+        default:
             return;
     }
 }

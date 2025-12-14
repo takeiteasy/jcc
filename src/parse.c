@@ -2313,10 +2313,10 @@ static int64_t eval2(JCC *vm, Node *node, char ***label) {
             return 0;
         case ND_NUM:
             return node->val;
+        default:
+            error_tok(vm, node->tok, "not a compile-time constant");
+            return 0;
     }
-
-    error_tok(vm, node->tok, "not a compile-time constant");
-    return 0;
 }
 
 static int64_t eval_rval(JCC *vm, Node *node, char ***label) {
@@ -2330,10 +2330,10 @@ static int64_t eval_rval(JCC *vm, Node *node, char ***label) {
             return eval2(vm, node->lhs, label);
         case ND_MEMBER:
             return eval_rval(vm, node->lhs, label) + node->member->offset;
+        default:
+            error_tok(vm, node->tok, "invalid initializer");
+            return 0;
     }
-
-    error_tok(vm, node->tok, "invalid initializer");
-    return 0;
 }
 
 static bool is_const_expr(JCC *vm, Node *node) {
@@ -2369,9 +2369,9 @@ static bool is_const_expr(JCC *vm, Node *node) {
             return is_const_expr(vm, node->lhs);
         case ND_NUM:
             return true;
+        default:
+            return false;
     }
-
-    return false;
 }
 
 int64_t const_expr(JCC *vm, Token **rest, Token *tok) {
@@ -2409,10 +2409,10 @@ static double eval_double(JCC *vm, Node *node) {
             return eval(vm, node->lhs);
         case ND_NUM:
             return node->fval;
+        default:
+            error_tok(vm, node->tok, "not a compile-time constant");
+            return 0;
     }
-
-    error_tok(vm, node->tok, "not a compile-time constant");
-    return 0;
 }
 
 // Convert op= operators to expressions containing an assignment.

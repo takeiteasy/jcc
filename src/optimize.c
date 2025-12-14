@@ -112,18 +112,18 @@ static void reset_reg_state(RegState *state) {
 #define NOP_IMM 0
 
 // Emit a NOP at the given location (for 2-word instructions)
-static void emit_nop_2word(long long *pc) {
-    // Just leave as-is for now, we could mark for removal in a compaction pass
-    // For now, we'll convert to LI3 r0, 0 which has no effect
-    (void)pc;
-}
+// static void emit_nop_2word(long long *pc) {
+//     // Just leave as-is for now, we could mark for removal in a compaction pass
+//     // For now, we'll convert to LI3 r0, 0 which has no effect
+//     (void)pc;
+// }
 
 // Emit a NOP at the given location (for 3-word instructions)  
-static void emit_nop_3word(long long *pc) {
-    pc[0] = NOP_OP;
-    pc[1] = ENCODE_R(NOP_RD);
-    pc[2] = NOP_IMM;
-}
+// static void emit_nop_3word(long long *pc) {
+//     pc[0] = NOP_OP;
+//     pc[1] = ENCODE_R(NOP_RD);
+//     pc[2] = NOP_IMM;
+// }
 
 static void opt_constant_fold(JCC *vm) {
     if (!vm || !vm->text_seg || !vm->text_ptr) {
