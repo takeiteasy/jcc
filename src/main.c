@@ -514,6 +514,30 @@ int main(int argc, const char* argv[]) {
     if (verbose)
         vm.debug_vm = 1;
 
+    // Check if input is a bytecode file (.jbc extension)
+    // If so, load and run it directly without compilation
+    if (input_files_count == 1) {
+        const char *input_file = input_files[0];
+        size_t len = strlen(input_file);
+        if (len > 4 && strcmp(input_file + len - 4, ".jbc") == 0) {
+            // Load bytecode file
+            if (cc_load_bytecode(&vm, input_file) != 0) {
+                fprintf(stderr, "error: failed to load bytecode from %s\n", input_file);
+                exit_code = 1;
+                goto BAIL;
+            }
+            
+            if (disassemble) {
+                cc_disassemble(&vm);
+                goto BAIL;
+            }
+            
+            // Run the loaded bytecode
+            exit_code = cc_run(&vm, argc, (char**)argv);
+            goto BAIL;
+        }
+    }
+
     // Configure #embed limits if specified
     if (embed_limit > 0) {
         vm.compiler.embed_limit = embed_limit;

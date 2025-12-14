@@ -205,8 +205,6 @@ JCC has a custom standard library that is located in `include`. It is just a col
   - No plans for any other systems, but will accept patches
 - Support for pthread + internal thread support
   - Thread safety features (race condition checks, etc)
-- Hot reloading for FFI functions + compiled functions?
-- Multithreaded parser?
 
 ## Building
 

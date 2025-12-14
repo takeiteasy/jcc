@@ -18,11 +18,6 @@
 */
 
 /*
- * ops_new.c - Multi-register opcode implementations
- *
- * These new opcodes work alongside the existing single-accumulator opcodes.
- * Once codegen is fully migrated, the old opcodes can be removed.
- *
  * Instruction encoding:
  *   RRR format: [OPCODE] [rd:8|rs1:8|rs2:8|unused:40]
  *   RI format:  [OPCODE] [rd:8|unused:56] [immediate:64]
@@ -1350,51 +1345,6 @@ int op_LONGJMP_fn(JCC *vm) {
 }
 
 // ========== FFI ==========
-
-// Helper function for format string validation
-static int count_format_specifiers(const char *fmt) {
-    if (!fmt) return -1;
-    int count = 0;
-    while (*fmt) {
-        if (*fmt == '%') {
-            fmt++;
-            if (*fmt == '%') {
-                fmt++;
-                continue;  // %% is literal %
-            }
-            // Skip flags
-            while (*fmt == '-' || *fmt == '+' || *fmt == ' ' || *fmt == '#' || *fmt == '0')
-                fmt++;
-            // Skip width
-            while (*fmt >= '0' && *fmt <= '9')
-                fmt++;
-            // Skip precision
-            if (*fmt == '.') {
-                fmt++;
-                while (*fmt >= '0' && *fmt <= '9')
-                    fmt++;
-            }
-            // Skip length modifier
-            if (*fmt == 'h' || *fmt == 'l' || *fmt == 'L' || *fmt == 'z' || *fmt == 'j' || *fmt == 't') {
-                fmt++;
-                if (*fmt == 'h' || *fmt == 'l')
-                    fmt++;
-            }
-            // Count specifier
-            if (*fmt == 'd' || *fmt == 'i' || *fmt == 'u' || *fmt == 'o' || *fmt == 'x' || *fmt == 'X' ||
-                *fmt == 'f' || *fmt == 'F' || *fmt == 'e' || *fmt == 'E' || *fmt == 'g' || *fmt == 'G' ||
-                *fmt == 'a' || *fmt == 'A' || *fmt == 'c' || *fmt == 's' || *fmt == 'p' || *fmt == 'n') {
-                count++;
-                fmt++;
-            } else if (*fmt) {
-                fmt++;  // Unknown specifier, skip
-            }
-        } else {
-            fmt++;
-        }
-    }
-    return count;
-}
 
 int op_CALLF_fn(JCC *vm) {
     // Foreign function call using register-based calling convention
