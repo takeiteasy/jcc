@@ -374,6 +374,7 @@ static bool is_keyword(Token *tok) {
             "__restrict", "__restrict__", "_Noreturn", "float", "double",
             "typeof", "typeof_unqual", "asm", "_Thread_local", "__thread", "_Atomic",
             "__attribute__", "_Static_assert", "static_assert", "constexpr",
+            "__block",  // Apple Blocks extension
         };
 
         for (int i = 0; i < sizeof(kw) / sizeof(*kw); i++)

@@ -395,43 +395,67 @@ static void gen_addr(JCC *vm, Node *node, int dest_reg) {
                 vm->compiler.func_addr_patches[vm->compiler.num_func_addr_patches].function = node->var;
                 vm->compiler.num_func_addr_patches++;
             } else if (node->var->is_local) {
-                // Check if this variable belongs to an outer function (nested function access)
+                // Check if this is a captured variable accessed from within a block
                 Obj *current_fn = vm->compiler.current_fn;
-                Obj *owner_fn = belongs_to_outer_function(current_fn, node->var);
                 
-                if (owner_fn) {
-                    // Accessing outer function's variable via static chain
-                    // 1. Load __static_link from current function's frame
+                if (current_fn && current_fn->is_block && node->var->block_capture_offset > 0) {
+                    // Access captured variable from block descriptor via __static_link
+                    // __static_link points to descriptor, capture is at descriptor + offset
                     Obj *static_link = find_static_link_var(current_fn);
                     if (!static_link) {
-                        error("nested function missing __static_link");
+                        error("block function missing __static_link");
                     }
                     emit_lea3(vm, dest_reg, static_link->offset);  // &__static_link
-                    emit_rr(vm, LDR_D, dest_reg, dest_reg);        // Load static_link (parent's bp)
-                    
-                    // 2. Walk the chain for multi-level nesting
-                    int depth = calculate_chain_depth(current_fn, owner_fn);
-                    // First link already loaded above, so start from 1
-                    for (int i = 1; i < depth; i++) {
-                        // Each parent also has __static_link at offset -1 (8 bytes below bp)
-                        // parent's __static_link is at parent_bp + (-1 * 8) = parent_bp - 8
-                        emit_addi3(vm, dest_reg, dest_reg, -8);  // parent's __static_link slot
-                        emit_rr(vm, LDR_D, dest_reg, dest_reg);  // Load grandparent's bp
+                    emit_rr(vm, LDR_D, dest_reg, dest_reg);        // Load descriptor address
+                    emit_addi3(vm, dest_reg, dest_reg, node->var->block_capture_offset);  // + capture offset
+                    // For __block captured variables, the descriptor slot contains a heap pointer
+                    // We need to dereference it to get the actual storage address
+                    if (node->var->is_block_var) {
+                        emit_rr(vm, LDR_D, dest_reg, dest_reg);    // Load heap pointer from descriptor slot
                     }
-                    
-                    // 3. Now dest_reg contains owner_fn's bp, add variable's offset
-                    // Variable offsets are in slots, so multiply by 8 bytes
-                    emit_addi3(vm, dest_reg, dest_reg, node->var->offset * 8);
                 } else {
-                    // Normal local variable access
-                    // For struct/union parameters, the slot contains a pointer to the struct
-                    // We need to load that pointer, not the slot address
-                    if (node->var->is_param && 
-                        (node->ty->kind == TY_STRUCT || node->ty->kind == TY_UNION)) {
-                        emit_lea3(vm, dest_reg, node->var->offset);  // Slot address
-                        emit_rr(vm, LDR_D, dest_reg, dest_reg);      // Load pointer from slot
+                    // Check if this variable belongs to an outer function (nested function access)
+                    Obj *owner_fn = belongs_to_outer_function(current_fn, node->var);
+                    
+                    if (owner_fn) {
+                        // Accessing outer function's variable via static chain
+                        // 1. Load __static_link from current function's frame
+                        Obj *static_link = find_static_link_var(current_fn);
+                        if (!static_link) {
+                            error("nested function missing __static_link");
+                        }
+                        emit_lea3(vm, dest_reg, static_link->offset);  // &__static_link
+                        emit_rr(vm, LDR_D, dest_reg, dest_reg);        // Load static_link (parent's bp)
+                        
+                        // 2. Walk the chain for multi-level nesting
+                        int depth = calculate_chain_depth(current_fn, owner_fn);
+                        // First link already loaded above, so start from 1
+                        for (int i = 1; i < depth; i++) {
+                            // Each parent also has __static_link at offset -1 (8 bytes below bp)
+                            // parent's __static_link is at parent_bp + (-1 * 8) = parent_bp - 8
+                            emit_addi3(vm, dest_reg, dest_reg, -8);  // parent's __static_link slot
+                            emit_rr(vm, LDR_D, dest_reg, dest_reg);  // Load grandparent's bp
+                        }
+                        
+                        // 3. Now dest_reg contains owner_fn's bp, add variable's offset
+                        // Variable offsets are in slots, so multiply by 8 bytes
+                        emit_addi3(vm, dest_reg, dest_reg, node->var->offset * 8);
                     } else {
-                        emit_lea3(vm, dest_reg, node->var->offset);
+                        // Normal local variable access
+                        // For struct/union parameters, the slot contains a pointer to the struct
+                        // We need to load that pointer, not the slot address
+                        if (node->var->is_param && 
+                            (node->ty->kind == TY_STRUCT || node->ty->kind == TY_UNION)) {
+                            emit_lea3(vm, dest_reg, node->var->offset);  // Slot address
+                            emit_rr(vm, LDR_D, dest_reg, dest_reg);      // Load pointer from slot
+                        } else if (node->var->is_block_var) {
+                            // __block variable: slot contains pointer to heap-allocated wrapper
+                            emit_lea3(vm, dest_reg, node->var->offset);  // Slot address
+                            emit_rr(vm, LDR_D, dest_reg, dest_reg);      // Load heap pointer from slot
+                            // dest_reg now points to actual storage on heap
+                        } else {
+                            emit_lea3(vm, dest_reg, node->var->offset);
+                        }
                     }
                 }
             } else {
@@ -1286,6 +1310,143 @@ static void gen_expr(JCC *vm, Node *node, int dest_reg) {
             add_label_patch(node->unique_label ? node->unique_label : node->label, label_addr_loc);
             return;
         
+        case ND_BLOCK_LITERAL: {
+            // Block literal: creates a block descriptor containing:
+            // [0] = invoke pointer (function address)
+            // [8...] = captured variable values (if any)
+            //
+            // Always creates a descriptor even for no-capture blocks
+            // for uniform calling convention.
+            
+            int num_captures = node->num_block_captures;
+            int descriptor_slots = 1 + num_captures;  // invoke + captures
+            int descriptor_size = descriptor_slots * 8;
+            
+            // Allocate descriptor in data segment
+            long long desc_offset = vm->data_ptr - vm->data_seg;
+            desc_offset = (desc_offset + 7) & ~7;  // Align to 8 bytes
+            vm->data_ptr = vm->data_seg + desc_offset;
+            
+            char *desc_base = vm->data_ptr;
+            vm->data_ptr += descriptor_size;
+            
+            // Load descriptor address into temp register
+            int r_desc = alloc_temp_reg();
+            emit_li3(vm, r_desc, (long long)desc_base);
+            mark_temp_reg_used(r_desc);
+            
+            // Load function address (will be patched later)
+            int r_invoke = alloc_temp_reg();
+            emit_ri(vm, LI3, r_invoke, 0);  // Placeholder for function address
+            long long *invoke_addr_loc = vm->text_ptr;
+            
+            // Record patch for block function address
+            if (vm->compiler.num_func_addr_patches >= MAX_CALLS)
+                error("too many function address references");
+            vm->compiler.func_addr_patches[vm->compiler.num_func_addr_patches].location = invoke_addr_loc;
+            vm->compiler.func_addr_patches[vm->compiler.num_func_addr_patches].function = node->block_fn;
+            vm->compiler.num_func_addr_patches++;
+            
+            // Store invoke pointer at descriptor[0]
+            emit_rr(vm, STR_D, r_invoke, r_desc);
+            free_temp_reg(r_invoke);
+            
+            // Copy captured variable values into descriptor
+            // For __block variables, store the heap pointer (by reference)
+            // For regular captures, copy the value (by copy)
+            for (int i = 0; i < num_captures; i++) {
+                Obj *cap = node->block_captures[i];
+                int r_val = alloc_temp_reg();
+                
+                if (cap->is_block_var) {
+                    // __block variable: store the heap pointer from its stack slot
+                    // (not the value - the block will dereference through this pointer)
+                    emit_lea3(vm, r_val, cap->offset);  // Address of stack slot
+                    emit_rr(vm, LDR_D, r_val, r_val);    // Load heap pointer from slot
+                } else if (cap->is_local) {
+                    // Regular capture: load the current value
+                    emit_lea3(vm, r_val, cap->offset);
+                    emit_load(vm, cap->ty, r_val, r_val);
+                } else {
+                    emit_li3(vm, r_val, (long long)(vm->data_seg + cap->offset));
+                    emit_load(vm, cap->ty, r_val, r_val);
+                }
+                
+                // Store at descriptor[(i + 1) * 8]
+                int r_cap_addr = alloc_temp_reg();
+                emit_addi3(vm, r_cap_addr, r_desc, (i + 1) * 8);
+                emit_rr(vm, STR_D, r_val, r_cap_addr);
+                free_temp_reg(r_cap_addr);
+                free_temp_reg(r_val);
+            }
+            
+            // Return descriptor address
+            if (dest_reg != r_desc) {
+                emit_mov3(vm, dest_reg, r_desc);
+            }
+            free_temp_reg(r_desc);
+            return;
+        }
+        
+        case ND_BLOCK_CALL: {
+            // Block invocation via descriptor:
+            // 1. Evaluate block expression to get descriptor address
+            // 2. Load function pointer from descriptor[0]
+            // 3. Pass descriptor in A0 (as __static_link for captured vars)
+            // 4. Pass user arguments in A1-A7
+            
+            // First, evaluate block expression to get descriptor address
+            int r_desc = alloc_temp_reg();
+            gen_expr(vm, node->lhs, r_desc);
+            mark_temp_reg_used(r_desc);
+            
+            // Count arguments
+            int nargs = 0;
+            for (Node *a = node->args; a; a = a->next) nargs++;
+            
+            // Generate user arguments into A1-A7 (A0 is reserved for descriptor)
+            int arg_idx = 0;
+            for (Node *a = node->args; a; a = a->next) {
+                add_type(vm, a);
+                int arg_reg = REG_A1 + arg_idx;  // User args start at A1
+                if (arg_idx >= 7) {
+                    error_tok(vm, a->tok, "too many block arguments");
+                }
+                if (is_flonum(a->ty)) {
+                    gen_expr(vm, a, FREG_A1 + arg_idx);
+                } else {
+                    gen_expr(vm, a, arg_reg);
+                }
+                arg_idx++;
+            }
+            
+            // Load function pointer from descriptor[0]
+            int r_fn = alloc_temp_reg();
+            emit_rr(vm, LDR_D, r_fn, r_desc);
+            
+            // Pass descriptor in A0 (for __static_link access to captures)
+            emit_mov3(vm, REG_A0, r_desc);
+            free_temp_reg(r_desc);
+            
+            // Indirect call via function pointer
+            emit(vm, CALLI);
+            *++vm->text_ptr = ENCODE_R(r_fn);
+            free_temp_reg(r_fn);
+            
+            reset_temp_regs();
+            
+            // Result is in REG_A0 or FREG_A0
+            if (is_flonum(node->ty)) {
+                if (dest_reg != FREG_A0) {
+                    emit_frr(vm, FNEG3, dest_reg, FREG_A0);
+                    emit_frr(vm, FNEG3, dest_reg, dest_reg);
+                }
+            } else if (dest_reg != REG_A0) {
+                emit_mov3(vm, dest_reg, REG_A0);
+            }
+            return;
+        }
+        
         default:
             error_tok(vm, node->tok, "codegen: unsupported expression node kind %d", node->kind);
     }
@@ -1743,6 +1904,23 @@ void gen_function(JCC *vm, Obj *fn) {
     emit(vm, ENT3);
     *++vm->text_ptr = ent3_operand;
     *++vm->text_ptr = float_param_mask;
+    
+    // Allocate heap storage for __block variables
+    // Each __block variable gets heap allocation of its type's size
+    // The heap pointer is stored in the variable's stack slot
+    for (Obj *var = fn->locals; var; var = var->next) {
+        if (var->is_block_var) {
+            // Allocate heap memory for this __block variable
+            // MALC: REG_A0 = size, result in REG_A0
+            emit_li3(vm, REG_A0, var->ty->size);
+            emit(vm, MALC);
+            // Store the heap pointer in the variable's stack slot
+            int r_addr = alloc_temp_reg();
+            emit_lea3(vm, r_addr, var->offset);  // Address of stack slot
+            emit_rr(vm, STR_D, REG_A0, r_addr);   // Store heap pointer in slot
+            free_temp_reg(r_addr);
+        }
+    }
     
     // Generate function body
     gen_stmt(vm, fn->body);

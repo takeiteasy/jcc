@@ -194,7 +194,6 @@ JCC has a custom standard library that is located in `include`. It is just a col
 
 ## TODO
 
-- Blocks/closures (`^{}`) - Complex feature requiring variable capture and closure runtime
 - Preprocessor support for `__has_include`, `__has_include_next`, `__has_extension`, `__has_feature`
 - Support for `_Defer` statement
 - Support for `_Pragma` statement

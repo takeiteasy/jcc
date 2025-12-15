@@ -64,6 +64,7 @@ typedef struct {
     bool is_inline;
     bool is_tls;
     bool is_constexpr;
+    bool is_block_var;  // __block storage qualifier (Apple blocks)
     int align;
 } VarAttr;
 
@@ -511,7 +512,7 @@ static Type *declspec(JCC *vm, Token **rest, Token *tok, VarAttr *attr) {
         // Handle storage class specifiers.
         if (equal(tok, "typedef") || equal(tok, "static") || equal(tok, "extern") ||
             equal(tok, "inline") || equal(tok, "_Thread_local") || equal(tok, "__thread") ||
-            equal(tok, "constexpr")) {
+            equal(tok, "constexpr") || equal(tok, "__block")) {
             if (!attr)
                 error_tok(vm, tok, "storage class specifier is not allowed in this context");
 
@@ -525,6 +526,8 @@ static Type *declspec(JCC *vm, Token **rest, Token *tok, VarAttr *attr) {
                 attr->is_inline = true;
             else if (equal(tok, "constexpr"))
                 attr->is_constexpr = true;
+            else if (equal(tok, "__block"))
+                attr->is_block_var = true;
             else
                 attr->is_tls = true;
 
@@ -532,6 +535,12 @@ static Type *declspec(JCC *vm, Token **rest, Token *tok, VarAttr *attr) {
                 attr->is_static + attr->is_extern + attr->is_inline + attr->is_tls > 1)
                 error_tok(vm, tok, "typedef may not be used together with static,"
                           " extern, inline, __thread or _Thread_local");
+            
+            // __block is mutually exclusive with auto, register, static, extern
+            if (attr->is_block_var &&
+                (attr->is_static || attr->is_extern || attr->is_tls))
+                error_tok(vm, tok, "__block may not be used together with static,"
+                          " extern, __thread or _Thread_local");
             tok = tok->next;
             continue;
         }
@@ -828,6 +837,34 @@ static Type *declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
 
     ty = pointers(vm, &tok, tok, ty);
 
+    // Handle block type: int (^name)(params)
+    // The ^ indicates this is a block type, not a function pointer
+    if (equal(tok, "(") && equal(tok->next, "^")) {
+        Token *start = tok;
+        tok = tok->next->next;  // Skip '(' and '^'
+        
+        Token *name = NULL;
+        Token *name_pos = tok;
+        
+        if (tok->kind == TK_IDENT) {
+            name = tok;
+            tok = tok->next;
+        }
+        
+        tok = skip(vm, tok, ")");
+        
+        // Now parse the parameter list: (params)
+        // This creates the function signature that the block will have
+        Type *func_ty = type_suffix(vm, rest, tok, ty);
+        
+        // Create a block type instead of function pointer
+        Type *block_ty = block_type(vm, func_ty->return_ty, func_ty->params);
+        block_ty->name = name;
+        block_ty->name_pos = name_pos;
+        
+        return block_ty;
+    }
+
     if (equal(tok, "(")) {
         Token *start = tok;
         Type dummy = {};
@@ -864,6 +901,18 @@ static Type *abstract_declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
     tok = c23_attribute_list(vm, tok, ty);
 
     ty = pointers(vm, &tok, tok, ty);
+
+    // Handle block type: int (^)(params) in abstract declarators (for casts)
+    if (equal(tok, "(") && equal(tok->next, "^")) {
+        tok = tok->next->next;  // Skip '(' and '^'
+        tok = skip(vm, tok, ")");
+        
+        // Parse the parameter list
+        Type *func_ty = type_suffix(vm, rest, tok, ty);
+        
+        // Create a block type
+        return block_type(vm, func_ty->return_ty, func_ty->params);
+    }
 
     if (equal(tok, "(")) {
         Token *start = tok;
@@ -1107,6 +1156,8 @@ static Node *declaration(JCC *vm, Token **rest, Token *tok, Type *basety, VarAtt
         Obj *var = new_lvar(vm, get_ident(vm, ty->name), ty->name->len, ty);
         if (attr && attr->align)
             var->align = attr->align;
+        if (attr && attr->is_block_var)
+            var->is_block_var = true;
 
         if (equal(tok, "=")) {
             // Mark this variable as being initialized (allows const initialization)
@@ -1840,7 +1891,7 @@ static bool is_typename(JCC *vm, Token *tok) {
             "typedef", "enum", "static", "extern", "_Alignas", "signed", "unsigned",
             "const", "volatile", "auto", "register", "restrict", "__restrict",
             "__restrict__", "_Noreturn", "float", "double", "typeof", "typeof_unqual",
-            "inline", "_Thread_local", "__thread", "_Atomic", "constexpr",
+            "inline", "_Thread_local", "__thread", "_Atomic", "constexpr", "__block",
         };
 
         for (int i = 0; i < sizeof(kw) / sizeof(*kw); i++)
@@ -2947,11 +2998,222 @@ static Node *cast(JCC *vm, Token **rest, Token *tok) {
     return unary(vm, rest, tok);
 }
 
+// ========== Block Literal Support (Apple Blocks Extension) ==========
+
+// Recursively collect variables from outer scopes that are referenced in an expression
+static void collect_captures_in_node(JCC *vm, Node *node, Obj *outer_locals, 
+                                     Obj ***captures, int *num_captures, int *cap_capacity) {
+    if (!node) return;
+    
+    if (node->kind == ND_VAR && node->var && node->var->is_local) {
+        // Check if this variable belongs to an outer function (in outer_locals list)
+        bool is_outer = false;
+        for (Obj *local = outer_locals; local; local = local->next) {
+            if (local == node->var) {
+                is_outer = true;
+                break;
+            }
+        }
+        
+        if (is_outer) {
+            // Check if already captured
+            for (int i = 0; i < *num_captures; i++) {
+                if ((*captures)[i] == node->var) return;  // Already captured
+            }
+            
+            // Add to captures list
+            if (*num_captures >= *cap_capacity) {
+                *cap_capacity = (*cap_capacity == 0) ? 8 : *cap_capacity * 2;
+                Obj **new_caps = arena_alloc(&vm->compiler.parser_arena, 
+                                             sizeof(Obj *) * (*cap_capacity));
+                for (int i = 0; i < *num_captures; i++)
+                    new_caps[i] = (*captures)[i];
+                *captures = new_caps;
+            }
+            (*captures)[(*num_captures)++] = node->var;
+            node->var->is_captured = true;
+        }
+    }
+    
+    // Recursively check all children
+    collect_captures_in_node(vm, node->lhs, outer_locals, captures, num_captures, cap_capacity);
+    collect_captures_in_node(vm, node->rhs, outer_locals, captures, num_captures, cap_capacity);
+    collect_captures_in_node(vm, node->cond, outer_locals, captures, num_captures, cap_capacity);
+    collect_captures_in_node(vm, node->then, outer_locals, captures, num_captures, cap_capacity);
+    collect_captures_in_node(vm, node->els, outer_locals, captures, num_captures, cap_capacity);
+    collect_captures_in_node(vm, node->init, outer_locals, captures, num_captures, cap_capacity);
+    collect_captures_in_node(vm, node->inc, outer_locals, captures, num_captures, cap_capacity);
+    
+    for (Node *n = node->body; n; n = n->next)
+        collect_captures_in_node(vm, n, outer_locals, captures, num_captures, cap_capacity);
+    for (Node *n = node->args; n; n = n->next)
+        collect_captures_in_node(vm, n, outer_locals, captures, num_captures, cap_capacity);
+}
+
+// Parse a block literal: ^{ ... } or ^(params){ ... } or ^returntype(params){ ... }
+static Node *block_literal(JCC *vm, Token **rest, Token *tok) {
+    Token *start = tok;
+    tok = tok->next;  // Skip ^
+    
+    // Determine return type and parameters
+    Type *return_ty = ty_void;
+    Type *params = NULL;
+    bool has_params = false;
+    
+    // Check for explicit return type (anything before '(' that's a type)
+    if (!equal(tok, "{") && !equal(tok, "(") && is_typename(vm, tok)) {
+        return_ty = typename(vm, &tok, tok);
+    }
+    
+    // Check for parameter list
+    if (equal(tok, "(")) {
+        tok = tok->next;
+        has_params = true;
+        
+        if (!equal(tok, ")")) {
+            // Parse parameters using declspec + declarator (like func_params)
+            Type head = {};
+            Type *cur = &head;
+            while (!equal(tok, ")")) {
+                if (cur != &head)
+                    tok = skip(vm, tok, ",");
+                
+                Type *param_ty = declspec(vm, &tok, tok, NULL);
+                param_ty = declarator(vm, &tok, tok, param_ty);
+                
+                // Convert array and function parameters to pointers
+                if (param_ty->kind == TY_ARRAY) {
+                    Token *name = param_ty->name;
+                    param_ty = pointer_to(vm, param_ty->base);
+                    param_ty->name = name;
+                } else if (param_ty->kind == TY_FUNC) {
+                    Token *name = param_ty->name;
+                    param_ty = pointer_to(vm, param_ty);
+                    param_ty->name = name;
+                }
+                
+                cur = cur->next = copy_type(vm, param_ty);
+            }
+            params = head.next;
+        }
+        tok = skip(vm, tok, ")");
+    }
+    
+    // Now we must have a compound statement
+    if (!equal(tok, "{"))
+        error_tok(vm, tok, "expected '{' in block literal");
+    
+    // Save current function context
+    Obj *outer_fn = vm->compiler.current_fn;
+    Obj *saved_locals = vm->compiler.locals;
+    
+    // Create a synthetic function for this block
+    char *block_name = new_unique_name(vm);
+    Type *block_func_ty = func_type(vm, return_ty);
+    block_func_ty->params = params;
+    
+    Obj *block_fn = new_gvar(vm, block_name, strlen(block_name), block_func_ty);
+    block_fn->is_function = true;
+    block_fn->is_definition = true;
+    block_fn->is_static = true;
+    block_fn->is_block = true;
+    block_fn->parent_fn = outer_fn;
+    block_fn->is_nested = true;  // Treat blocks like nested functions for codegen
+    block_fn->nesting_depth = outer_fn ? outer_fn->nesting_depth + 1 : 1;
+    
+    // Set up block function context
+    vm->compiler.current_fn = block_fn;
+    vm->compiler.locals = NULL;
+    
+    enter_scope(vm);
+    
+    // Create params in correct order for calling convention:
+    // A0 = __static_link (descriptor), A1 = first user param, A2 = second, etc.
+    // Since new_lvar prepends, we need to add in REVERSE order:
+    // add last user param, then prev, ..., then first user param, then __static_link
+    
+    // Count user params and store in array for reverse iteration
+    int param_count = 0;
+    for (Type *p = params; p; p = p->next) param_count++;
+    
+    Type **param_array = NULL;
+    if (param_count > 0) {
+        param_array = arena_alloc(&vm->compiler.parser_arena, sizeof(Type*) * param_count);
+        int idx = 0;
+        for (Type *p = params; p; p = p->next) {
+            param_array[idx++] = p;
+        }
+    }
+    
+    // Add user params in reverse order (last first)
+    for (int i = param_count - 1; i >= 0; i--) {
+        Type *p = param_array[i];
+        if (p->name) {
+            new_lvar(vm, get_ident(vm, p->name), p->name->len, p);
+        }
+    }
+    
+    // Add __static_link LAST so it ends up FIRST in the list (receives A0)
+    new_lvar(vm, "__static_link", 13, pointer_to(vm, ty_void));
+    
+    block_fn->params = vm->compiler.locals;
+    block_fn->alloca_bottom = new_lvar(vm, "__alloca_size__", 15, pointer_to(vm, ty_char));
+    
+    // Now parse the block body - params are visible in scope
+    tok = skip(vm, tok, "{");
+    block_fn->body = compound_stmt(vm, &tok, tok);
+    block_fn->locals = vm->compiler.locals;
+    
+    leave_scope(vm);
+    
+    // Collect captured variables from the parsed body
+    // Use saved_locals (the outer function's locals list at the time we started)
+    Obj **captures = NULL;
+    int num_captures = 0, cap_capacity = 0;
+    
+    if (saved_locals) {
+        collect_captures_in_node(vm, block_fn->body, saved_locals, 
+                                 &captures, &num_captures, &cap_capacity);
+    }
+    
+    block_fn->captures = captures;
+    block_fn->num_captures = num_captures;
+    
+    // Store capture offsets - each captured variable will be at a known offset in descriptor
+    // Descriptor layout: [0]=invoke_ptr, [8]=cap0, [16]=cap1, ...
+    for (int i = 0; i < num_captures; i++) {
+        captures[i]->block_capture_offset = (i + 1) * 8;  // offset in descriptor
+    }
+    
+    // Restore outer function context
+    vm->compiler.current_fn = outer_fn;
+    vm->compiler.locals = saved_locals;
+    
+    // Create the block literal node
+    Node *node = new_node(vm, ND_BLOCK_LITERAL, start);
+    node->block_fn = block_fn;
+    node->block_captures = captures;
+    node->num_block_captures = num_captures;
+    
+    // Block type: pointer to function type (blocks are first-class callable values)
+    node->ty = block_type(vm, return_ty, params);
+    
+    *rest = tok;
+    return node;
+}
+
 // unary = ("+" | "-" | "*" | "&" | "!" | "~") cast
 //       | ("++" | "--") unary
 //       | "&&" ident
+//       | "^" block-literal  (Apple blocks extension)
 //       | postfix
 static Node *unary(JCC *vm, Token **rest, Token *tok) {
+    // Apple blocks: ^{ ... } or ^(params){ ... } or ^returntype(params){ ... }
+    if (equal(tok, "^") && tok->next && 
+        (equal(tok->next, "{") || equal(tok->next, "(") || is_typename(vm, tok->next))) {
+        return block_literal(vm, rest, tok);
+    }
+    
     if (equal(tok, "+"))
         return cast(vm, rest, tok->next);
 
@@ -3408,7 +3670,32 @@ static Node *postfix(JCC *vm, Token **rest, Token *tok) {
 
     for (;;) {
         if (equal(tok, "(")) {
-            node = funcall(vm, &tok, tok->next, node);
+            // Check if this is a block invocation
+            add_type(vm, node);
+            if (node->ty && node->ty->kind == TY_BLOCK) {
+                // Block invocation: create ND_BLOCK_CALL
+                Token *start = tok;
+                tok = tok->next;  // Skip '('
+                
+                // Parse arguments
+                Node head = {};
+                Node *cur = &head;
+                while (!equal(tok, ")")) {
+                    if (cur != &head)
+                        tok = skip(vm, tok, ",");
+                    Node *arg = assign(vm, &tok, tok);
+                    cur = cur->next = arg;
+                }
+                tok = tok->next;  // Skip ')'
+                
+                Node *call = new_node(vm, ND_BLOCK_CALL, start);
+                call->lhs = node;
+                call->args = head.next;
+                call->ty = node->ty->return_ty ? node->ty->return_ty : ty_void;
+                node = call;
+            } else {
+                node = funcall(vm, &tok, tok->next, node);
+            }
             continue;
         }
 
@@ -3699,6 +3986,30 @@ static Node *primary(JCC *vm, Token **rest, Token *tok) {
         *rest = skip(vm, tok, ")");
         Node *node = new_node(vm, ND_FRAME_ADDR, start);
         node->ty = pointer_to(vm, ty_void);
+        return node;
+    }
+    
+    // Block_copy(block) - Apple Blocks extension
+    // In JCC's simplified model, blocks are already heap-allocated, so this just returns the block
+    if (equal(tok, "Block_copy")) {
+        tok = skip(vm, tok->next, "(");
+        Node *block_expr = assign(vm, &tok, tok);
+        *rest = skip(vm, tok, ")");
+        // Simply return the block expression as-is (already has TY_BLOCK type or void*)
+        add_type(vm, block_expr);
+        return block_expr;
+    }
+    
+    // Block_release(block) - Apple Blocks extension  
+    // In JCC's simplified model, this is a no-op (VM teardown handles cleanup)
+    if (equal(tok, "Block_release")) {
+        tok = skip(vm, tok->next, "(");
+        Node *block_expr = assign(vm, &tok, tok);  // Evaluate but discard
+        *rest = skip(vm, tok, ")");
+        // Return a null expression (void, no effect)
+        add_type(vm, block_expr);
+        Node *node = new_node(vm, ND_NULL_EXPR, start);
+        node->ty = ty_void;
         return node;
     }
 

@@ -906,8 +906,6 @@ static bool is_standard_header(const char *filename) {
         "limits.h", "math.h", "setjmp.h", "stdarg.h", "stdbool.h",
         "stddef.h", "stdint.h", "stdio.h", "stdlib.h", "string.h",
         "time.h",
-        // JCC-specific headers
-        "pragma_api.h", "reflection_api.h",
         NULL
     };
 
