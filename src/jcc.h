@@ -391,6 +391,7 @@ typedef enum {
     TY_STRUCT   = 14,
     TY_UNION    = 15,
     TY_ERROR    = 16, // error type for recovery
+    TY_BLOCK    = 17, // Apple blocks (closures)
 } TypeKind;
 
 typedef struct Node Node;
@@ -526,6 +527,8 @@ typedef enum {
     ND_CAS       = 46,      // Atomic compare-and-swap
     ND_EXCH      = 47,      // Atomic exchange
     ND_FRAME_ADDR = 48,     // __builtin_frame_address(0) - returns base pointer
+    ND_BLOCK_LITERAL = 49,  // Block literal ^{ ... }
+    ND_BLOCK_CALL = 50,     // Block invocation
 } NodeKind;
 
 /*!
@@ -599,6 +602,11 @@ struct Node {
     // Numeric literal
     int64_t val;
     long double fval;
+
+    // Block literal (Apple blocks extension)
+    Obj *block_fn;          // Synthetic function for block's body
+    Obj **block_captures;   // Array of captured variables
+    int num_block_captures; // Number of captured variables
 };
 
 /*!
@@ -654,6 +662,13 @@ struct Obj {
     struct Obj *parent_fn;    // Enclosing function (NULL if top-level)
     bool is_nested;           // True if defined inside another function
     int nesting_depth;        // 0 = top-level, 1 = one level deep, etc.
+
+    // Block support (Apple blocks extension)
+    bool is_block;            // True if this is a block's synthetic function
+    Obj **captures;           // Array of captured outer variables
+    int num_captures;         // Number of captured variables
+    int block_capture_offset; // For captured vars: offset in block descriptor
+    bool is_block_var;        // True if declared with __block storage qualifier
 
     // Static inline function
     bool is_live;
