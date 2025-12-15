@@ -172,6 +172,13 @@ Type *union_type(JCC *vm) {
     return new_type(vm, TY_UNION, 0, 1);
 }
 
+Type *block_type(JCC *vm, Type *return_ty, Type *params) {
+    Type *ty = new_type(vm, TY_BLOCK, 8, 8);  // Block pointers are 8 bytes
+    ty->return_ty = return_ty;
+    ty->params = params;
+    return ty;
+}
+
 // Integer promotion: Convert types smaller than int to int (C99 6.3.1.1)
 // char, short, and bit-fields promote to int if all values fit, else unsigned int
 static Type *integer_promotion(Type *ty) {
@@ -468,6 +475,23 @@ void add_type(JCC *vm, Node *node) {
             if (node->lhs->ty->kind != TY_PTR)
                 error_tok(vm, node->cas_addr->tok, "pointer expected");
             node->ty = node->lhs->ty->base;
+            return;
+        case ND_BLOCK_LITERAL:
+            // Block literal type is already set during parsing (TY_BLOCK)
+            // If not set, infer from block_fn
+            if (!node->ty && node->block_fn && node->block_fn->ty) {
+                node->ty = block_type(vm, node->block_fn->ty->return_ty, 
+                                      node->block_fn->ty->params);
+            }
+            return;
+        case ND_BLOCK_CALL:
+            // Block call returns the block's return type
+            add_type(vm, node->lhs);
+            if (node->lhs->ty && node->lhs->ty->kind == TY_BLOCK) {
+                node->ty = node->lhs->ty->return_ty ? node->lhs->ty->return_ty : ty_void;
+            } else {
+                node->ty = ty_int;  // Fallback
+            }
             return;
         default:
             return;

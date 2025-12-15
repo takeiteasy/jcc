@@ -201,6 +201,7 @@ Type *vla_of(JCC *vm, Type *base, Node *expr);
 Type *enum_type(JCC *vm);
 Type *struct_type(JCC *vm);
 Type *union_type(JCC *vm);
+Type *block_type(JCC *vm, Type *return_ty, Type *params);
 void add_type(JCC *vm, Node *node);
 
 //
