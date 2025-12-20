@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+# LLVM Test runner for JCC
+# Compiles test_*.c files using LLVM backend and runs the native binaries
+# Binaries are built to /tmp and cleaned up after all tests run
+
+script_dir=$(cd "$(dirname "$0")" && pwd)
+jcc="$script_dir/jcc"
+tests_dir="$script_dir/tests"
+output_dir="/tmp/jcc_llvm_tests_$$"
+
+# Check if jcc exists
+if [ ! -f "$jcc" ]; then
+    echo "Error: jcc executable not found. Please run 'make JCC_HAS_LLVM=1' first."
+    exit 1
+fi
+
+# Check if JCC was built with LLVM support
+if ! "$jcc" --help 2>&1 | grep -q "\-\-llvm"; then
+    echo "Error: jcc was not built with LLVM support."
+    echo "Please rebuild with: make clean && make JCC_HAS_LLVM=1"
+    exit 1
+fi
+
+# Check if tests directory exists
+if [ ! -d "$tests_dir" ]; then
+    echo "Error: tests directory not found."
+    exit 1
+fi
+
+# Create output directory
+mkdir -p "$output_dir"
+
+# Cleanup function
+cleanup() {
+    rm -rf "$output_dir"
+}
+trap cleanup EXIT
+
+# Initialize counters
+passed=0
+failed=0
+crashed=0
+compile_failed=0
+total=0
+negative_passed=0
+failed_tests=()
+crashed_tests=()
+compile_failed_tests=()
+
+# Get all test files
+test_files=()
+while IFS= read -r file; do
+    [ -n "$file" ] && test_files+=("$file")
+done < <(find "$tests_dir" -name "test_*.c" -maxdepth 1 | sort)
+
+# Parse arguments
+match_pattern=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --match)
+            match_pattern="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+# Filter tests by match pattern if provided
+if [ -n "$match_pattern" ]; then
+    filtered_tests=()
+    for test_file in "${test_files[@]}"; do
+        test_name=$(basename "$test_file")
+        if [[ $test_name == $match_pattern ]]; then
+            filtered_tests+=("$test_file")
+        fi
+    done
+    test_files=("${filtered_tests[@]}")
+fi
+
+if [ ${#test_files[@]} -eq 0 ]; then
+    echo "No test files found in $tests_dir"
+    exit 1
+fi
+
+echo "Running JCC LLVM tests..."
+echo "Output directory: $output_dir"
+if [ -n "$match_pattern" ]; then
+    echo "Filtering tests matching: $match_pattern"
+fi
+echo "======================="
+echo ""
+
+# Run each test
+for test_file in "${test_files[@]}"; do
+    test_name=$(basename "$test_file" .c)
+    binary_path="$output_dir/$test_name"
+    total=$((total + 1))
+
+    # Check if this is a negative test (expects compilation error)
+    is_negative_test=0
+    if head -n 1 "$test_file" | grep -q "EXPECT_COMPILE_ERROR"; then
+        is_negative_test=1
+    fi
+
+    # Check if this test expects a runtime error
+    expects_runtime_error=0
+    if head -n 1 "$test_file" | grep -q "EXPECT_RUNTIME_ERROR"; then
+        expects_runtime_error=1
+    fi
+
+    # Step 1: Compile with LLVM
+    compile_output=$("$jcc" -I./include --llvm -o "$binary_path" "$test_file" 2>&1)
+    compile_exit=$?
+
+    # Check for compilation error
+    has_compile_error=0
+    if [ $compile_exit -ne 0 ] || echo "$compile_output" | grep -q "error"; then
+        has_compile_error=1
+    fi
+
+    if [ $has_compile_error -eq 1 ]; then
+        if [ $is_negative_test -eq 1 ]; then
+            negative_passed=$((negative_passed + 1))
+            echo "✓ $test_name.c (correctly rejected invalid code)"
+        else
+            compile_failed=$((compile_failed + 1))
+            compile_failed_tests+=("$test_name.c")
+            echo "✗ $test_name.c (LLVM COMPILATION FAILED)"
+            echo "$compile_output" | head -n 3 | sed 's/^/  /'
+        fi
+        continue
+    fi
+
+    # Check if binary was created
+    if [ ! -f "$binary_path" ]; then
+        compile_failed=$((compile_failed + 1))
+        compile_failed_tests+=("$test_name.c (binary not created)")
+        echo "✗ $test_name.c (binary not created)"
+        continue
+    fi
+
+    # Step 2: Run the compiled binary
+    run_output=$("$binary_path" 2>&1)
+    exit_code=$?
+
+    # Crash detection
+    if [ $exit_code -eq 134 ] || [ $exit_code -eq 139 ] || [ $exit_code -eq 136 ] || [ $exit_code -eq 141 ]; then
+        crashed=$((crashed + 1))
+        crashed_tests+=("$test_name.c (exit code: $exit_code)")
+        echo "💥 $test_name.c (CRASHED: exit code $exit_code)"
+    elif [ $exit_code -eq 42 ]; then
+        # Exit code 42 indicates successful test execution
+        passed=$((passed + 1))
+        echo "✓ $test_name.c"
+    elif [ $expects_runtime_error -eq 1 ] && [ $exit_code -eq 255 ]; then
+        negative_passed=$((negative_passed + 1))
+        echo "✓ $test_name.c (correctly detected runtime error)"
+    else
+        failed=$((failed + 1))
+        failed_tests+=("$test_name.c (exit code: $exit_code)")
+        echo "✗ $test_name.c (expected exit code 42, got: $exit_code)"
+    fi
+done
+
+echo ""
+echo "======================="
+echo "LLVM Test Results Summary"
+echo "======================="
+echo "Total:             $total"
+echo "Passed:            $passed"
+echo "Negative tests:    $negative_passed (correctly rejected invalid code)"
+echo "Compile failed:    $compile_failed"
+echo "Runtime failed:    $failed"
+echo "Crashed:           $crashed"
+
+if [ $crashed -gt 0 ]; then
+    echo ""
+    echo "⚠️  CRASHED TESTS (segfaults/aborts):"
+    for test in "${crashed_tests[@]}"; do
+        echo "  - $test"
+    done
+fi
+
+if [ $compile_failed -gt 0 ]; then
+    echo ""
+    echo "Compilation failed:"
+    for test in "${compile_failed_tests[@]}"; do
+        echo "  - $test"
+    done
+fi
+
+if [ $failed -gt 0 ]; then
+    echo ""
+    echo "Runtime failed tests:"
+    for test in "${failed_tests[@]}"; do
+        echo "  - $test"
+    done
+fi
+
+if [ $failed -gt 0 ] || [ $crashed -gt 0 ] || [ $compile_failed -gt 0 ]; then
+    exit 1
+else
+    echo ""
+    echo "All tests passed! 🎉"
+    exit 0
+fi

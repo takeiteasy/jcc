@@ -1400,9 +1400,10 @@ static void gen_expr(JCC *vm, Node *node, int dest_reg) {
             gen_expr(vm, node->lhs, r_desc);
             mark_temp_reg_used(r_desc);
             
-            // Count arguments
+            // Count arguments (nargs used for max args check)
             int nargs = 0;
             for (Node *a = node->args; a; a = a->next) nargs++;
+            (void)nargs;  // Suppress unused variable warning
             
             // Generate user arguments into A1-A7 (A0 is reserved for descriptor)
             int arg_idx = 0;

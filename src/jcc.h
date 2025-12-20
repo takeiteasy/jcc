@@ -47,6 +47,13 @@
 #include <ffi.h>
 #endif
 
+// LLVM support for native code generation (AOT compilation)
+#ifdef JCC_HAS_LLVM
+#include <llvm-c/Core.h>
+#include <llvm-c/Target.h>
+#include <llvm-c/TargetMachine.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -250,6 +257,27 @@ typedef struct HashMap {
     int capacity;
     int used;
 } HashMap;
+
+#ifdef JCC_HAS_LLVM
+/*!
+ @struct LLVMCodegen
+ @abstract State for LLVM IR code generation backend.
+ @discussion This struct holds all LLVM-related state needed for
+             compiling C code to LLVM IR and emitting object/executable files.
+*/
+typedef struct LLVMCodegen {
+    LLVMContextRef context;
+    LLVMModuleRef module;
+    LLVMBuilderRef builder;
+    LLVMValueRef current_fn;
+    LLVMValueRef sret_ptr;   // sret pointer for current function (if returning aggregate)
+    HashMap obj_to_llvm;     // Map from Obj* -> LLVMValueRef
+    HashMap struct_types;    // Map from Type* -> LLVMTypeRef (for named structs)
+    LLVMBasicBlockRef break_block;
+    LLVMBasicBlockRef continue_block;
+    HashMap label_blocks;    // Map from label name -> LLVMBasicBlockRef
+} LLVMCodegen;
+#endif
 
 /*!
  @struct File

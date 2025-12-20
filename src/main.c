@@ -39,6 +39,9 @@ static void usage(const char *argv0, int exit_code) {
     printf("\t-S/--no-stdlib      Do not link standard library\n");
     printf("\t-o/--out <file>     Dump bytecode to <file> (no execution)\n");
     printf("\t-d/--disassemble    Disassemble bytecode to stdout\n");
+#ifdef JCC_HAS_LLVM
+    printf("\t   --llvm            Use LLVM backend for native binary output (with -o)\n");
+#endif
     printf("\t-v/--verbose        Enable debug logging\n");
     printf("\t-g/--debug          Enable interactive debugger\n");
     printf("\nSafety Levels (preset flag combinations):\n");
@@ -208,6 +211,9 @@ int main(int argc, const char* argv[]) {
     char *url_cache_dir = NULL; // --url-cache-dir
     int url_cache_clear = 0; // --url-cache-clear
 #endif
+#ifdef JCC_HAS_LLVM
+    int use_llvm = 0; // --llvm
+#endif
     int max_errors = 20; // --max-errors (default: 20)
     int warnings_as_errors = 0; // --Werror
     size_t embed_limit = 0; // --embed-limit (0 = use default)
@@ -262,6 +268,9 @@ int main(int argc, const char* argv[]) {
         {"embed-limit", required_argument, 0, 1014},
         {"embed-hard-limit", no_argument, 0, 1015},
         {"optimize", optional_argument, 0, 1016},
+#ifdef JCC_HAS_LLVM
+        {"llvm", no_argument, 0, 1017},
+#endif
         {0, 0, 0, 0}
     };
 
@@ -449,6 +458,11 @@ int main(int argc, const char* argv[]) {
                 usage(argv[0], 1);
             }
             break;
+#ifdef JCC_HAS_LLVM
+        case 1017:  // --llvm
+            use_llvm = 1;
+            break;
+#endif
         case '?':
             if (optopt)
                 fprintf(stderr, "error: option -%c requires an argument\n", optopt);
@@ -514,8 +528,9 @@ int main(int argc, const char* argv[]) {
     if (verbose)
         vm.debug_vm = 1;
 
-    // Check if input is a bytecode file (.jbc extension)
-    // If so, load and run it directly without compilation
+    // Initialize these early to avoid uninitialized variable warnings when jumping to BAIL
+    Obj **input_progs = NULL;
+    Token **input_tokens = NULL;
     if (input_files_count == 1) {
         const char *input_file = input_files[0];
         size_t len = strlen(input_file);
@@ -601,8 +616,7 @@ int main(int argc, const char* argv[]) {
         cc_undef(&vm, (char *)undefs[i]);
 
     vm.compiler.skip_preprocess = skip_preprocess;
-    Obj **input_progs = NULL;
-    Token **input_tokens = calloc(input_files_count, sizeof(Token*));
+    input_tokens = calloc(input_files_count, sizeof(Token*));
     for (int i = 0; i < input_files_count; i++) {
         input_tokens[i] = cc_preprocess(&vm, input_files[i]);
         if (!input_tokens[i]) {
@@ -697,7 +711,49 @@ int main(int argc, const char* argv[]) {
         goto BAIL;
     }
 
-    // Compile the merged program
+#ifdef JCC_HAS_LLVM
+    if (use_llvm) {
+        // LLVM backend: compile to native binary
+        if (!out_file) {
+            fprintf(stderr, "error: --llvm requires -o <output> to specify output file\n");
+            exit_code = 1;
+            goto BAIL;
+        }
+
+        LLVMCodegen cg;
+        if (codegen_llvm_init(&cg) != 0) {
+            fprintf(stderr, "error: failed to initialize LLVM\n");
+            exit_code = 1;
+            goto BAIL;
+        }
+
+        if (cc_compile_llvm(&vm, &cg, merged_prog) != 0) {
+            fprintf(stderr, "error: LLVM code generation failed\n");
+            codegen_llvm_destroy(&cg);
+            exit_code = 1;
+            goto BAIL;
+        }
+
+        if (disassemble) {
+            codegen_llvm_dump_ir(&cg);
+            codegen_llvm_destroy(&cg);
+            goto BAIL;
+        }
+
+        if (cc_emit_executable_llvm(&cg, out_file) != 0) {
+            fprintf(stderr, "error: failed to emit executable to %s\n", out_file);
+            codegen_llvm_destroy(&cg);
+            exit_code = 1;
+            goto BAIL;
+        }
+
+        printf("Native executable saved to %s\n", out_file);
+        codegen_llvm_destroy(&cg);
+        goto BAIL;
+    }
+#endif
+
+    // VM backend: compile to bytecode
     cc_compile(&vm, merged_prog);
 
     // Check for errors after code generation

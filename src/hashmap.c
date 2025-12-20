@@ -84,8 +84,15 @@ static void rehash(HashMap *map) {
 
     for (int ii = 0; ii < map->capacity; ii++) {
         HashEntry *ent = &map->buckets[ii];
-        if (ent->key && ent->key != TOMBSTONE)
-            hashmap_put2(&map2, ent->key, ent->keylen, ent->val);
+        if (ent->key && ent->key != TOMBSTONE) {
+            if (ent->keylen == -1) {
+                // Integer key: use hashmap_put_int
+                hashmap_put_int(&map2, (long long)ent->key, ent->val);
+            } else {
+                // String key: use hashmap_put2
+                hashmap_put2(&map2, ent->key, ent->keylen, ent->val);
+            }
+        }
     }
 
     assert(map2.used == nkeys);

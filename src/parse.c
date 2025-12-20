@@ -840,7 +840,6 @@ static Type *declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
     // Handle block type: int (^name)(params)
     // The ^ indicates this is a block type, not a function pointer
     if (equal(tok, "(") && equal(tok->next, "^")) {
-        Token *start = tok;
         tok = tok->next->next;  // Skip '(' and '^'
         
         Token *name = NULL;
@@ -3059,6 +3058,8 @@ static Node *block_literal(JCC *vm, Token **rest, Token *tok) {
     Type *return_ty = ty_void;
     Type *params = NULL;
     bool has_params = false;
+    (void)params;     // May be unused in some paths
+    (void)has_params; // May be unused in some paths
     
     // Check for explicit return type (anything before '(' that's a type)
     if (!equal(tok, "{") && !equal(tok, "(") && is_typename(vm, tok)) {

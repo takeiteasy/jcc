@@ -274,8 +274,19 @@ void codegen(JCC *vm, Obj *prog);
 
 void gen_function(JCC *vm, Obj *fn);
 void gen(JCC *vm, Obj *prog);
-// Note: gen_expr is now static in codegen.c with signature:
-// static void gen_expr(JCC *vm, Node *node, int dest_reg);
+
+//
+// codegen_llvm.c (optional LLVM backend)
+//
+
+#ifdef JCC_HAS_LLVM
+int codegen_llvm_init(LLVMCodegen *cg);
+void codegen_llvm_destroy(LLVMCodegen *cg);
+int cc_compile_llvm(JCC *vm, LLVMCodegen *cg, Obj *prog);
+int cc_emit_object_llvm(LLVMCodegen *cg, const char *output_path);
+int cc_emit_executable_llvm(LLVMCodegen *cg, const char *output_path);
+void codegen_llvm_dump_ir(LLVMCodegen *cg);
+#endif
 
 //
 // vm.c

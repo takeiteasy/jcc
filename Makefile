@@ -58,6 +58,22 @@ ifdef JCC_HAS_CURL
   endif
 endif
 
+# Optional LLVM support for native code generation
+# Enable with: make JCC_HAS_LLVM=1 or export JCC_HAS_LLVM=1
+# Requires LLVM to be installed (e.g., brew install llvm on macOS)
+ifdef JCC_HAS_LLVM
+  ifneq ($(JCC_HAS_LLVM),0)
+    CFLAGS += -DJCC_HAS_LLVM=1
+    # Use llvm-config for LLVM flags
+    LLVM_CONFIG := $(shell which llvm-config 2>/dev/null || echo /opt/homebrew/opt/llvm/bin/llvm-config)
+    LLVM_CFLAGS := $(shell $(LLVM_CONFIG) --cflags 2>/dev/null)
+    LLVM_LDFLAGS := $(shell $(LLVM_CONFIG) --ldflags --libs core orcjit native 2>/dev/null)
+
+    CFLAGS += $(LLVM_CFLAGS)
+    LDFLAGS += $(LLVM_LDFLAGS)
+  endif
+endif
+
 ifeq ($(OS),Windows_NT)
 	EXE := .EXE
 	DYLIB := .dll
