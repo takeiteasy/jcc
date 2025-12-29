@@ -189,25 +189,27 @@ JCC is single-threaded and does not implement any threading or atomic operations
 
 ## Standard Library Support
 
-JCC supports two modes for standard library headers:
+JCC provides a complete standard library experience:
 
-### Default Mode (Built-in Headers)
-By default, JCC uses its own minimal `include/` directory containing:
-- `stdarg.h` - Custom `va_list` implementation for JCC's VM calling convention
-- `setjmp.h` - Custom `jmp_buf` for VM state management
+### Embedded Headers
+JCC includes embedded versions of common C standard library headers (`stdio.h`, `stdlib.h`, `string.h`, etc.) that are compiled directly into the binary. These are used automatically when the header file isn't found on disk.
 
-### System Headers Mode
-Use `--use-system-headers` with `--isystem` to include headers from your system SDK:
+### System Headers (Default)
+By default, JCC automatically searches platform-specific system include paths:
+- **macOS**: `/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include`
+- **Linux**: `/usr/include`, `/usr/local/include`
+- **Windows**: Windows SDK UCRT paths
 
+This enables headers like `<unistd.h>`, `<sys/select.h>`, etc. to work out of the box.
+
+### Custom Include Paths
+Add additional paths with `-I` (user headers) or `--isystem` (system headers):
 ```bash
-./jcc --use-system-headers \
-      --isystem=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include \
-      program.c
+./jcc -I./myheaders --isystem=/custom/sdk/include program.c
 ```
 
-This enables headers like `<unistd.h>`, `<sys/select.h>`, etc. to be included from the system.
+> **Note**: `stdarg.h` and `setjmp.h` always use JCC's custom implementations, as they are tightly coupled to the VM architecture.
 
-> **Note**: `stdarg.h` and `setjmp.h` always use JCC's custom implementations regardless of mode, as they are tightly coupled to the VM architecture.
 
 
 ## TODO

@@ -233,7 +233,7 @@ int main(int argc, const char* argv[]) {
     size_t embed_limit = 0; // --embed-limit (0 = use default)
     int embed_hard_error = 0; // --embed-hard-limit
     int opt_level = 0; // -O0/-O1/-O2/-O3 (default: 0 = no optimization)
-    int use_system_headers = 0; // --use-system-headers
+    int use_system_headers = 1; // --use-system-headers (enabled by default)
 
     if (argc <= 1)
         usage(argv[0], 1);
