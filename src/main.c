@@ -21,6 +21,25 @@
 #include "./internal.h"
 #include <getopt.h>
 
+// Add default system include paths for the current platform
+// Called automatically when --use-system-headers is enabled
+static void add_default_system_includes(JCC *vm) {
+#if defined(__APPLE__)
+    // macOS: Xcode Command Line Tools SDK
+    cc_system_include(vm, "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include");
+#elif defined(__linux__)
+    // Linux: standard system include paths
+    cc_system_include(vm, "/usr/include");
+    cc_system_include(vm, "/usr/local/include");
+#elif defined(_WIN32)
+    // Windows: UCRT paths (Visual Studio 2019+)
+    // Note: These paths may need adjustment based on Windows SDK version
+    cc_system_include(vm, "C:/Program Files (x86)/Windows Kits/10/Include/10.0.19041.0/ucrt");
+    cc_system_include(vm, "C:/Program Files (x86)/Windows Kits/10/Include/10.0.19041.0/um");
+    cc_system_include(vm, "C:/Program Files (x86)/Windows Kits/10/Include/10.0.19041.0/shared");
+#endif
+}
+
 static void usage(const char *argv0, int exit_code) {
     printf("JCC: JIT C Compiler\n");
     printf("https://github.com/takeiteasy/jcc\n\n");
@@ -591,6 +610,11 @@ int main(int argc, const char* argv[]) {
 
     // Set use_system_headers flag (must be set before adding include paths)
     vm.compiler.use_system_headers = use_system_headers;
+
+    // Add default system include paths if using system headers
+    if (use_system_headers) {
+        add_default_system_includes(&vm);
+    }
 
     // Add JCC's standard library header directory
     // When using system headers, we still need this for VM-specific headers (stdarg.h, setjmp.h)

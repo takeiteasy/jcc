@@ -941,6 +941,10 @@ char *search_include_paths(JCC *vm, char *filename, int filename_len, bool is_sy
     if (filename[0] == '/')
         return filename;
 
+    // Check for embedded standard headers first
+    if (get_std_header(filename))
+        return filename;
+
     char *cached = hashmap_get2(&vm->compiler.include_cache, filename, filename_len);
     if (cached)
         return cached;
@@ -1111,6 +1115,13 @@ static Token *include_file(JCC *vm, Token *tok, char *path, Token *filename_tok)
     // Check for "#pragma once"
     if (hashmap_get(&vm->compiler.pragma_once, path))
         return tok;
+
+    // Check if it's an embedded standard header
+    char *std_source = get_std_header(path);
+    if (std_source) {
+        Token *tok2 = tokenize_string(vm, path, std_source);
+        return append(vm, tok2, tok);
+    }
 
     // If we read the same file before, and if the file was guarded
     // by the usual #ifndef ... #endif pattern, we may be able to
