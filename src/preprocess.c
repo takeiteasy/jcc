@@ -900,6 +900,27 @@ static bool file_exists(char *path) {
 }
 
 // Check if a filename is a standard C library header provided by JCC
+// When use_system_headers is enabled, only stdarg.h and setjmp.h are forced to use JCC's
+// custom implementations (they are tightly coupled to the VM calling convention)
+static bool is_jcc_required_header(const char *filename) {
+    // These headers MUST always use JCC's custom implementations because they
+    // are tightly coupled to the VM's calling convention and state, or contain
+    // Apple-specific syntax that JCC cannot parse
+    static const char *required_headers[] = {
+        "stdarg.h",       // Custom va_list for VM calling convention
+        "setjmp.h",       // Custom jmp_buf for VM state (pc, sp, bp, ax)
+        "Availability.h", // Apple availability macros (JCC stub)
+        "sys/cdefs.h",    // Wrapper to include Availability.h before system cdefs
+        NULL
+    };
+    
+    for (int i = 0; required_headers[i]; i++) {
+        if (strcmp(filename, required_headers[i]) == 0)
+            return true;
+    }
+    return false;
+}
+
 static bool is_standard_header(const char *filename) {
     static const char *std_headers[] = {
         "assert.h", "ctype.h", "errno.h", "float.h", "inttypes.h",
@@ -924,13 +945,20 @@ char *search_include_paths(JCC *vm, char *filename, int filename_len, bool is_sy
     if (cached)
         return cached;
 
-    // For standard library headers, ALWAYS search include_paths (JCC's headers)
-    // This prevents accidentally loading system headers which have complex macros
-    // that JCC cannot handle
-    bool force_jcc_headers = is_standard_header(filename);
+    // Determine whether to force JCC headers
+    // - If use_system_headers is enabled: only force for VM-required headers (stdarg.h, setjmp.h)
+    // - Otherwise: force for all standard C library headers
+    bool force_jcc_headers;
+    if (vm->compiler.use_system_headers) {
+        // Only force JCC headers for VM-required ones (stdarg.h, setjmp.h)
+        force_jcc_headers = is_jcc_required_header(filename);
+    } else {
+        // Force JCC headers for all standard headers (original behavior)
+        force_jcc_headers = is_standard_header(filename);
+    }
 
     // For <...> includes:
-    //   - Standard headers: search include_paths (JCC's headers)
+    //   - Forced headers: search include_paths (JCC's headers)
     //   - Other headers: search system_include_paths (requires -isystem)
     // For "..." includes: search include_paths
     StringArray *paths;
@@ -953,8 +981,16 @@ char *search_include_paths(JCC *vm, char *filename, int filename_len, bool is_sy
 }
 
 static char *search_include_next(JCC *vm, char *filename) {
+    // First search include_paths
     for (; vm->compiler.include_next_idx < vm->compiler.include_paths.len; vm->compiler.include_next_idx++) {
         char *path = format("%s/%s", vm->compiler.include_paths.data[vm->compiler.include_next_idx], filename);
+        if (file_exists(path))
+            return path;
+    }
+    // Then search system_include_paths (needed for #include_next from JCC wrapper headers)
+    int sys_idx = vm->compiler.include_next_idx - vm->compiler.include_paths.len;
+    for (; sys_idx < vm->compiler.system_include_paths.len; sys_idx++) {
+        char *path = format("%s/%s", vm->compiler.system_include_paths.data[sys_idx], filename);
         if (file_exists(path))
             return path;
     }
@@ -1356,7 +1392,15 @@ static Token *preprocess2(JCC *vm, Token *tok) {
                 }
             }
 
+            // Search include paths (for quoted includes) or system paths (for angle bracket)
             char *path = search_include_paths(vm, filename, filename_len, !is_dquote);
+            
+            // For quoted includes, if not found in include_paths, also try system_include_paths
+            // This is needed for system headers that use quoted includes for internal files
+            if (!path && is_dquote) {
+                path = search_include_paths(vm, filename, filename_len, true);
+            }
+            
             tok = include_file(vm, tok, path ? path : filename, start->next->next);
             continue;
         }
@@ -1612,6 +1656,40 @@ void init_macros(JCC *vm) {
     define_macro(vm, "__volatile__", "volatile");
     define_macro(vm, "__JCC__", "1");
 
+    // GCC compatibility macros for system headers
+    // Claim GCC 4.2.1 compatibility (minimum version for modern headers)
+    define_macro(vm, "__GNUC__", "4");
+    define_macro(vm, "__GNUC_MINOR__", "2");
+    define_macro(vm, "__GNUC_PATCHLEVEL__", "1");
+    
+    // __builtin_va_list - system headers use this for va_list typedef
+    // Define as char* for compatibility (macOS system headers expect a pointer type)
+    define_macro(vm, "__builtin_va_list", "char*");
+    define_macro(vm, "__gnuc_va_list", "char*");
+    
+    // Strip __attribute__ specifications from system headers since JCC parser
+    // doesn't handle all attribute positions. Attributes are used for optimization
+    // hints and documentation, not required for correct compilation.
+    define_macro(vm, "__attribute__(x)", "");
+
+    // Architecture macros - pass through from host compiler
+#if defined(__x86_64__) || defined(__x86_64) || defined(__amd64__) || defined(__amd64)
+    define_macro(vm, "__x86_64__", "1");
+    define_macro(vm, "__x86_64", "1");
+    define_macro(vm, "__amd64__", "1");
+    define_macro(vm, "__amd64", "1");
+    define_macro(vm, "__LP64__", "1");
+#endif
+#if defined(__aarch64__) || defined(__arm64__)
+    define_macro(vm, "__aarch64__", "1");
+    define_macro(vm, "__arm64__", "1");
+    define_macro(vm, "__LP64__", "1");
+#endif
+#if defined(__i386__) || defined(__i386)
+    define_macro(vm, "__i386__", "1");
+    define_macro(vm, "__i386", "1");
+#endif
+
 #ifdef _MSC_VER
 #if defined(_M_AMD64)
     define_macro(vm, "ARCH_X64", "1");
@@ -1667,6 +1745,9 @@ void init_macros(JCC *vm) {
 #endif
 #ifdef __APPLE__
     define_macro(vm, "__APPLE__", "1");
+    // Darwin feature test macros for system header compatibility
+    define_macro(vm, "_DARWIN_C_SOURCE", "1");
+    define_macro(vm, "__DARWIN_64_BIT_INO_T", "1");
 #endif
 #ifdef __FreeBSD__
     define_macro(vm, "__FreeBSD__", "1");

@@ -3872,8 +3872,8 @@ static Node *generic_selection(JCC *vm, Token **rest, Token *tok) {
 //         | "_Alignof" "(" type-name ")"
 //         | "_Alignof" unary
 //         | "_Generic" generic-selection
-//         | "__jcc_types_compatible_p" "(" type-name, type-name, ")"
-//         | "__jcc_reg_class" "(" type-name ")"
+//         | "__builtin_types_compatible_p" "(" type-name, type-name, ")"
+//         | "__builtin_reg_class" "(" type-name ")"
 //         | ident
 //         | str
 //         | num
@@ -3933,7 +3933,7 @@ static Node *primary(JCC *vm, Token **rest, Token *tok) {
     if (equal(tok, "_Generic"))
         return generic_selection(vm, rest, tok->next);
 
-    if (equal(tok, "__jcc_types_compatible_p")) {
+    if (equal(tok, "__builtin_types_compatible_p")) {
         tok = skip(vm, tok->next, "(");
         Type *t1 = typename(vm, &tok, tok);
         tok = skip(vm, tok, ",");
@@ -3942,7 +3942,7 @@ static Node *primary(JCC *vm, Token **rest, Token *tok) {
         return new_num(vm, is_compatible(t1, t2), start);
     }
 
-    if (equal(tok, "__jcc_reg_class")) {
+    if (equal(tok, "__builtin_reg_class")) {
         tok = skip(vm, tok->next, "(");
         Type *ty = typename(vm, &tok, tok);
         *rest = skip(vm, tok, ")");
@@ -3954,7 +3954,7 @@ static Node *primary(JCC *vm, Token **rest, Token *tok) {
         return new_num(vm, 2, start);
     }
 
-    if (equal(tok, "__jcc_compare_and_swap")) {
+    if (equal(tok, "__builtin_compare_and_swap")) {
         Node *node = new_node(vm, ND_CAS, tok);
         tok = skip(vm, tok->next, "(");
         node->cas_addr = assign(vm, &tok, tok);
@@ -3966,7 +3966,7 @@ static Node *primary(JCC *vm, Token **rest, Token *tok) {
         return node;
     }
 
-    if (equal(tok, "__jcc_atomic_exchange")) {
+    if (equal(tok, "__builtin_atomic_exchange")) {
         Node *node = new_node(vm, ND_EXCH, tok);
         tok = skip(vm, tok->next, "(");
         node->lhs = assign(vm, &tok, tok);

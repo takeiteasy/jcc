@@ -189,7 +189,25 @@ JCC is single-threaded and does not implement any threading or atomic operations
 
 ## Standard Library Support
 
-JCC has a custom standard library that is located in `include`. It is just a collection of headers with function declarations that are registered with the VM when they are included. This is so that you can easily include the standard library without having to register each function manually and also define a lot of preprocessor macros. If JCC ever becomes mature enough to include the proper system headers, this will be replaced.
+JCC supports two modes for standard library headers:
+
+### Default Mode (Built-in Headers)
+By default, JCC uses its own minimal `include/` directory containing:
+- `stdarg.h` - Custom `va_list` implementation for JCC's VM calling convention
+- `setjmp.h` - Custom `jmp_buf` for VM state management
+
+### System Headers Mode
+Use `--use-system-headers` with `--isystem` to include headers from your system SDK:
+
+```bash
+./jcc --use-system-headers \
+      --isystem=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include \
+      program.c
+```
+
+This enables headers like `<unistd.h>`, `<sys/select.h>`, etc. to be included from the system.
+
+> **Note**: `stdarg.h` and `setjmp.h` always use JCC's custom implementations regardless of mode, as they are tightly coupled to the VM architecture.
 
 
 ## TODO

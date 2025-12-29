@@ -70,6 +70,7 @@ static void usage(const char *argv0, int exit_code) {
     printf("\nPreprocessor Options:\n");
     printf("\t   --embed-limit=SIZE        Set #embed file size warning limit (e.g., 50MB, 100mb, default: 10MB)\n");
     printf("\t   --embed-hard-limit        Make #embed limit a hard error instead of warning\n");
+    printf("\t   --use-system-headers      Use system headers instead of JCC's custom headers (experimental)\n");
     printf("\nOptimization Levels:\n");
     printf("\t   --optimize[=LEVEL]        Enable bytecode optimization (default: disabled)\n");
     printf("\t                             LEVEL: 0=none, 1=basic, 2=standard, 3=aggressive\n");
@@ -213,6 +214,7 @@ int main(int argc, const char* argv[]) {
     size_t embed_limit = 0; // --embed-limit (0 = use default)
     int embed_hard_error = 0; // --embed-hard-limit
     int opt_level = 0; // -O0/-O1/-O2/-O3 (default: 0 = no optimization)
+    int use_system_headers = 0; // --use-system-headers
 
     if (argc <= 1)
         usage(argv[0], 1);
@@ -262,6 +264,7 @@ int main(int argc, const char* argv[]) {
         {"embed-limit", required_argument, 0, 1014},
         {"embed-hard-limit", no_argument, 0, 1015},
         {"optimize", optional_argument, 0, 1016},
+        {"use-system-headers", no_argument, 0, 1017},
         {0, 0, 0, 0}
     };
 
@@ -449,6 +452,9 @@ int main(int argc, const char* argv[]) {
                 usage(argv[0], 1);
             }
             break;
+        case 1017:  // --use-system-headers
+            use_system_headers = 1;
+            break;
         case '?':
             if (optopt)
                 fprintf(stderr, "error: option -%c requires an argument\n", optopt);
@@ -583,8 +589,11 @@ int main(int argc, const char* argv[]) {
     if (!skip_stdlib)
         cc_load_stdlib(&vm);
 
-    // Add JCC's standard library header directory by default
-    // This allows #include <stdio.h> and other standard headers to work
+    // Set use_system_headers flag (must be set before adding include paths)
+    vm.compiler.use_system_headers = use_system_headers;
+
+    // Add JCC's standard library header directory
+    // When using system headers, we still need this for VM-specific headers (stdarg.h, setjmp.h)
     cc_include(&vm, "./include");
 
     // Add user-specified include paths (these take precedence via search order)
