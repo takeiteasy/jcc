@@ -39,6 +39,7 @@
 
 #include "jcc.h"
 #include "./internal.h"
+#include <limits.h>
 
 #ifndef MAX
 #define MAX(x, y) ((x) < (y) ? (y) : (x))

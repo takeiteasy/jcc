@@ -25,6 +25,7 @@
 
 #include "jcc.h"
 #include "./internal.h"
+#include <limits.h>
 
 // ========== Arithmetic Operations ==========
 
@@ -1576,6 +1577,185 @@ int op_CALLF_fn(JCC *vm) {
               "w"(d0), "w"(d1), "w"(d2), "w"(d3), "w"(d4), "w"(d5), "w"(d6), "w"(d7)
             : "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "x18", "memory"
         );
+        vm->regs[REG_A0] = result;
+    }
+#elif defined(__x86_64__) || defined(__amd64__)
+    // x86-64 System V ABI - used on Linux and Intel macOS
+    // Integer args: rdi, rsi, rdx, rcx, r8, r9
+    // FP args: xmm0-xmm7
+    // For variadic functions, AL contains number of vector registers used
+    
+    int num_fixed = ff->is_variadic ? ff->num_fixed_args : actual_nargs;
+    int int_reg_idx = 0;
+    int fp_reg_idx = 0;
+    int stack_args = 0;
+
+    // Calculate stack args count
+    for (int i = 0; i < actual_nargs; i++) {
+        int is_double = (i < 64 && (double_arg_mask & (1ULL << i)));
+        int is_variadic_arg = (i >= num_fixed);
+
+        if (is_variadic_arg) {
+            stack_args++;
+        } else if (is_double) {
+            if (fp_reg_idx >= 8) stack_args++;
+            else fp_reg_idx++;
+        } else {
+            if (int_reg_idx >= 6) stack_args++;
+            else int_reg_idx++;
+        }
+    }
+
+    // Prepare stack area and registers
+    long long stack_area[stack_args > 0 ? stack_args : 1];
+    int stack_idx = 0;
+    int_reg_idx = 0;
+    fp_reg_idx = 0;
+    int num_xmm_used = 0;
+
+    register long long rdi __asm__("rdi") = 0;
+    register long long rsi __asm__("rsi") = 0;
+    register long long rdx __asm__("rdx") = 0;
+    register long long rcx __asm__("rcx") = 0;
+    register long long r8 __asm__("r8") = 0;
+    register long long r9 __asm__("r9") = 0;
+    register double xmm0 __asm__("xmm0") = 0.0;
+    register double xmm1 __asm__("xmm1") = 0.0;
+    register double xmm2 __asm__("xmm2") = 0.0;
+    register double xmm3 __asm__("xmm3") = 0.0;
+    register double xmm4 __asm__("xmm4") = 0.0;
+    register double xmm5 __asm__("xmm5") = 0.0;
+    register double xmm6 __asm__("xmm6") = 0.0;
+    register double xmm7 __asm__("xmm7") = 0.0;
+
+    for (int i = 0; i < actual_nargs && i < 8; i++) {
+        int is_double = (i < 64 && (double_arg_mask & (1ULL << i)));
+        int is_variadic_arg = (i >= num_fixed);
+
+        if (is_variadic_arg) {
+            stack_area[stack_idx++] = args[i];
+        } else if (is_double) {
+            double val = *(double*)&args[i];
+            if (fp_reg_idx < 8) {
+                num_xmm_used = fp_reg_idx + 1;
+                switch(fp_reg_idx++) {
+                    case 0: xmm0 = val; break;
+                    case 1: xmm1 = val; break;
+                    case 2: xmm2 = val; break;
+                    case 3: xmm3 = val; break;
+                    case 4: xmm4 = val; break;
+                    case 5: xmm5 = val; break;
+                    case 6: xmm6 = val; break;
+                    case 7: xmm7 = val; break;
+                }
+            } else {
+                stack_area[stack_idx++] = args[i];
+            }
+        } else {
+            if (int_reg_idx < 6) {
+                switch(int_reg_idx++) {
+                    case 0: rdi = args[i]; break;
+                    case 1: rsi = args[i]; break;
+                    case 2: rdx = args[i]; break;
+                    case 3: rcx = args[i]; break;
+                    case 4: r8 = args[i]; break;
+                    case 5: r9 = args[i]; break;
+                }
+            } else {
+                stack_area[stack_idx++] = args[i];
+            }
+        }
+    }
+
+    // Stack must be 16-byte aligned before call
+    int stack_bytes = (stack_args * 8 + 15) & ~15;
+    
+    // For variadic functions, AL must contain number of XMM registers used
+    unsigned char num_xmm = ff->is_variadic ? (unsigned char)num_xmm_used : 0;
+
+    if (ff->returns_double) {
+        register double result __asm__("xmm0");
+        if (stack_bytes > 0) {
+            long long sb = stack_bytes;
+            long long sa = stack_args;
+            __asm__ volatile(
+                "mov %2, %%r10\n\t"            // Save stack_bytes in r10
+                "sub %%r10, %%rsp\n\t"         // Allocate stack space
+                "mov %%rsp, %%r11\n\t"         // Destination pointer
+                "mov %3, %%r12\n\t"            // Source pointer (stack_area)
+                "mov %4, %%r13\n\t"            // Counter (stack_args)
+                "test %%r13, %%r13\n\t"
+                "jz 2f\n\t"
+                "1:\n\t"
+                "mov (%%r12), %%r14\n\t"       // Load from source
+                "mov %%r14, (%%r11)\n\t"       // Store to stack
+                "add $8, %%r12\n\t"
+                "add $8, %%r11\n\t"
+                "dec %%r13\n\t"
+                "jnz 1b\n\t"
+                "2:\n\t"
+                "movzbl %5, %%eax\n\t"         // Load num_xmm into AL
+                "call *%1\n\t"                 // Call the function
+                "add %%r10, %%rsp"             // Restore stack
+                : "=x"(result)
+                : "r"(ff->func_ptr), "m"(sb), "r"(stack_area), "m"(sa), "m"(num_xmm),
+                  "r"(rdi), "r"(rsi), "r"(rdx), "r"(rcx), "r"(r8), "r"(r9),
+                  "x"(xmm0), "x"(xmm1), "x"(xmm2), "x"(xmm3), "x"(xmm4), "x"(xmm5), "x"(xmm6), "x"(xmm7)
+                : "r10", "r11", "r12", "r13", "r14", "rax", "memory", "cc"
+            );
+        } else {
+            __asm__ volatile(
+                "movzbl %1, %%eax\n\t"         // Load num_xmm into AL
+                "call *%2\n\t"                 // Call the function
+                : "=x"(result)
+                : "m"(num_xmm), "r"(ff->func_ptr),
+                  "r"(rdi), "r"(rsi), "r"(rdx), "r"(rcx), "r"(r8), "r"(r9),
+                  "x"(xmm0), "x"(xmm1), "x"(xmm2), "x"(xmm3), "x"(xmm4), "x"(xmm5), "x"(xmm6), "x"(xmm7)
+                : "rax", "r10", "r11", "memory", "cc"
+            );
+        }
+        vm->fregs[FREG_A0] = result;
+    } else {
+        register long long result __asm__("rax");
+        if (stack_bytes > 0) {
+            long long sb = stack_bytes;
+            long long sa = stack_args;
+            __asm__ volatile(
+                "mov %2, %%r10\n\t"            // Save stack_bytes in r10
+                "sub %%r10, %%rsp\n\t"         // Allocate stack space
+                "mov %%rsp, %%r11\n\t"         // Destination pointer
+                "mov %3, %%r12\n\t"            // Source pointer (stack_area)
+                "mov %4, %%r13\n\t"            // Counter (stack_args)
+                "test %%r13, %%r13\n\t"
+                "jz 2f\n\t"
+                "1:\n\t"
+                "mov (%%r12), %%r14\n\t"       // Load from source
+                "mov %%r14, (%%r11)\n\t"       // Store to stack
+                "add $8, %%r12\n\t"
+                "add $8, %%r11\n\t"
+                "dec %%r13\n\t"
+                "jnz 1b\n\t"
+                "2:\n\t"
+                "movzbl %5, %%eax\n\t"         // Load num_xmm into AL
+                "call *%1\n\t"                 // Call the function
+                "add %%r10, %%rsp"             // Restore stack
+                : "=a"(result)
+                : "r"(ff->func_ptr), "m"(sb), "r"(stack_area), "m"(sa), "m"(num_xmm),
+                  "r"(rdi), "r"(rsi), "r"(rdx), "r"(rcx), "r"(r8), "r"(r9),
+                  "x"(xmm0), "x"(xmm1), "x"(xmm2), "x"(xmm3), "x"(xmm4), "x"(xmm5), "x"(xmm6), "x"(xmm7)
+                : "r10", "r11", "r12", "r13", "r14", "memory", "cc"
+            );
+        } else {
+            __asm__ volatile(
+                "movzbl %1, %%eax\n\t"         // Load num_xmm into AL
+                "call *%2\n\t"                 // Call the function
+                : "=a"(result)
+                : "m"(num_xmm), "r"(ff->func_ptr),
+                  "r"(rdi), "r"(rsi), "r"(rdx), "r"(rcx), "r"(r8), "r"(r9),
+                  "x"(xmm0), "x"(xmm1), "x"(xmm2), "x"(xmm3), "x"(xmm4), "x"(xmm5), "x"(xmm6), "x"(xmm7)
+                : "r10", "r11", "memory", "cc"
+            );
+        }
         vm->regs[REG_A0] = result;
     }
 #else
