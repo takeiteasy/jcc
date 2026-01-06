@@ -1128,6 +1128,23 @@ Token *tokenize_file(JCC *vm, char *path) {
     return tokenize(vm, file);
 }
 
+// Tokenize an in-memory string (for embedded headers)
+Token *tokenize_string(JCC *vm, char *name, char *contents) {
+    // Duplicate contents because tokenize may modify it
+    char *p = arena_alloc(&vm->compiler.parser_arena, strlen(contents) + 1);
+    strcpy(p, contents);
+
+    canonicalize_newline(p);
+    remove_backslash_newline(p);
+    convert_universal_chars(vm, p);
+
+    static int embedded_file_no;
+    File *file = new_file(vm, name, -(embedded_file_no + 1), p);
+    embedded_file_no++;
+
+    return tokenize(vm, file);
+}
+
 // Output preprocessed tokens as source code (for -E flag)
 void cc_output_preprocessed(FILE *f, Token *tok) {
     if (!f || !tok)

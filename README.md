@@ -189,12 +189,25 @@ JCC is single-threaded and does not implement any threading or atomic operations
 
 ## Standard Library Support
 
-JCC has a custom standard library that is located in `include`. It is just a collection of headers with function declarations that are registered with the VM when they are included. This is so that you can easily include the standard library without having to register each function manually and also define a lot of preprocessor macros. If JCC ever becomes mature enough to include the proper system headers, this will be replaced.
+JCC includes embedded standard library headers that are compiled directly into the binary:
+- `stdio.h`, `stdlib.h`, `string.h`, `math.h`, `time.h`, `ctype.h`, etc.
+- `stdarg.h`, `setjmp.h` - JCC-specific implementations for VM calling convention
 
+Headers are embedded using `std.py` which generates `src/std.c`. This means:
+- No external header files needed at runtime
+- Headers are read from strings instead of disk
+- Consistent behavior across platforms
+
+To regenerate embedded headers after modifying files in `include/`:
+```bash
+python3 std.py
+make
+```
+
+> **Note**: The `--use-system-headers` flag is available but experimental. Apple's system headers contain macros and runtime dependencies that JCC cannot fully support.
 
 ## TODO
 
-- Preprocessor support for `__has_include`, `__has_include_next`, `__has_extension`, `__has_feature`
 - Support for `_Defer` statement
 - Support for `_Pragma` statement
 - Support for (some) C23 `[[...]]` and GNU `__attribute__((...))` attributes

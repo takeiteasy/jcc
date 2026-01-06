@@ -651,6 +651,10 @@ int cc_dlopen(JCC *vm, const char *lib_path) {
     return 0;
 }
 
+#ifndef PATH_MAX
+#define PATH_MAX 256
+#endif
+
 // Get the platform-specific path of the standard C library
 static const char* find_libc() {
 #ifdef _WIN32

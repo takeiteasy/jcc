@@ -186,6 +186,8 @@ int main(int argc, const char* argv[]) {
     int exit_code = 0;
     const char **input_files = NULL;
     int input_files_count = 0;
+    Obj **input_progs = NULL;
+    Token **input_tokens = NULL;
     const char **inc_paths = NULL; // -I
     int inc_paths_count = 0;
     const char **sys_inc_paths = NULL; // -isystem
@@ -583,8 +585,7 @@ int main(int argc, const char* argv[]) {
     if (!skip_stdlib)
         cc_load_stdlib(&vm);
 
-    // Add JCC's standard library header directory by default
-    // This allows #include <stdio.h> and other standard headers to work
+    // Add JCC's standard library header directory
     cc_include(&vm, "./include");
 
     // Add user-specified include paths (these take precedence via search order)
@@ -601,8 +602,7 @@ int main(int argc, const char* argv[]) {
         cc_undef(&vm, (char *)undefs[i]);
 
     vm.compiler.skip_preprocess = skip_preprocess;
-    Obj **input_progs = NULL;
-    Token **input_tokens = calloc(input_files_count, sizeof(Token*));
+    input_tokens = calloc(input_files_count, sizeof(Token*));
     for (int i = 0; i < input_files_count; i++) {
         input_tokens[i] = cc_preprocess(&vm, input_files[i]);
         if (!input_tokens[i]) {
