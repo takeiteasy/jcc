@@ -1401,8 +1401,8 @@ static void gen_expr(JCC *vm, Node *node, int dest_reg) {
             mark_temp_reg_used(r_desc);
             
             // Count arguments
-            int nargs = 0;
-            for (Node *a = node->args; a; a = a->next) nargs++;
+            // int nargs = 0;
+            // for (Node *a = node->args; a; a = a->next) nargs++;
             
             // Generate user arguments into A1-A7 (A0 is reserved for descriptor)
             int arg_idx = 0;

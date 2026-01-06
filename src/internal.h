@@ -141,6 +141,7 @@ File *new_file(JCC *vm, char *name, int file_no, char *contents);
 Token *tokenize_string_literal(JCC *vm, Token *tok, Type *basety);
 Token *tokenize(JCC *vm, File *file);
 Token *tokenize_file(JCC *vm, char *filename);
+Token *tokenize_string(JCC *vm, char *name, char *contents);
 unsigned char *read_binary_file(JCC *vm, char *path, size_t *out_size);
 void cc_output_preprocessed(FILE *f, Token *tok);
 
@@ -151,6 +152,7 @@ void cc_output_preprocessed(FILE *f, Token *tok);
 // preprocess.c
 //
 
+char *get_std_header(char *filename);
 char *search_include_paths(JCC *vm, char *filename, int filename_len, bool is_system);
 void init_macros(JCC *vm);
 void define_macro(JCC *vm, char *name, char *buf);

@@ -94,10 +94,10 @@ typedef struct {
 #define va_arg(ap, type) \
     (((ap).reg_count > 0) \
         ? (--((ap).reg_count), \
-           (__jcc_types_compatible_p(type, double) || __jcc_types_compatible_p(type, float) \
+           (__builtin_types_compatible_p(type, double) || __builtin_types_compatible_p(type, float) \
                ? (*(double *)(((ap).reg_ptr) -= 8, ((ap).reg_ptr) + 8)) \
                : (*(type *)(((ap).reg_ptr) -= 8, ((ap).reg_ptr) + 8)))) \
-        : (__jcc_types_compatible_p(type, double) || __jcc_types_compatible_p(type, float) \
+        : (__builtin_types_compatible_p(type, double) || __builtin_types_compatible_p(type, float) \
                ? (*(double *)(((ap).stack_ptr) += 8, ((ap).stack_ptr) - 8)) \
                : (*(type *)(((ap).stack_ptr) += 8, ((ap).stack_ptr) - 8))))
 
