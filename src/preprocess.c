@@ -16,7 +16,8 @@
  You should have received a copy of the GNU General Public License
  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
- This file was original part of chibicc by Rui Ueyama (MIT) https://github.com/rui314/chibicc
+ This file was original part of chibicc by Rui Ueyama (MIT)
+ https://github.com/rui314/chibicc
 */
 
 // This file implements the C preprocessor.
@@ -43,8 +44,8 @@
 // standard's wording:
 // https://github.com/rui314/chibicc/wiki/cpp.algo.pdf
 
-#include "jcc.h"
 #include "./internal.h"
+#include "jcc.h"
 
 #define MAX_PP_NESTING 1000
 
@@ -77,12 +78,11 @@ struct Macro {
 static Token *preprocess2(JCC *vm, Token *tok);
 static Macro *find_macro(JCC *vm, Token *tok);
 static bool file_exists(char *path);
-static char *read_include_filename(JCC *vm, Token **rest, Token *tok, bool *is_dquote, int *out_len);
+static char *read_include_filename(JCC *vm, Token **rest, Token *tok,
+                                   bool *is_dquote, int *out_len);
 static long eval_const_expr(JCC *vm, Token **rest, Token *tok);
 
-static bool is_hash(Token *tok) {
-    return tok->at_bol && equal(tok, "#");
-}
+static bool is_hash(Token *tok) { return tok->at_bol && equal(tok, "#"); }
 
 // Some preprocessor directives such as #include allow extraneous
 // tokens before newline. This function skips such tokens.
@@ -107,6 +107,111 @@ static Token *new_eof(JCC *vm, Token *tok) {
     t->kind = TK_EOF;
     t->len = 0;
     return t;
+}
+
+// Extract a #pragma macro function definition and store it
+// Returns the token after the function definition (or original token if
+// extraction failed)
+static Token *extract_pragma_macro(JCC *vm, Token *tok) {
+    // Expected format: <return_type> <function_name>(<params>) { <body> }
+    // tok should be the first token after "macro" on the next line
+
+    Token *start = tok;
+    Token *func_name_tok = NULL;
+
+    // Skip to the function name: find identifier followed by '('
+    while (tok && tok->kind != TK_EOF) {
+        if (tok->kind == TK_IDENT && tok->next && equal(tok->next, "(")) {
+            func_name_tok = tok;
+            break;
+        }
+        tok = tok->next;
+    }
+
+    if (!func_name_tok) {
+        error_tok(vm, start, "#pragma macro: expected function definition");
+        return start;
+    }
+
+    // Extract function name
+    char *name =
+        arena_alloc(&vm->compiler.parser_arena, func_name_tok->len + 1);
+    memcpy(name, func_name_tok->loc, func_name_tok->len);
+    name[func_name_tok->len] = '\0';
+
+    // Now find the opening brace of the function body
+    int paren_depth = 0;
+    tok = func_name_tok->next; // Start at '('
+
+    // Skip parameter list
+    while (tok && tok->kind != TK_EOF) {
+        if (equal(tok, "("))
+            paren_depth++;
+        else if (equal(tok, ")")) {
+            paren_depth--;
+            if (paren_depth == 0) {
+                tok = tok->next;
+                break;
+            }
+        }
+        tok = tok->next;
+    }
+
+    // Now find the opening brace
+    while (tok && tok->kind != TK_EOF && !equal(tok, "{"))
+        tok = tok->next;
+
+    if (!equal(tok, "{")) {
+        error_tok(vm, start, "#pragma macro: expected function body");
+        return start;
+    }
+
+    Token *body_start = start;
+
+    // Find the closing brace (matching the opening brace)
+    int brace_depth = 0;
+    Token *body_end = tok;
+    while (tok && tok->kind != TK_EOF) {
+        if (equal(tok, "{"))
+            brace_depth++;
+        else if (equal(tok, "}")) {
+            brace_depth--;
+            if (brace_depth == 0) {
+                body_end = tok->next;
+                break;
+            }
+        }
+        tok = tok->next;
+    }
+
+    // Copy tokens from start to body_end
+    Token head = {};
+    Token *cur = &head;
+    for (Token *t = body_start; t != body_end && t->kind != TK_EOF;
+         t = t->next) {
+        cur = cur->next = copy_token(vm, t);
+    }
+    cur->next = new_eof(vm, body_end ? body_end : tok);
+
+    // Convert preprocessor tokens to parser tokens (TK_PP_NUM -> TK_NUM, etc.)
+    convert_pp_tokens(vm, head.next);
+
+    // Create PragmaMacro entry
+    PragmaMacro *pm =
+        arena_alloc(&vm->compiler.parser_arena, sizeof(PragmaMacro));
+    memset(pm, 0, sizeof(PragmaMacro));
+    pm->name = name;
+    pm->body_tokens = head.next;
+    pm->compiled_fn = NULL;
+    pm->is_compiled = false;
+    pm->next = vm->compiler.pragma_macros;
+    vm->compiler.pragma_macros = pm;
+
+    if (vm->debug_vm)
+        printf("Captured pragma macro '%s'\n", name);
+
+    // Return token after the function
+    return body_end ? body_end : tok;
 }
 
 static Hideset *new_hideset(JCC *vm, char *name) {
@@ -233,7 +338,8 @@ static char *quote_string(JCC *vm, char *str) {
 
 static Token *new_str_token(JCC *vm, char *str, Token *tmpl) {
     char *buf = quote_string(vm, str);
-    return tokenize(vm, new_file(vm, tmpl->file->name, tmpl->file->file_no, buf));
+    return tokenize(vm,
+                    new_file(vm, tmpl->file->name, tmpl->file->file_no, buf));
 }
 
 // Copy all tokens until the next newline, terminate them with
@@ -253,11 +359,13 @@ static Token *copy_line(JCC *vm, Token **rest, Token *tok) {
 
 static Token *new_num_token(JCC *vm, int val, Token *tmpl) {
     char *buf = format("%d\n", val);
-    return tokenize(vm, new_file(vm, tmpl->file->name, tmpl->file->file_no, buf));
+    return tokenize(vm,
+                    new_file(vm, tmpl->file->name, tmpl->file->file_no, buf));
 }
 
 // Generate comma-separated token sequence from binary data
-static Token *generate_embed_tokens(JCC *vm, unsigned char *data, size_t size, Token *tmpl) {
+static Token *generate_embed_tokens(JCC *vm, unsigned char *data, size_t size,
+                                    Token *tmpl) {
     if (size == 0)
         return NULL;
 
@@ -344,18 +452,14 @@ static Token *copy_token_list(JCC *vm, Token *tokens, Token *tmpl) {
 }
 
 // Generate #embed tokens with prefix, suffix, and if_empty support
-static Token *generate_embed_tokens_with_params(
-    JCC *vm,
-    unsigned char *data,
-    size_t size,
-    Token *prefix_tokens,
-    Token *suffix_tokens,
-    Token *if_empty_tokens,
-    Token *tmpl
-) {
+static Token *
+generate_embed_tokens_with_params(JCC *vm, unsigned char *data, size_t size,
+                                  Token *prefix_tokens, Token *suffix_tokens,
+                                  Token *if_empty_tokens, Token *tmpl) {
     // If empty, use if_empty tokens (ignore prefix/suffix)
     if (size == 0) {
-        return if_empty_tokens ? copy_token_list(vm, if_empty_tokens, tmpl) : NULL;
+        return if_empty_tokens ? copy_token_list(vm, if_empty_tokens, tmpl)
+                               : NULL;
     }
 
     // Non-empty: assemble prefix + bytes + suffix
@@ -381,8 +485,10 @@ static Token *generate_embed_tokens_with_params(
 
     // Add suffix tokens
     if (suffix_tokens) {
-        // Add comma if suffix doesn't start with one and bytes don't end with one
-        if (!starts_with_comma(suffix_tokens) && byte_tokens && !ends_with_comma(byte_tokens)) {
+        // Add comma if suffix doesn't start with one and bytes don't end with
+        // one
+        if (!starts_with_comma(suffix_tokens) && byte_tokens &&
+            !ends_with_comma(byte_tokens)) {
             cur = cur->next = make_comma_token(vm, tmpl);
         }
         cur = append_tokens(vm, cur, suffix_tokens, tmpl);
@@ -416,7 +522,8 @@ static Token *read_const_expr(JCC *vm, Token **rest, Token *tok) {
             continue;
         }
 
-        // "__has_embed(filename)" returns 0 (not found), 1 (non-empty), or 2 (empty)
+        // "__has_embed(filename)" returns 0 (not found), 1 (non-empty), or 2
+        // (empty)
         if (equal(tok, "__has_embed")) {
             Token *start = tok;
             tok = skip(vm, tok->next, "(");
@@ -424,7 +531,8 @@ static Token *read_const_expr(JCC *vm, Token **rest, Token *tok) {
             // Parse filename
             bool is_dquote;
             int filename_len;
-            char *filename = read_include_filename(vm, &tok, tok, &is_dquote, &filename_len);
+            char *filename =
+                read_include_filename(vm, &tok, tok, &is_dquote, &filename_len);
 
             tok = skip(vm, tok, ")");
 
@@ -434,15 +542,16 @@ static Token *read_const_expr(JCC *vm, Token **rest, Token *tok) {
             if (filename[0] == '/') {
                 path = filename;
             } else if (is_dquote) {
-                char *relative_path = format("%s/%s",
-                    dirname(strdup(start->file->name)), filename);
+                char *relative_path = format(
+                    "%s/%s", dirname(strdup(start->file->name)), filename);
                 if (file_exists(relative_path)) {
                     path = relative_path;
                 }
             }
 
             if (!path) {
-                path = search_include_paths(vm, filename, filename_len, !is_dquote);
+                path = search_include_paths(vm, filename, filename_len,
+                                            !is_dquote);
             }
 
             // Determine result: 0 = not found, 1 = non-empty, 2 = empty
@@ -515,7 +624,8 @@ static Macro *find_macro(JCC *vm, Token *tok) {
     return hashmap_get2(&vm->compiler.macros, tok->loc, tok->len);
 }
 
-static Macro *add_macro(JCC *vm, char *name, int name_len, bool is_objlike, Token *body) {
+static Macro *add_macro(JCC *vm, char *name, int name_len, bool is_objlike,
+                        Token *body) {
     Macro *m = arena_alloc(&vm->compiler.parser_arena, sizeof(Macro));
     memset(m, 0, sizeof(Macro));
     m->name = name;
@@ -525,7 +635,8 @@ static Macro *add_macro(JCC *vm, char *name, int name_len, bool is_objlike, Toke
     return m;
 }
 
-static MacroParam *read_macro_params(JCC *vm, Token **rest, Token *tok, char **va_args_name) {
+static MacroParam *read_macro_params(JCC *vm, Token **rest, Token *tok,
+                                     char **va_args_name) {
     MacroParam head = {};
     MacroParam *cur = &head;
 
@@ -548,7 +659,8 @@ static MacroParam *read_macro_params(JCC *vm, Token **rest, Token *tok, char **v
             return head.next;
         }
 
-        MacroParam *m = arena_alloc(&vm->compiler.parser_arena, sizeof(MacroParam));
+        MacroParam *m =
+            arena_alloc(&vm->compiler.parser_arena, sizeof(MacroParam));
         memset(m, 0, sizeof(MacroParam));
         m->name = strndup(tok->loc, tok->len);
         cur = cur->next = m;
@@ -563,15 +675,17 @@ static void read_macro_definition(JCC *vm, Token **rest, Token *tok) {
     if (tok->kind != TK_IDENT)
         error_tok(vm, tok, "macro name must be an identifier");
     char *name = strndup(tok->loc, tok->len);
-    int name_len = tok->len;  // Save name length before moving tok
+    int name_len = tok->len; // Save name length before moving tok
     tok = tok->next;
 
     if (!tok->has_space && equal(tok, "(")) {
         // Function-like macro
         char *va_args_name = NULL;
-        MacroParam *params = read_macro_params(vm, &tok, tok->next, &va_args_name);
+        MacroParam *params =
+            read_macro_params(vm, &tok, tok->next, &va_args_name);
 
-        Macro *m = add_macro(vm, name, name_len, false, copy_line(vm, rest, tok));
+        Macro *m =
+            add_macro(vm, name, name_len, false, copy_line(vm, rest, tok));
         m->params = params;
         m->va_args_name = va_args_name;
     } else {
@@ -580,7 +694,8 @@ static void read_macro_definition(JCC *vm, Token **rest, Token *tok) {
     }
 }
 
-static MacroArg *read_macro_arg_one(JCC *vm, Token **rest, Token *tok, bool read_rest) {
+static MacroArg *read_macro_arg_one(JCC *vm, Token **rest, Token *tok,
+                                    bool read_rest) {
     Token head = {};
     Token *cur = &head;
     int level = 0;
@@ -612,8 +727,8 @@ static MacroArg *read_macro_arg_one(JCC *vm, Token **rest, Token *tok, bool read
     return arg;
 }
 
-static MacroArg *
-read_macro_args(JCC *vm, Token **rest, Token *tok, MacroParam *params, char *va_args_name) {
+static MacroArg *read_macro_args(JCC *vm, Token **rest, Token *tok,
+                                 MacroParam *params, char *va_args_name) {
     Token *start = tok;
     tok = tok->next->next;
 
@@ -639,7 +754,8 @@ read_macro_args(JCC *vm, Token **rest, Token *tok, MacroParam *params, char *va_
                 tok = skip(vm, tok, ",");
             arg = read_macro_arg_one(vm, &tok, tok, true);
         }
-        arg->name = va_args_name;;
+        arg->name = va_args_name;
+        ;
         arg->is_va_args = true;
         cur = cur->next = arg;
     } else if (pp) {
@@ -653,7 +769,8 @@ read_macro_args(JCC *vm, Token **rest, Token *tok, MacroParam *params, char *va_
 
 static MacroArg *find_arg(MacroArg *args, Token *tok) {
     for (MacroArg *ap = args; ap; ap = ap->next)
-        if (tok->len == strlen(ap->name) && !strncmp(tok->loc, ap->name, tok->len))
+        if (tok->len == strlen(ap->name) &&
+            !strncmp(tok->loc, ap->name, tok->len))
             return ap;
     return NULL;
 }
@@ -701,7 +818,8 @@ static Token *paste(JCC *vm, Token *lhs, Token *rhs) {
     char *buf = format("%.*s%.*s", lhs->len, lhs->loc, rhs->len, rhs->loc);
 
     // Tokenize the resulting string.
-    Token *tok = tokenize(vm, new_file(vm, lhs->file->name, lhs->file->file_no, buf));
+    Token *tok =
+        tokenize(vm, new_file(vm, lhs->file->name, lhs->file->file_no, buf));
     if (tok->next->kind != TK_EOF)
         error_tok(vm, lhs, "pasting forms '%s', an invalid token", buf);
     return tok;
@@ -724,7 +842,8 @@ static Token *subst(JCC *vm, Token *tok, MacroArg *args) {
         if (equal(tok, "#")) {
             MacroArg *arg = find_arg(args, tok->next);
             if (!arg)
-                error_tok(vm, tok->next, "'#' is not followed by a macro parameter");
+                error_tok(vm, tok->next,
+                          "'#' is not followed by a macro parameter");
             cur = cur->next = stringize(vm, tok, arg->tok);
             tok = tok->next->next;
             continue;
@@ -748,16 +867,19 @@ static Token *subst(JCC *vm, Token *tok, MacroArg *args) {
 
         if (equal(tok, "##")) {
             if (cur == &head)
-                error_tok(vm, tok, "'##' cannot appear at start of macro expansion");
+                error_tok(vm, tok,
+                          "'##' cannot appear at start of macro expansion");
 
             if (tok->next->kind == TK_EOF)
-                error_tok(vm, tok, "'##' cannot appear at end of macro expansion");
+                error_tok(vm, tok,
+                          "'##' cannot appear at end of macro expansion");
 
             MacroArg *arg = find_arg(args, tok->next);
             if (arg) {
                 if (arg->tok->kind != TK_EOF) {
                     *cur = *paste(vm, cur, arg->tok);
-                    for (Token *t = arg->tok->next; t->kind != TK_EOF; t = t->next)
+                    for (Token *t = arg->tok->next; t->kind != TK_EOF;
+                         t = t->next)
                         cur = cur->next = copy_token(vm, t);
                 }
                 tok = tok->next->next;
@@ -803,7 +925,8 @@ static Token *subst(JCC *vm, Token *tok, MacroArg *args) {
                     if (a) {
                         // Expand and copy the parameter's tokens
                         Token *expanded = preprocess2(vm, a->tok);
-                        for (Token *e = expanded; e->kind != TK_EOF; e = e->next)
+                        for (Token *e = expanded; e->kind != TK_EOF;
+                             e = e->next)
                             cur = cur->next = copy_token(vm, e);
                     } else {
                         // Not a parameter, just copy the token
@@ -881,7 +1004,8 @@ static bool expand_macro(JCC *vm, Token **rest, Token *tok) {
     // for the new tokens should be. We take the interesection of the
     // macro token and the closing parenthesis and use it as a new hideset
     // as explained in the Dave Prossor's algorithm.
-    Hideset *hs = hideset_intersection(vm, macro_token->hideset, rparen->hideset);
+    Hideset *hs =
+        hideset_intersection(vm, macro_token->hideset, rparen->hideset);
     hs = hideset_union(vm, hs, new_hideset(vm, m->name));
 
     Token *body = subst(vm, m->body, args);
@@ -901,12 +1025,10 @@ static bool file_exists(char *path) {
 
 static bool is_standard_header(const char *filename) {
     static const char *std_headers[] = {
-        "assert.h", "ctype.h", "errno.h", "float.h", "inttypes.h",
-        "limits.h", "math.h", "setjmp.h", "stdarg.h", "stdbool.h",
-        "stddef.h", "stdint.h", "stdio.h", "stdlib.h", "string.h",
-        "time.h", "Availability.h", "sys/cdefs.h",
-        NULL
-    };
+        "assert.h", "ctype.h",        "errno.h",     "float.h",  "inttypes.h",
+        "limits.h", "math.h",         "setjmp.h",    "stdarg.h", "stdbool.h",
+        "stddef.h", "stdint.h",       "stdio.h",     "stdlib.h", "string.h",
+        "time.h",   "Availability.h", "sys/cdefs.h", NULL};
 
     for (int i = 0; std_headers[i]; i++) {
         if (strcmp(filename, std_headers[i]) == 0)
@@ -915,15 +1037,18 @@ static bool is_standard_header(const char *filename) {
     return false;
 }
 
-char *search_include_paths(JCC *vm, char *filename, int filename_len, bool is_system) {
+char *search_include_paths(JCC *vm, char *filename, int filename_len,
+                           bool is_system) {
     if (filename[0] == '/')
         return filename;
 
-    char *cached = hashmap_get2(&vm->compiler.include_cache, filename, filename_len);
+    char *cached =
+        hashmap_get2(&vm->compiler.include_cache, filename, filename_len);
     if (cached)
         return cached;
 
-    // - If use_system_headers is enabled: only force for VM-required headers (stdarg.h, setjmp.h)
+    // - If use_system_headers is enabled: only force for VM-required headers
+    // (stdarg.h, setjmp.h)
     // - Otherwise: force for all standard C library headers
     bool force_jcc_headers = is_standard_header(filename);
 
@@ -952,15 +1077,22 @@ char *search_include_paths(JCC *vm, char *filename, int filename_len, bool is_sy
 
 static char *search_include_next(JCC *vm, char *filename) {
     // First search include_paths
-    for (; vm->compiler.include_next_idx < vm->compiler.include_paths.len; vm->compiler.include_next_idx++) {
-        char *path = format("%s/%s", vm->compiler.include_paths.data[vm->compiler.include_next_idx], filename);
+    for (; vm->compiler.include_next_idx < vm->compiler.include_paths.len;
+         vm->compiler.include_next_idx++) {
+        char *path = format(
+            "%s/%s",
+            vm->compiler.include_paths.data[vm->compiler.include_next_idx],
+            filename);
         if (file_exists(path))
             return path;
     }
-    // Then search system_include_paths (needed for #include_next from JCC wrapper headers)
-    int sys_idx = vm->compiler.include_next_idx - vm->compiler.include_paths.len;
+    // Then search system_include_paths (needed for #include_next from JCC
+    // wrapper headers)
+    int sys_idx =
+        vm->compiler.include_next_idx - vm->compiler.include_paths.len;
     for (; sys_idx < vm->compiler.system_include_paths.len; sys_idx++) {
-        char *path = format("%s/%s", vm->compiler.system_include_paths.data[sys_idx], filename);
+        char *path = format(
+            "%s/%s", vm->compiler.system_include_paths.data[sys_idx], filename);
         if (file_exists(path))
             return path;
     }
@@ -968,7 +1100,8 @@ static char *search_include_next(JCC *vm, char *filename) {
 }
 
 // Read an #include argument.
-static char *read_include_filename(JCC *vm, Token **rest, Token *tok, bool *is_dquote, int *out_len) {
+static char *read_include_filename(JCC *vm, Token **rest, Token *tok,
+                                   bool *is_dquote, int *out_len) {
     // Pattern 1: #include "foo.h"
     if (tok->kind == TK_STR) {
         // A double-quoted filename for #include is a special kind of
@@ -978,7 +1111,8 @@ static char *read_include_filename(JCC *vm, Token **rest, Token *tok, bool *is_d
         // So we don't want to use token->str.
         *is_dquote = true;
         *rest = skip_line(vm, tok->next);
-        if (out_len) *out_len = tok->len - 2;
+        if (out_len)
+            *out_len = tok->len - 2;
         return strndup(tok->loc + 1, tok->len - 2);
     }
 
@@ -1028,7 +1162,8 @@ static char *detect_include_guard(JCC *vm, Token *tok) {
     char *macro = strndup(tok->loc, tok->len);
     tok = tok->next;
 
-    if (!is_hash(tok) || !equal(tok->next, "define") || !equal(tok->next->next, macro))
+    if (!is_hash(tok) || !equal(tok->next, "define") ||
+        !equal(tok->next->next, macro))
         return NULL;
 
     // Read until the end of the file.
@@ -1054,11 +1189,11 @@ static char *detect_include_guard(JCC *vm, Token *tok) {
 static void register_stdlib_for_header(JCC *vm, const char *header_name) {
     // Check if already registered
     if (hashmap_get(&vm->compiler.included_headers, header_name)) {
-        return;  // Already registered
+        return; // Already registered
     }
 
     // Mark as registered
-    hashmap_put(&vm->compiler.included_headers, header_name, (void*)1);
+    hashmap_put(&vm->compiler.included_headers, header_name, (void *)1);
 
     // Dispatch to appropriate registration function
     if (strcmp(header_name, "ctype.h") == 0) {
@@ -1074,10 +1209,12 @@ static void register_stdlib_for_header(JCC *vm, const char *header_name) {
     } else if (strcmp(header_name, "time.h") == 0) {
         register_time_functions(vm);
     }
-    // Note: Other headers (like stddef.h, stdbool.h, etc.) don't have runtime functions
+    // Note: Other headers (like stddef.h, stdbool.h, etc.) don't have runtime
+    // functions
 }
 
-static Token *include_file(JCC *vm, Token *tok, char *path, Token *filename_tok) {
+static Token *include_file(JCC *vm, Token *tok, char *path,
+                           Token *filename_tok) {
     // Check for "#pragma once"
     if (hashmap_get(&vm->compiler.pragma_once, path))
         return tok;
@@ -1092,9 +1229,11 @@ static Token *include_file(JCC *vm, Token *tok, char *path, Token *filename_tok)
 
     Token *tok2 = tokenize_file(vm, path);
     if (!tok2)
-        error_tok(vm, filename_tok, "%s: cannot open file: %s", path, strerror(errno));
+        error_tok(vm, filename_tok, "%s: cannot open file: %s", path,
+                  strerror(errno));
 
-    // Register stdlib functions for standard headers (header-based lazy loading)
+    // Register stdlib functions for standard headers (header-based lazy
+    // loading)
     char *basename = strrchr(path, '/');
     basename = basename ? basename + 1 : path;
     register_stdlib_for_header(vm, basename);
@@ -1148,11 +1287,12 @@ static Token *read_embed_parameter(JCC *vm, Token **rest, Token *tok) {
     }
 
     *rest = tok;
-    return head.next;  // NULL if empty parameter
+    return head.next; // NULL if empty parameter
 }
 
 // Main #embed directive handler
-static Token *handle_embed_directive(JCC *vm, Token *tok, Token *directive_start) {
+static Token *handle_embed_directive(JCC *vm, Token *tok,
+                                     Token *directive_start) {
     // Parse filename (quoted string or <angle brackets>)
     bool is_dquote;
     int filename_len;
@@ -1185,7 +1325,7 @@ static Token *handle_embed_directive(JCC *vm, Token *tok, Token *directive_start
     }
 
     // Parse optional parameters
-    long limit = -1;  // -1 means no limit
+    long limit = -1; // -1 means no limit
     bool has_limit = false;
     Token *prefix_tokens = NULL;
     Token *suffix_tokens = NULL;
@@ -1198,28 +1338,28 @@ static Token *handle_embed_directive(JCC *vm, Token *tok, Token *directive_start
            equal(tok, "if_empty") || equal(tok, "__if_empty__")) {
 
         if (equal(tok, "limit") || equal(tok, "__limit__")) {
-        has_limit = true;
-        Token *start = tok;
-        tok = skip(vm, tok->next, "(");
+            has_limit = true;
+            Token *start = tok;
+            tok = skip(vm, tok->next, "(");
 
-        // For now, parse a simple numeric constant
-        // TODO: Full constant expression support
-        if (tok->kind != TK_PP_NUM && tok->kind != TK_NUM)
-            error_tok(vm, tok, "limit must be a number");
+            // For now, parse a simple numeric constant
+            // TODO: Full constant expression support
+            if (tok->kind != TK_PP_NUM && tok->kind != TK_NUM)
+                error_tok(vm, tok, "limit must be a number");
 
-        // Convert PP number to integer
-        if (tok->kind == TK_PP_NUM) {
-            char *endptr;
-            limit = strtol(tok->loc, &endptr, 0);
-        } else {
-            limit = tok->val;
-        }
-        tok = tok->next;
+            // Convert PP number to integer
+            if (tok->kind == TK_PP_NUM) {
+                char *endptr;
+                limit = strtol(tok->loc, &endptr, 0);
+            } else {
+                limit = tok->val;
+            }
+            tok = tok->next;
 
-        tok = skip(vm, tok, ")");
+            tok = skip(vm, tok, ")");
 
-        if (limit < 0)
-            error_tok(vm, start, "limit must be non-negative");
+            if (limit < 0)
+                error_tok(vm, start, "limit must be non-negative");
         } else if (equal(tok, "prefix") || equal(tok, "__prefix__")) {
             tok = skip(vm, tok->next, "(");
             prefix_tokens = read_embed_parameter(vm, &tok, tok);
@@ -1246,8 +1386,8 @@ static Token *handle_embed_directive(JCC *vm, Token *tok, Token *directive_start
         path = filename;
     } else if (is_dquote) {
         // Try relative to current file first
-        char *relative_path = format("%s/%s",
-            dirname(strdup(directive_start->file->name)), filename);
+        char *relative_path = format(
+            "%s/%s", dirname(strdup(directive_start->file->name)), filename);
         if (file_exists(relative_path)) {
             path = relative_path;
         }
@@ -1279,24 +1419,32 @@ static Token *handle_embed_directive(JCC *vm, Token *tok, Token *directive_start
     // Check against configured limits
     if (embed_size >= vm->compiler.embed_limit) {
         if (vm->compiler.embed_hard_error) {
-            error_tok(vm, directive_start, "embedding large file exceeds limit: %s (%zu bytes, limit: %zu bytes)",
+            error_tok(vm, directive_start,
+                      "embedding large file exceeds limit: %s (%zu bytes, "
+                      "limit: %zu bytes)",
                       path, embed_size, vm->compiler.embed_limit);
         } else {
-            warn_tok(vm, directive_start, "embedding large file: %s (%zu bytes)", path, embed_size);
+            warn_tok(vm, directive_start,
+                     "embedding large file: %s (%zu bytes)", path, embed_size);
         }
     }
     if (embed_size >= vm->compiler.embed_hard_limit) {
         if (vm->compiler.embed_hard_error) {
-            error_tok(vm, directive_start, "embedding very large file exceeds limit: %s (%zu bytes, limit: %zu bytes)",
+            error_tok(vm, directive_start,
+                      "embedding very large file exceeds limit: %s (%zu bytes, "
+                      "limit: %zu bytes)",
                       path, embed_size, vm->compiler.embed_hard_limit);
         } else {
-            warn_tok(vm, directive_start, "embedding very large file: %s (%zu bytes)", path, embed_size);
+            warn_tok(vm, directive_start,
+                     "embedding very large file: %s (%zu bytes)", path,
+                     embed_size);
         }
     }
 
     // Generate token sequence with parameter support
     Token *embed_tokens = generate_embed_tokens_with_params(
-        vm, data, embed_size, prefix_tokens, suffix_tokens, if_empty_tokens, directive_start);
+        vm, data, embed_size, prefix_tokens, suffix_tokens, if_empty_tokens,
+        directive_start);
 
     // Link to rest of token stream
     if (embed_tokens) {
@@ -1336,51 +1484,63 @@ static Token *preprocess2(JCC *vm, Token *tok) {
         if (equal(tok, "include")) {
             bool is_dquote;
             int filename_len;
-            char *filename = read_include_filename(vm, &tok, tok->next, &is_dquote, &filename_len);
+            char *filename = read_include_filename(vm, &tok, tok->next,
+                                                   &is_dquote, &filename_len);
 
             // Check for URL includes (supported with both <...> and "...")
             if (is_url(filename)) {
 #ifdef JCC_HAS_CURL
                 char *cache_path = fetch_url_to_cache(vm, filename);
                 if (!cache_path) {
-                    error_tok(vm, start->next, "failed to fetch URL: %s", filename);
+                    error_tok(vm, start->next, "failed to fetch URL: %s",
+                              filename);
                 }
                 // Track URL -> cache path mapping for error reporting
-                hashmap_put(&vm->compiler.url_to_path, cache_path, (void *)filename);
+                hashmap_put(&vm->compiler.url_to_path, cache_path,
+                            (void *)filename);
                 tok = include_file(vm, tok, cache_path, start->next->next);
                 continue;
 #else
-                error_tok(vm, start->next, "URL includes require JCC to be built with JCC_HAS_CURL=1");
+                error_tok(
+                    vm, start->next,
+                    "URL includes require JCC to be built with JCC_HAS_CURL=1");
 #endif
             }
 
             if (filename[0] != '/' && is_dquote) {
-                char *path = format("%s/%s", dirname(strdup(start->file->name)), filename);
+                char *path = format("%s/%s", dirname(strdup(start->file->name)),
+                                    filename);
                 if (file_exists(path)) {
                     tok = include_file(vm, tok, path, start->next->next);
                     continue;
                 }
             }
 
-            // Search include paths (for quoted includes) or system paths (for angle bracket)
-            char *path = search_include_paths(vm, filename, filename_len, !is_dquote);
-            
-            // For quoted includes, if not found in include_paths, also try system_include_paths
-            // This is needed for system headers that use quoted includes for internal files
+            // Search include paths (for quoted includes) or system paths (for
+            // angle bracket)
+            char *path =
+                search_include_paths(vm, filename, filename_len, !is_dquote);
+
+            // For quoted includes, if not found in include_paths, also try
+            // system_include_paths This is needed for system headers that use
+            // quoted includes for internal files
             if (!path && is_dquote) {
                 path = search_include_paths(vm, filename, filename_len, true);
             }
-            
-            tok = include_file(vm, tok, path ? path : filename, start->next->next);
+
+            tok = include_file(vm, tok, path ? path : filename,
+                               start->next->next);
             continue;
         }
 
         if (equal(tok, "include_next")) {
             bool ignore;
             int filename_len;
-            char *filename = read_include_filename(vm, &tok, tok->next, &ignore, &filename_len);
+            char *filename = read_include_filename(vm, &tok, tok->next, &ignore,
+                                                   &filename_len);
             char *path = search_include_next(vm, filename);
-            tok = include_file(vm, tok, path ? path : filename, start->next->next);
+            tok = include_file(vm, tok, path ? path : filename,
+                               start->next->next);
             continue;
         }
 
@@ -1425,11 +1585,13 @@ static Token *preprocess2(JCC *vm, Token *tok) {
         }
 
         if (equal(tok, "elif")) {
-            if (!vm->compiler.cond_incl || vm->compiler.cond_incl->ctx == IN_ELSE)
+            if (!vm->compiler.cond_incl ||
+                vm->compiler.cond_incl->ctx == IN_ELSE)
                 error_tok(vm, start, "stray #elif");
             vm->compiler.cond_incl->ctx = IN_ELIF;
 
-            if (!vm->compiler.cond_incl->included && eval_const_expr(vm, &tok, tok))
+            if (!vm->compiler.cond_incl->included &&
+                eval_const_expr(vm, &tok, tok))
                 vm->compiler.cond_incl->included = true;
             else
                 tok = skip_cond_incl(vm, tok);
@@ -1437,7 +1599,8 @@ static Token *preprocess2(JCC *vm, Token *tok) {
         }
 
         if (equal(tok, "elifdef")) {
-            if (!vm->compiler.cond_incl || vm->compiler.cond_incl->ctx == IN_ELSE)
+            if (!vm->compiler.cond_incl ||
+                vm->compiler.cond_incl->ctx == IN_ELSE)
                 error_tok(vm, start, "stray #elifdef");
             vm->compiler.cond_incl->ctx = IN_ELIF;
 
@@ -1451,7 +1614,8 @@ static Token *preprocess2(JCC *vm, Token *tok) {
         }
 
         if (equal(tok, "elifndef")) {
-            if (!vm->compiler.cond_incl || vm->compiler.cond_incl->ctx == IN_ELSE)
+            if (!vm->compiler.cond_incl ||
+                vm->compiler.cond_incl->ctx == IN_ELSE)
                 error_tok(vm, start, "stray #elifndef");
             vm->compiler.cond_incl->ctx = IN_ELIF;
 
@@ -1465,7 +1629,8 @@ static Token *preprocess2(JCC *vm, Token *tok) {
         }
 
         if (equal(tok, "else")) {
-            if (!vm->compiler.cond_incl || vm->compiler.cond_incl->ctx == IN_ELSE)
+            if (!vm->compiler.cond_incl ||
+                vm->compiler.cond_incl->ctx == IN_ELSE)
                 error_tok(vm, start, "stray #else");
             vm->compiler.cond_incl->ctx = IN_ELSE;
             tok = skip_line(vm, tok->next);
@@ -1496,6 +1661,17 @@ static Token *preprocess2(JCC *vm, Token *tok) {
         if (equal(tok, "pragma") && equal(tok->next, "once")) {
             hashmap_put(&vm->compiler.pragma_once, tok->file->name, (void *)1);
             tok = skip_line(vm, tok->next->next);
+            continue;
+        }
+
+        if (equal(tok, "pragma") && equal(tok->next, "macro")) {
+            // Skip to end of #pragma macro line
+            Token *macro_tok = tok->next->next; // Skip "pragma" and "macro"
+            while (macro_tok && !macro_tok->at_bol && macro_tok->kind != TK_EOF)
+                macro_tok = macro_tok->next;
+            // Now macro_tok points to the first token of the function
+            // definition
+            tok = extract_pragma_macro(vm, macro_tok);
             continue;
         }
 
@@ -1585,14 +1761,16 @@ static char *format_date(JCC *vm, struct tm *tm) {
         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     };
 
-    char *result = format("\"%s %2d %d\"", mon[tm->tm_mon], tm->tm_mday, tm->tm_year + 1900);
+    char *result = format("\"%s %2d %d\"", mon[tm->tm_mon], tm->tm_mday,
+                          tm->tm_year + 1900);
     strarray_push(&vm->compiler.file_buffers, result);
     return result;
 }
 
 // __TIME__ is expanded to the current time, e.g. "13:34:03".
 static char *format_time(JCC *vm, struct tm *tm) {
-    char *result = format("\"%02d:%02d:%02d\"", tm->tm_hour, tm->tm_min, tm->tm_sec);
+    char *result =
+        format("\"%02d:%02d:%02d\"", tm->tm_hour, tm->tm_min, tm->tm_sec);
     strarray_push(&vm->compiler.file_buffers, result);
     return result;
 }
@@ -1631,19 +1809,22 @@ void init_macros(JCC *vm) {
     define_macro(vm, "__GNUC__", "4");
     define_macro(vm, "__GNUC_MINOR__", "2");
     define_macro(vm, "__GNUC_PATCHLEVEL__", "1");
-    
+
     // __builtin_va_list - system headers use this for va_list typedef
-    // Define as char* for compatibility (macOS system headers expect a pointer type)
+    // Define as char* for compatibility (macOS system headers expect a pointer
+    // type)
     define_macro(vm, "__builtin_va_list", "char*");
     define_macro(vm, "__gnuc_va_list", "char*");
-    
+
     // Strip __attribute__ specifications from system headers since JCC parser
-    // doesn't handle all attribute positions. Attributes are used for optimization
-    // hints and documentation, not required for correct compilation.
+    // doesn't handle all attribute positions. Attributes are used for
+    // optimization hints and documentation, not required for correct
+    // compilation.
     define_macro(vm, "__attribute__(x)", "");
 
     // Architecture macros - pass through from host compiler
-#if defined(__x86_64__) || defined(__x86_64) || defined(__amd64__) || defined(__amd64)
+#if defined(__x86_64__) || defined(__x86_64) || defined(__amd64__) ||          \
+    defined(__amd64)
     define_macro(vm, "__x86_64__", "1");
     define_macro(vm, "__x86_64", "1");
     define_macro(vm, "__amd64__", "1");
@@ -1675,7 +1856,8 @@ void init_macros(JCC *vm) {
 #endif
 
 #ifdef __clang__
-#if defined(__amd64__) || defined(__amd64) || defined(__x86_64__) || defined(__x86_64)
+#if defined(__amd64__) || defined(__amd64) || defined(__x86_64__) ||           \
+    defined(__x86_64)
     define_macro(vm, "ARCH_X64", "1");
 #elif defined(i386) || defined(__i386) || defined(__i386__)
     define_macro(vm, "ARCH_X86", "1");
@@ -1689,7 +1871,8 @@ void init_macros(JCC *vm) {
 #endif
 
 #if defined(__GNUC__) || defined(__GNUG__)
-#if defined(__amd64__) || defined(__amd64) || defined(__x86_64__) || defined(__x86_64)
+#if defined(__amd64__) || defined(__amd64) || defined(__x86_64__) ||           \
+    defined(__x86_64)
     define_macro(vm, "ARCH_X64", "1");
 #elif defined(i386) || defined(__i386) || defined(__i386__)
     define_macro(vm, "ARCH_X86", "1");
@@ -1752,7 +1935,11 @@ void init_macros(JCC *vm) {
 }
 
 typedef enum {
-    STR_NONE, STR_UTF8, STR_UTF16, STR_UTF32, STR_WIDE,
+    STR_NONE,
+    STR_UTF8,
+    STR_UTF16,
+    STR_UTF32,
+    STR_WIDE,
 } StringKind;
 
 static StringKind getStringKind(Token *tok) {
@@ -1760,10 +1947,14 @@ static StringKind getStringKind(Token *tok) {
         return STR_UTF8;
 
     switch (tok->loc[0]) {
-        case '"': return STR_NONE;
-        case 'u': return STR_UTF16;
-        case 'U': return STR_UTF32;
-        case 'L': return STR_WIDE;
+    case '"':
+        return STR_NONE;
+    case 'u':
+        return STR_UTF16;
+    case 'U':
+        return STR_UTF32;
+    case 'L':
+        return STR_WIDE;
     }
     unreachable();
     return -1;
@@ -1790,7 +1981,9 @@ static void join_adjacent_string_literals(JCC *vm, Token *tok) {
                 kind = k;
                 basety = t->ty->base;
             } else if (k != STR_NONE && kind != k) {
-                error_tok(vm, t, "unsupported non-standard concatenation of string literals");
+                error_tok(vm, t,
+                          "unsupported non-standard concatenation of string "
+                          "literals");
             }
         }
 
@@ -1818,7 +2011,8 @@ static void join_adjacent_string_literals(JCC *vm, Token *tok) {
         for (Token *t = tok1->next; t != tok2; t = t->next)
             len = len + t->ty->array_len - 1;
 
-        char *buf = arena_alloc(&vm->compiler.parser_arena, tok1->ty->base->size * len);
+        char *buf =
+            arena_alloc(&vm->compiler.parser_arena, tok1->ty->base->size * len);
         memset(buf, 0, tok1->ty->base->size * len);
 
         int i = 0;
@@ -1839,7 +2033,8 @@ static void join_adjacent_string_literals(JCC *vm, Token *tok) {
 Token *preprocess(JCC *vm, Token *tok) {
     tok = preprocess2(vm, tok);
     if (vm->compiler.cond_incl)
-        error_tok(vm, vm->compiler.cond_incl->tok, "unterminated conditional directive");
+        error_tok(vm, vm->compiler.cond_incl->tok,
+                  "unterminated conditional directive");
     convert_pp_tokens(vm, tok);
     join_adjacent_string_literals(vm, tok);
 

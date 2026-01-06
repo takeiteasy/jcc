@@ -20,26 +20,26 @@
 #ifndef JCC_H
 #define JCC_H
 
-#include <stdint.h>
+#include <assert.h>
+#include <ctype.h>
+#include <errno.h>
+#include <libgen.h>
+#include <math.h>
+#include <setjmp.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
-#include <stdarg.h>
-#include <setjmp.h>
-#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <time.h>
-#include <string.h>
-#include <stdlib.h>
-#include <ctype.h>
-#include <math.h>
-#include <assert.h>
-#include <libgen.h>
 #if defined(_WIN32) || defined(_WIN64)
 #include <windows.h>
 #else
-#include <unistd.h>
 #include <dlfcn.h>
+#include <unistd.h>
 #endif
 
 // libffi support for variadic foreign functions
@@ -51,110 +51,112 @@
 extern "C" {
 #endif
 
-#define OPS_X \
-    /* Control flow */ \
-    X(JMP)    /* Unconditional jump */ \
-    X(CALL)   /* Call function (direct) */ \
-    X(CALLI)  /* Call function (indirect via register) */ \
-    X(JMPT)   /* Jump table */ \
-    X(JMPI)   /* Indirect jump */ \
-    /* VM memory operations (self-contained, no system calls) */ \
-    X(MALC) \
-    X(MFRE) \
-    X(MCPY) \
-    X(REALC) \
-    X(CALC) \
-    /* Type conversion instructions (in-register) */ \
-    X(SX1)    /* Sign extend 1 byte to 8 bytes */ \
-    X(SX2)    /* Sign extend 2 bytes to 8 bytes */ \
-    X(SX4)    /* Sign extend 4 bytes to 8 bytes */ \
-    X(ZX1)    /* Zero extend 1 byte to 8 bytes */ \
-    X(ZX2)    /* Zero extend 2 bytes to 8 bytes */ \
-    X(ZX4)    /* Zero extend 4 bytes to 8 bytes */ \
-    X(CALLF)  /* Foreign function interface */ \
-    /* Memory safety opcodes (keep legacy for instrumentation) */ \
-    X(CHKB)   /* Check array bounds */ \
-    X(CHKI)   /* Check initialization */ \
-    X(MARKI)  /* Mark as initialized */ \
-    X(MARKA)  /* Mark address (track stack pointer for dangling detection) */ \
-    X(CHKPA)  /* Check pointer arithmetic (invalid arithmetic detection) */ \
-    X(MARKP)  /* Mark provenance (track pointer origin) */ \
-    /* Stack instrumentation opcodes */ \
-    X(SCOPEIN)  /* Mark scope entry (allocate/activate variables) */ \
-    X(SCOPEOUT) /* Mark scope exit (invalidate variables, detect dangling pointers) */ \
-    X(CHKL)     /* Check variable liveness before access */ \
-    X(MARKR)    /* Mark variable read access */ \
-    X(MARKW)    /* Mark variable write access */ \
-    /* Non-local jump instructions (setjmp/longjmp) */ \
-    X(SETJMP)  /* Save execution context to jmp_buf, return 0 */ \
-    X(LONGJMP) /* Restore execution context from jmp_buf, return val */ \
-    /* Register-based arithmetic */ \
-    X(ADD3)   /* rd = rs1 + rs2 */ \
-    X(SUB3)   /* rd = rs1 - rs2 */ \
-    X(MUL3)   /* rd = rs1 * rs2 */ \
-    X(DIV3)   /* rd = rs1 / rs2 */ \
-    X(MOD3)   /* rd = rs1 % rs2 */ \
-    X(AND3)   /* rd = rs1 & rs2 */ \
-    X(OR3)    /* rd = rs1 | rs2 */ \
-    X(XOR3)   /* rd = rs1 ^ rs2 */ \
-    X(SHL3)   /* rd = rs1 << rs2 */ \
-    X(SHR3)   /* rd = rs1 >> rs2 */ \
-    /* Register-based comparisons */ \
-    X(SEQ3)   /* rd = (rs1 == rs2) */ \
-    X(SNE3)   /* rd = (rs1 != rs2) */ \
-    X(SLT3)   /* rd = (rs1 < rs2) */ \
-    X(SGE3)   /* rd = (rs1 >= rs2) */ \
-    X(SGT3)   /* rd = (rs1 > rs2) */ \
-    X(SLE3)   /* rd = (rs1 <= rs2) */ \
-    /* Register operations */ \
-    X(LI3)    /* rd = immediate */ \
-    X(MOV3)   /* rd = rs1 */ \
-    X(NEG3)   /* rd = -rs1 (integer unary negation) */ \
-    X(NOT3)   /* rd = !rs (logical not) */ \
-    X(BNOT3)  /* rd = ~rs (bitwise not) */ \
-    X(ADDI3)  /* rd = rs1 + immediate */ \
-    X(LEA3)   /* rd = bp + immediate (local variable address) */ \
-    /* Register-based control flow */ \
-    X(JZ3)    /* if (regs[rs] == 0) pc = target */ \
-    X(JNZ3)   /* if (regs[rs] != 0) pc = target */ \
-    /* Register-based function frame */ \
-    X(ENT3)   /* Enter function: stack_size|param_count */ \
-    X(LEV3)   /* Leave function: return value in REG_A0 */ \
-    X(ADJ)    /* Adjust stack pointer */ \
-    X(PSH3)   /* Push regs[rs] onto stack: *--sp = regs[rs] */ \
-    X(POP3)   /* Pop from stack into regs[rd]: rd = *sp++ */ \
-    /* Register-based load/store */ \
-    X(LDR_B)  /* regs[rd] = *(char*)regs[rs] (load byte, sign-extend) */ \
-    X(LDR_H)  /* regs[rd] = *(short*)regs[rs] (load halfword, sign-extend) */ \
-    X(LDR_W)  /* regs[rd] = *(int*)regs[rs] (load word, sign-extend) */ \
-    X(LDR_D)  /* regs[rd] = *(long long*)regs[rs] (load dword) */ \
-    X(STR_B)  /* *(char*)regs[rs] = regs[rd] (store byte) */ \
-    X(STR_H)  /* *(short*)regs[rs] = regs[rd] (store halfword) */ \
-    X(STR_W)  /* *(int*)regs[rs] = regs[rd] (store word) */ \
-    X(STR_D)  /* *(long long*)regs[rs] = regs[rd] (store dword) */ \
-    /* Floating-point register operations */ \
-    X(FLDR)   /* fregs[rd] = *(double*)regs[rs] */ \
-    X(FSTR)   /* *(double*)regs[rs] = fregs[rd] */ \
-    X(FADD3)  /* fregs[rd] = fregs[rs1] + fregs[rs2] */ \
-    X(FSUB3)  /* fregs[rd] = fregs[rs1] - fregs[rs2] */ \
-    X(FMUL3)  /* fregs[rd] = fregs[rs1] * fregs[rs2] */ \
-    X(FDIV3)  /* fregs[rd] = fregs[rs1] / fregs[rs2] */ \
-    X(FNEG3)  /* fregs[rd] = -fregs[rs1] */ \
-    X(FEQ3)   /* rd = (fregs[rs1] == fregs[rs2]) */ \
-    X(FNE3)   /* rd = (fregs[rs1] != fregs[rs2]) */ \
-    X(FLT3)   /* rd = (fregs[rs1] < fregs[rs2]) */ \
-    X(FLE3)   /* rd = (fregs[rs1] <= fregs[rs2]) */ \
-    X(FGT3)   /* rd = (fregs[rs1] > fregs[rs2]) */ \
-    X(FGE3)   /* rd = (fregs[rs1] >= fregs[rs2]) */ \
-    X(I2F3)   /* fregs[rd] = (double)regs[rs] */ \
-    X(F2I3)   /* regs[rd] = (long long)fregs[rs] */ \
-    X(FR2R)   /* regs[rd] = *(long long*)&fregs[rs] (bit-pattern transfer) */ \
-    X(R2FR)   /* fregs[rd] = *(double*)&regs[rs] (bit-pattern transfer, reverse of FR2R) */ \
-    /* Register-based safety opcodes */ \
-    X(CHKP3)  /* Check pointer validity: regs[rs] */ \
-    X(CHKA3)  /* Check alignment: regs[rs], immediate alignment */ \
-    X(CHKT3)  /* Check type: regs[rs], immediate TypeKind */ \
-    /* Struct return buffer support */ \
+#define OPS_X                                                                  \
+    /* Control flow */                                                         \
+    X(JMP)   /* Unconditional jump */                                          \
+    X(CALL)  /* Call function (direct) */                                      \
+    X(CALLI) /* Call function (indirect via register) */                       \
+    X(JMPT)  /* Jump table */                                                  \
+    X(JMPI)  /* Indirect jump */                                               \
+    /* VM memory operations (self-contained, no system calls) */               \
+    X(MALC)                                                                    \
+    X(MFRE)                                                                    \
+    X(MCPY)                                                                    \
+    X(REALC)                                                                   \
+    X(CALC)                                                                    \
+    /* Type conversion instructions (in-register) */                           \
+    X(SX1)   /* Sign extend 1 byte to 8 bytes */                               \
+    X(SX2)   /* Sign extend 2 bytes to 8 bytes */                              \
+    X(SX4)   /* Sign extend 4 bytes to 8 bytes */                              \
+    X(ZX1)   /* Zero extend 1 byte to 8 bytes */                               \
+    X(ZX2)   /* Zero extend 2 bytes to 8 bytes */                              \
+    X(ZX4)   /* Zero extend 4 bytes to 8 bytes */                              \
+    X(CALLF) /* Foreign function interface */                                  \
+    /* Memory safety opcodes (keep legacy for instrumentation) */              \
+    X(CHKB)  /* Check array bounds */                                          \
+    X(CHKI)  /* Check initialization */                                        \
+    X(MARKI) /* Mark as initialized */                                         \
+    X(MARKA) /* Mark address (track stack pointer for dangling detection) */   \
+    X(CHKPA) /* Check pointer arithmetic (invalid arithmetic detection) */     \
+    X(MARKP) /* Mark provenance (track pointer origin) */                      \
+    /* Stack instrumentation opcodes */                                        \
+    X(SCOPEIN)  /* Mark scope entry (allocate/activate variables) */           \
+    X(SCOPEOUT) /* Mark scope exit (invalidate variables, detect dangling      \
+                   pointers) */                                                \
+    X(CHKL)     /* Check variable liveness before access */                    \
+    X(MARKR)    /* Mark variable read access */                                \
+    X(MARKW)    /* Mark variable write access */                               \
+    /* Non-local jump instructions (setjmp/longjmp) */                         \
+    X(SETJMP)  /* Save execution context to jmp_buf, return 0 */               \
+    X(LONGJMP) /* Restore execution context from jmp_buf, return val */        \
+    /* Register-based arithmetic */                                            \
+    X(ADD3) /* rd = rs1 + rs2 */                                               \
+    X(SUB3) /* rd = rs1 - rs2 */                                               \
+    X(MUL3) /* rd = rs1 * rs2 */                                               \
+    X(DIV3) /* rd = rs1 / rs2 */                                               \
+    X(MOD3) /* rd = rs1 % rs2 */                                               \
+    X(AND3) /* rd = rs1 & rs2 */                                               \
+    X(OR3)  /* rd = rs1 | rs2 */                                               \
+    X(XOR3) /* rd = rs1 ^ rs2 */                                               \
+    X(SHL3) /* rd = rs1 << rs2 */                                              \
+    X(SHR3) /* rd = rs1 >> rs2 */                                              \
+    /* Register-based comparisons */                                           \
+    X(SEQ3) /* rd = (rs1 == rs2) */                                            \
+    X(SNE3) /* rd = (rs1 != rs2) */                                            \
+    X(SLT3) /* rd = (rs1 < rs2) */                                             \
+    X(SGE3) /* rd = (rs1 >= rs2) */                                            \
+    X(SGT3) /* rd = (rs1 > rs2) */                                             \
+    X(SLE3) /* rd = (rs1 <= rs2) */                                            \
+    /* Register operations */                                                  \
+    X(LI3)   /* rd = immediate */                                              \
+    X(MOV3)  /* rd = rs1 */                                                    \
+    X(NEG3)  /* rd = -rs1 (integer unary negation) */                          \
+    X(NOT3)  /* rd = !rs (logical not) */                                      \
+    X(BNOT3) /* rd = ~rs (bitwise not) */                                      \
+    X(ADDI3) /* rd = rs1 + immediate */                                        \
+    X(LEA3)  /* rd = bp + immediate (local variable address) */                \
+    /* Register-based control flow */                                          \
+    X(JZ3)  /* if (regs[rs] == 0) pc = target */                               \
+    X(JNZ3) /* if (regs[rs] != 0) pc = target */                               \
+    /* Register-based function frame */                                        \
+    X(ENT3) /* Enter function: stack_size|param_count */                       \
+    X(LEV3) /* Leave function: return value in REG_A0 */                       \
+    X(ADJ)  /* Adjust stack pointer */                                         \
+    X(PSH3) /* Push regs[rs] onto stack: *--sp = regs[rs] */                   \
+    X(POP3) /* Pop from stack into regs[rd]: rd = *sp++ */                     \
+    /* Register-based load/store */                                            \
+    X(LDR_B) /* regs[rd] = *(char*)regs[rs] (load byte, sign-extend) */        \
+    X(LDR_H) /* regs[rd] = *(short*)regs[rs] (load halfword, sign-extend) */   \
+    X(LDR_W) /* regs[rd] = *(int*)regs[rs] (load word, sign-extend) */         \
+    X(LDR_D) /* regs[rd] = *(long long*)regs[rs] (load dword) */               \
+    X(STR_B) /* *(char*)regs[rs] = regs[rd] (store byte) */                    \
+    X(STR_H) /* *(short*)regs[rs] = regs[rd] (store halfword) */               \
+    X(STR_W) /* *(int*)regs[rs] = regs[rd] (store word) */                     \
+    X(STR_D) /* *(long long*)regs[rs] = regs[rd] (store dword) */              \
+    /* Floating-point register operations */                                   \
+    X(FLDR)  /* fregs[rd] = *(double*)regs[rs] */                              \
+    X(FSTR)  /* *(double*)regs[rs] = fregs[rd] */                              \
+    X(FADD3) /* fregs[rd] = fregs[rs1] + fregs[rs2] */                         \
+    X(FSUB3) /* fregs[rd] = fregs[rs1] - fregs[rs2] */                         \
+    X(FMUL3) /* fregs[rd] = fregs[rs1] * fregs[rs2] */                         \
+    X(FDIV3) /* fregs[rd] = fregs[rs1] / fregs[rs2] */                         \
+    X(FNEG3) /* fregs[rd] = -fregs[rs1] */                                     \
+    X(FEQ3)  /* rd = (fregs[rs1] == fregs[rs2]) */                             \
+    X(FNE3)  /* rd = (fregs[rs1] != fregs[rs2]) */                             \
+    X(FLT3)  /* rd = (fregs[rs1] < fregs[rs2]) */                              \
+    X(FLE3)  /* rd = (fregs[rs1] <= fregs[rs2]) */                             \
+    X(FGT3)  /* rd = (fregs[rs1] > fregs[rs2]) */                              \
+    X(FGE3)  /* rd = (fregs[rs1] >= fregs[rs2]) */                             \
+    X(I2F3)  /* fregs[rd] = (double)regs[rs] */                                \
+    X(F2I3)  /* regs[rd] = (long long)fregs[rs] */                             \
+    X(FR2R)  /* regs[rd] = *(long long*)&fregs[rs] (bit-pattern transfer) */   \
+    X(R2FR)  /* fregs[rd] = *(double*)&regs[rs] (bit-pattern transfer, reverse \
+                of FR2R) */                                                    \
+    /* Register-based safety opcodes */                                        \
+    X(CHKP3) /* Check pointer validity: regs[rs] */                            \
+    X(CHKA3) /* Check alignment: regs[rs], immediate alignment */              \
+    X(CHKT3) /* Check type: regs[rs], immediate TypeKind */                    \
+    /* Struct return buffer support */                                         \
     X(RETBUF) /* Get next return buffer: REG_A0 = rotating pool buffer */
 
 /*!
@@ -180,48 +182,59 @@ typedef enum {
 */
 typedef enum {
     // Memory safety flags (bits 0-19)
-    JCC_BOUNDS_CHECKS      = (1 << 0),   // 0x00000001 - Array bounds checking
-    JCC_UAF_DETECTION      = (1 << 1),   // 0x00000002 - Use-after-free detection
-    JCC_TYPE_CHECKS        = (1 << 2),   // 0x00000004 - Runtime type checking
-    JCC_UNINIT_DETECTION   = (1 << 3),   // 0x00000008 - Uninitialized variable detection
-    JCC_OVERFLOW_CHECKS    = (1 << 4),   // 0x00000010 - Integer overflow detection
-    JCC_STACK_CANARIES     = (1 << 5),   // 0x00000020 - Stack canary protection
-    JCC_HEAP_CANARIES      = (1 << 6),   // 0x00000040 - Heap canary protection
-    JCC_MEMORY_LEAK_DETECT = (1 << 7),   // 0x00000080 - Memory leak detection
-    JCC_STACK_INSTR        = (1 << 8),   // 0x00000100 - Stack variable instrumentation
-    JCC_DANGLING_DETECT    = (1 << 9),   // 0x00000200 - Dangling pointer detection
-    JCC_ALIGNMENT_CHECKS   = (1 << 10),  // 0x00000400 - Pointer alignment checking
-    JCC_PROVENANCE_TRACK   = (1 << 11),  // 0x00000800 - Pointer provenance tracking
-    JCC_INVALID_ARITH      = (1 << 12),  // 0x00001000 - Invalid pointer arithmetic detection
-    JCC_FORMAT_STR_CHECKS  = (1 << 13),  // 0x00002000 - Format string validation
-    JCC_RANDOM_CANARIES    = (1 << 14),  // 0x00004000 - Random canary values
-    JCC_MEMORY_POISONING   = (1 << 15),  // 0x00008000 - Poison allocated/freed memory
-    JCC_MEMORY_TAGGING     = (1 << 16),  // 0x00010000 - Temporal memory tagging
-    JCC_VM_HEAP            = (1 << 17),  // 0x00020000 - Force VM-managed heap
-    JCC_CFI                = (1 << 18),  // 0x00040000 - Control flow integrity
-    JCC_STACK_INSTR_ERRORS = (1 << 19),  // 0x00080000 - Stack instrumentation errors
-    JCC_ENABLE_DEBUGGER    = (1 << 20),  // 0x00100000 - Interactive debugger
+    JCC_BOUNDS_CHECKS = (1 << 0), // 0x00000001 - Array bounds checking
+    JCC_UAF_DETECTION = (1 << 1), // 0x00000002 - Use-after-free detection
+    JCC_TYPE_CHECKS = (1 << 2),   // 0x00000004 - Runtime type checking
+    JCC_UNINIT_DETECTION =
+        (1 << 3), // 0x00000008 - Uninitialized variable detection
+    JCC_OVERFLOW_CHECKS = (1 << 4), // 0x00000010 - Integer overflow detection
+    JCC_STACK_CANARIES = (1 << 5),  // 0x00000020 - Stack canary protection
+    JCC_HEAP_CANARIES = (1 << 6),   // 0x00000040 - Heap canary protection
+    JCC_MEMORY_LEAK_DETECT = (1 << 7), // 0x00000080 - Memory leak detection
+    JCC_STACK_INSTR = (1 << 8), // 0x00000100 - Stack variable instrumentation
+    JCC_DANGLING_DETECT = (1 << 9),   // 0x00000200 - Dangling pointer detection
+    JCC_ALIGNMENT_CHECKS = (1 << 10), // 0x00000400 - Pointer alignment checking
+    JCC_PROVENANCE_TRACK =
+        (1 << 11), // 0x00000800 - Pointer provenance tracking
+    JCC_INVALID_ARITH =
+        (1 << 12), // 0x00001000 - Invalid pointer arithmetic detection
+    JCC_FORMAT_STR_CHECKS = (1 << 13), // 0x00002000 - Format string validation
+    JCC_RANDOM_CANARIES = (1 << 14),   // 0x00004000 - Random canary values
+    JCC_MEMORY_POISONING =
+        (1 << 15), // 0x00008000 - Poison allocated/freed memory
+    JCC_MEMORY_TAGGING = (1 << 16), // 0x00010000 - Temporal memory tagging
+    JCC_VM_HEAP = (1 << 17),        // 0x00020000 - Force VM-managed heap
+    JCC_CFI = (1 << 18),            // 0x00040000 - Control flow integrity
+    JCC_STACK_INSTR_ERRORS =
+        (1 << 19), // 0x00080000 - Stack instrumentation errors
+    JCC_ENABLE_DEBUGGER = (1 << 20), // 0x00100000 - Interactive debugger
 
     // Convenience flag combinations
-    JCC_POINTER_SANITIZER  = (JCC_BOUNDS_CHECKS | JCC_UAF_DETECTION | JCC_TYPE_CHECKS),
-    JCC_ALL_SAFETY         = 0x000FFFFF,  // All safety features (bits 0-19)
+    JCC_POINTER_SANITIZER =
+        (JCC_BOUNDS_CHECKS | JCC_UAF_DETECTION | JCC_TYPE_CHECKS),
+    JCC_ALL_SAFETY = 0x000FFFFF, // All safety features (bits 0-19)
 
-    // Preset safety levels (use with -S0/-S1/-S2/-S3 or --safety=none/basic/standard/max)
-    JCC_SAFETY_BASIC       = (JCC_STACK_CANARIES | JCC_HEAP_CANARIES | JCC_MEMORY_LEAK_DETECT |
-                              JCC_OVERFLOW_CHECKS | JCC_FORMAT_STR_CHECKS | JCC_VM_HEAP),
-    JCC_SAFETY_STANDARD    = (JCC_POINTER_SANITIZER | JCC_STACK_CANARIES | JCC_HEAP_CANARIES |
-                              JCC_MEMORY_LEAK_DETECT | JCC_OVERFLOW_CHECKS | JCC_UNINIT_DETECTION |
-                              JCC_FORMAT_STR_CHECKS | JCC_MEMORY_POISONING | JCC_VM_HEAP),
-    JCC_SAFETY_MAX         = (JCC_ALL_SAFETY | JCC_RANDOM_CANARIES | JCC_STACK_INSTR_ERRORS),
+    // Preset safety levels (use with -S0/-S1/-S2/-S3 or
+    // --safety=none/basic/standard/max)
+    JCC_SAFETY_BASIC =
+        (JCC_STACK_CANARIES | JCC_HEAP_CANARIES | JCC_MEMORY_LEAK_DETECT |
+         JCC_OVERFLOW_CHECKS | JCC_FORMAT_STR_CHECKS | JCC_VM_HEAP),
+    JCC_SAFETY_STANDARD =
+        (JCC_POINTER_SANITIZER | JCC_STACK_CANARIES | JCC_HEAP_CANARIES |
+         JCC_MEMORY_LEAK_DETECT | JCC_OVERFLOW_CHECKS | JCC_UNINIT_DETECTION |
+         JCC_FORMAT_STR_CHECKS | JCC_MEMORY_POISONING | JCC_VM_HEAP),
+    JCC_SAFETY_MAX =
+        (JCC_ALL_SAFETY | JCC_RANDOM_CANARIES | JCC_STACK_INSTR_ERRORS),
 
     // VM heap is auto-enabled when any of these flags are set
-    JCC_VM_HEAP_TRIGGERS   = (JCC_VM_HEAP | JCC_HEAP_CANARIES | JCC_MEMORY_LEAK_DETECT |
-                              JCC_UAF_DETECTION | JCC_POINTER_SANITIZER | JCC_BOUNDS_CHECKS |
-                              JCC_MEMORY_TAGGING),
+    JCC_VM_HEAP_TRIGGERS =
+        (JCC_VM_HEAP | JCC_HEAP_CANARIES | JCC_MEMORY_LEAK_DETECT |
+         JCC_UAF_DETECTION | JCC_POINTER_SANITIZER | JCC_BOUNDS_CHECKS |
+         JCC_MEMORY_TAGGING),
 
     // Pointer validity checks
-    JCC_POINTER_CHECKS     = (JCC_UAF_DETECTION | JCC_BOUNDS_CHECKS | JCC_DANGLING_DETECT |
-                              JCC_MEMORY_TAGGING),
+    JCC_POINTER_CHECKS = (JCC_UAF_DETECTION | JCC_BOUNDS_CHECKS |
+                          JCC_DANGLING_DETECT | JCC_MEMORY_TAGGING),
 } JCCFlags;
 
 /*!
@@ -349,14 +362,14 @@ typedef struct Type Type;
  @field str For string literals: pointer to the unescaped contents.
 */
 typedef struct Token {
-    TokenKind kind;   // Token kind
-    struct Token *next;      // Next token
-    int64_t val;      // If kind is TK_NUM, its value
-    long double fval; // If kind is TK_NUM, its value
-    char *loc;        // Token location
-    int len;          // Token length
-    Type *ty;         // Used if TK_NUM or TK_STR
-    char *str;        // String literal contents including terminating '\0'
+    TokenKind kind;     // Token kind
+    struct Token *next; // Next token
+    int64_t val;        // If kind is TK_NUM, its value
+    long double fval;   // If kind is TK_NUM, its value
+    char *loc;          // Token location
+    int len;            // Token length
+    Type *ty;           // Used if TK_NUM or TK_STR
+    char *str;          // String literal contents including terminating '\0'
 
     File *file;       // Source location
     char *filename;   // Filename
@@ -366,7 +379,8 @@ typedef struct Token {
     bool at_bol;      // True if this token is at beginning of line
     bool has_space;   // True if this token follows a space character
     Hideset *hideset; // For macro expansion
-    struct Token *origin;    // If this is expanded from a macro, the original token
+    struct Token
+        *origin; // If this is expanded from a macro, the original token
 } Token;
 
 /*!
@@ -374,24 +388,24 @@ typedef struct Token {
  @abstract Kind tag for the `Type` structure describing C types.
 */
 typedef enum {
-    TY_VOID     = 0,
-    TY_BOOL     = 1,
-    TY_CHAR     = 2,
-    TY_SHORT    = 3,
-    TY_INT      = 4,
-    TY_LONG     = 5,
-    TY_FLOAT    = 6,
-    TY_DOUBLE   = 7,
-    TY_LDOUBLE  = 8,
-    TY_ENUM     = 9,
-    TY_PTR      = 10,
-    TY_FUNC     = 11,
-    TY_ARRAY    = 12,
-    TY_VLA      = 13, // variable-length array
-    TY_STRUCT   = 14,
-    TY_UNION    = 15,
-    TY_ERROR    = 16, // error type for recovery
-    TY_BLOCK    = 17, // Apple blocks (closures)
+    TY_VOID = 0,
+    TY_BOOL = 1,
+    TY_CHAR = 2,
+    TY_SHORT = 3,
+    TY_INT = 4,
+    TY_LONG = 5,
+    TY_FLOAT = 6,
+    TY_DOUBLE = 7,
+    TY_LDOUBLE = 8,
+    TY_ENUM = 9,
+    TY_PTR = 10,
+    TY_FUNC = 11,
+    TY_ARRAY = 12,
+    TY_VLA = 13, // variable-length array
+    TY_STRUCT = 14,
+    TY_UNION = 15,
+    TY_ERROR = 16, // error type for recovery
+    TY_BLOCK = 17, // Apple blocks (closures)
 } TypeKind;
 
 typedef struct Node Node;
@@ -407,13 +421,13 @@ typedef struct Obj Obj;
 */
 struct Type {
     TypeKind kind;
-    int size;           // sizeof() value
-    int align;          // alignment
-    bool is_unsigned;   // unsigned or signed
-    bool is_atomic;     // true if _Atomic
-    bool is_const;      // true if const-qualified
-    bool is_volatile;   // true if volatile-qualified
-    struct Type *origin;       // for type compatibility check
+    int size;            // sizeof() value
+    int align;           // alignment
+    bool is_unsigned;    // unsigned or signed
+    bool is_atomic;      // true if _Atomic
+    bool is_const;       // true if const-qualified
+    bool is_volatile;    // true if volatile-qualified
+    struct Type *origin; // for type compatibility check
 
     // Pointer-to or array-of type. We intentionally use the same member
     // to represent pointer/array duality in C.
@@ -478,57 +492,58 @@ typedef struct Member {
  @abstract Kinds of AST nodes produced by the parser.
 */
 typedef enum {
-    ND_NULL_EXPR = 0, // Do nothing
-    ND_ADD       = 1,       // +
-    ND_SUB       = 2,       // -
-    ND_MUL       = 3,       // *
-    ND_DIV       = 4,       // /
-    ND_NEG       = 5,       // unary -
-    ND_MOD       = 6,       // %
-    ND_BITAND    = 7,       // &
-    ND_BITOR     = 8,       // |
-    ND_BITXOR    = 9,       // ^
-    ND_SHL       = 10,      // <<
-    ND_SHR       = 11,      // >>
-    ND_EQ        = 12,      // ==
-    ND_NE        = 13,      // !=
-    ND_LT        = 14,      // <
-    ND_LE        = 15,      // <=
-    ND_ASSIGN    = 16,      // =
-    ND_COND      = 17,      // ?:
-    ND_COMMA     = 18,      // ,
-    ND_MEMBER    = 19,      // . (struct member access)
-    ND_ADDR      = 20,      // unary &
-    ND_DEREF     = 21,      // unary *
-    ND_NOT       = 22,      // !
-    ND_BITNOT    = 23,      // ~
-    ND_LOGAND    = 24,      // &&
-    ND_LOGOR     = 25,      // ||
-    ND_RETURN    = 26,      // "return"
-    ND_IF        = 27,      // "if"
-    ND_FOR       = 28,      // "for" or "while"
-    ND_DO        = 29,      // "do"
-    ND_SWITCH    = 30,      // "switch"
-    ND_CASE      = 31,      // "case"
-    ND_BLOCK     = 32,      // { ... }
-    ND_GOTO      = 33,      // "goto"
-    ND_GOTO_EXPR = 34,      // "goto" labels-as-values
-    ND_LABEL     = 35,      // Labeled statement
-    ND_LABEL_VAL = 36,      // [GNU] Labels-as-values
-    ND_FUNCALL   = 37,      // Function call
-    ND_EXPR_STMT = 38,      // Expression statement
-    ND_STMT_EXPR = 39,      // Statement expression
-    ND_VAR       = 40,      // Variable
-    ND_VLA_PTR   = 41,      // VLA designator
-    ND_NUM       = 42,      // Integer
-    ND_CAST      = 43,      // Type cast
-    ND_MEMZERO   = 44,      // Zero-clear a stack variable
-    ND_ASM       = 45,      // "asm"
-    ND_CAS       = 46,      // Atomic compare-and-swap
-    ND_EXCH      = 47,      // Atomic exchange
-    ND_FRAME_ADDR = 48,     // __builtin_frame_address(0) - returns base pointer
-    ND_BLOCK_LITERAL = 49,  // Block literal ^{ ... }
-    ND_BLOCK_CALL = 50,     // Block invocation
+    ND_NULL_EXPR = 0,      // Do nothing
+    ND_ADD = 1,            // +
+    ND_SUB = 2,            // -
+    ND_MUL = 3,            // *
+    ND_DIV = 4,            // /
+    ND_NEG = 5,            // unary -
+    ND_MOD = 6,            // %
+    ND_BITAND = 7,         // &
+    ND_BITOR = 8,          // |
+    ND_BITXOR = 9,         // ^
+    ND_SHL = 10,           // <<
+    ND_SHR = 11,           // >>
+    ND_EQ = 12,            // ==
+    ND_NE = 13,            // !=
+    ND_LT = 14,            // <
+    ND_LE = 15,            // <=
+    ND_ASSIGN = 16,        // =
+    ND_COND = 17,          // ?:
+    ND_COMMA = 18,         // ,
+    ND_MEMBER = 19,        // . (struct member access)
+    ND_ADDR = 20,          // unary &
+    ND_DEREF = 21,         // unary *
+    ND_NOT = 22,           // !
+    ND_BITNOT = 23,        // ~
+    ND_LOGAND = 24,        // &&
+    ND_LOGOR = 25,         // ||
+    ND_RETURN = 26,        // "return"
+    ND_IF = 27,            // "if"
+    ND_FOR = 28,           // "for" or "while"
+    ND_DO = 29,            // "do"
+    ND_SWITCH = 30,        // "switch"
+    ND_CASE = 31,          // "case"
+    ND_BLOCK = 32,         // { ... }
+    ND_GOTO = 33,          // "goto"
+    ND_GOTO_EXPR = 34,     // "goto" labels-as-values
+    ND_LABEL = 35,         // Labeled statement
+    ND_LABEL_VAL = 36,     // [GNU] Labels-as-values
+    ND_FUNCALL = 37,       // Function call
+    ND_EXPR_STMT = 38,     // Expression statement
+    ND_STMT_EXPR = 39,     // Statement expression
+    ND_VAR = 40,           // Variable
+    ND_VLA_PTR = 41,       // VLA designator
+    ND_NUM = 42,           // Integer
+    ND_CAST = 43,          // Type cast
+    ND_MEMZERO = 44,       // Zero-clear a stack variable
+    ND_ASM = 45,           // "asm"
+    ND_CAS = 46,           // Atomic compare-and-swap
+    ND_EXCH = 47,          // Atomic exchange
+    ND_FRAME_ADDR = 48,    // __builtin_frame_address(0) - returns base pointer
+    ND_BLOCK_LITERAL = 49, // Block literal ^{ ... }
+    ND_BLOCK_CALL = 50,    // Block invocation
+    ND_MACRO_CALL = 51, // Pragma macro invocation (deferred until macro pass)
 } NodeKind;
 
 /*!
@@ -540,13 +555,13 @@ typedef enum {
  @field rhs Right-hand side child (when applicable).
 */
 struct Node {
-    NodeKind kind; // Node kind
-    struct Node *next;    // Next node
-    Type *ty;      // Type, e.g. int or pointer to int
-    Token *tok;    // Representative token
+    NodeKind kind;     // Node kind
+    struct Node *next; // Next node
+    Type *ty;          // Type, e.g. int or pointer to int
+    Token *tok;        // Representative token
 
-    struct Node *lhs;     // Left-hand side
-    struct Node *rhs;     // Right-hand side
+    struct Node *lhs; // Left-hand side
+    struct Node *rhs; // Right-hand side
 
     // "if" or "for" statement
     struct Node *cond;
@@ -607,6 +622,10 @@ struct Node {
     Obj *block_fn;          // Synthetic function for block's body
     Obj **block_captures;   // Array of captured variables
     int num_block_captures; // Number of captured variables
+
+    // Pragma macro call (ND_MACRO_CALL)
+    char *macro_name;    // Name of pragma macro to invoke
+    int macro_arg_count; // Number of arguments
 };
 
 /*!
@@ -633,8 +652,9 @@ struct Obj {
 
     // Local variable
     int offset;
-    bool is_param; // true if this is a function parameter
-    bool is_captured; // true if accessed by a nested function (for optimization hints)
+    bool is_param;    // true if this is a function parameter
+    bool is_captured; // true if accessed by a nested function (for optimization
+                      // hints)
 
     // Global variable or function
     bool is_function;
@@ -647,7 +667,7 @@ struct Obj {
     bool is_tls;
     char *init_data;
     Relocation *rel;
-    Node *init_expr;  // For constexpr: AST of initializer expression
+    Node *init_expr; // For constexpr: AST of initializer expression
 
     // Function
     bool is_inline;
@@ -659,9 +679,9 @@ struct Obj {
     int stack_size;
 
     // Nested function support (GNU C extension)
-    struct Obj *parent_fn;    // Enclosing function (NULL if top-level)
-    bool is_nested;           // True if defined inside another function
-    int nesting_depth;        // 0 = top-level, 1 = one level deep, etc.
+    struct Obj *parent_fn; // Enclosing function (NULL if top-level)
+    bool is_nested;        // True if defined inside another function
+    int nesting_depth;     // 0 = top-level, 1 = one level deep, etc.
 
     // Block support (Apple blocks extension)
     bool is_block;            // True if this is a block's synthetic function
@@ -676,7 +696,7 @@ struct Obj {
     StringArray refs;
 
     // Code generation (for VM)
-    long long code_addr;  // Address in text segment where function code starts
+    long long code_addr; // Address in text segment where function code starts
 };
 
 /*!
@@ -690,6 +710,25 @@ typedef struct CondIncl {
     Token *tok;
     bool included;
 } CondIncl;
+
+/*!
+ @struct PragmaMacro
+ @abstract Represents a compile-time pragma macro function.
+ @discussion Pragma macros are functions marked with #pragma macro that
+             execute during compilation to generate or transform AST nodes.
+ @field name Function name.
+ @field body_tokens Original token stream for function body (from preprocessor).
+ @field compiled_fn Compiled function object (NULL until compiled).
+ @field is_compiled True after successful compilation.
+ @field next Pointer to next macro in linked list.
+*/
+typedef struct PragmaMacro {
+    char *name;               // Function name
+    Token *body_tokens;       // Original token stream for function body
+    Obj *compiled_fn;         // Compiled function object
+    bool is_compiled;         // True after successful compilation
+    struct PragmaMacro *next; // Next macro in linked list
+} PragmaMacro;
 
 /*!
  @struct Scope
@@ -740,8 +779,8 @@ typedef struct Scope {
     struct Scope *next;
     // C has two block scopes; one is for variables/typedefs and
     // the other is for struct/union/enum tags.
-    VarScopeNode *vars;  // Linked list of variables/typedefs (not HashMap)
-    TagScopeNode *tags;  // Linked list of tags (not HashMap)
+    VarScopeNode *vars; // Linked list of variables/typedefs (not HashMap)
+    TagScopeNode *tags; // Linked list of tags (not HashMap)
 } Scope;
 
 /*!
@@ -750,9 +789,9 @@ typedef struct Scope {
            defined addresses in the generated text segment.
 */
 typedef struct LabelEntry {
-    char *name;           // Label name (for named labels)
-    char *unique_label;   // Unique label identifier (for break/continue)
-    long long *address;   // Address in text segment where label is defined
+    char *name;         // Label name (for named labels)
+    char *unique_label; // Unique label identifier (for break/continue)
+    long long *address; // Address in text segment where label is defined
 } LabelEntry;
 
 /*!
@@ -761,9 +800,9 @@ typedef struct LabelEntry {
            destination label is defined.
 */
 typedef struct GotoPatch {
-    char *name;           // Label name to jump to
-    char *unique_label;   // Or unique label identifier
-    long long *location;  // Location of JMP instruction's address operand
+    char *name;          // Label name to jump to
+    char *unique_label;  // Or unique label identifier
+    long long *location; // Location of JMP instruction's address operand
 } GotoPatch;
 
 typedef struct JCC JCC;
@@ -782,27 +821,34 @@ typedef void (*JCCAsmCallback)(JCC *vm, const char *asm_str, void *user_data);
 
 /*!
  @struct ForeignFunc
- @abstract Represents a registered foreign (native C) function callable from VM code.
+ @abstract Represents a registered foreign (native C) function callable from VM
+ code.
  @field name Function name (for lookup during compilation).
  @field func_ptr Pointer to the native C function.
- @field num_args Number of arguments the function expects (total for non-variadic, fixed args for variadic).
- @field returns_double True if function returns double, false if returns long long.
+ @field num_args Number of arguments the function expects (total for
+ non-variadic, fixed args for variadic).
+ @field returns_double True if function returns double, false if returns long
+ long.
  @field is_variadic True if function is variadic (accepts ... arguments).
- @field num_fixed_args For variadic functions: number of fixed args before ... (e.g., printf has 1: format string).
+ @field num_fixed_args For variadic functions: number of fixed args before ...
+ (e.g., printf has 1: format string).
  @field cif libffi call interface (only when JCC_HAS_FFI is defined).
- @field arg_types Array of argument types for libffi (NULL if not prepared, only when JCC_HAS_FFI is defined).
+ @field arg_types Array of argument types for libffi (NULL if not prepared, only
+ when JCC_HAS_FFI is defined).
 */
 typedef struct ForeignFunc {
     char *name;
     void *func_ptr;
     int num_args;
     int returns_double;
-    int is_variadic;        // 1 if function is variadic (e.g., printf), 0 otherwise
-    int num_fixed_args;     // For variadic functions, number of fixed args (rest are variable)
-    uint64_t double_arg_mask; // Bitmask indicating which args are doubles (bit N = arg N)
+    int is_variadic;    // 1 if function is variadic (e.g., printf), 0 otherwise
+    int num_fixed_args; // For variadic functions, number of fixed args (rest
+                        // are variable)
+    uint64_t double_arg_mask; // Bitmask indicating which args are doubles (bit
+                              // N = arg N)
 #ifdef JCC_HAS_FFI
-    ffi_cif cif;            // libffi call interface
-    ffi_type **arg_types;   // Array of argument types (NULL if not prepared)
+    ffi_cif cif;          // libffi call interface
+    ffi_type **arg_types; // Array of argument types (NULL if not prepared)
 #endif
 } ForeignFunc;
 
@@ -814,20 +860,22 @@ typedef struct ForeignFunc {
  @field magic Magic number (0xDEADBEEF) for detecting corruption.
  @field canary Front canary value for heap overflow detection (when enabled)
  @field freed Flag indicating if this block has been freed (for UAF detection)
- @field generation Generation counter incremented on each free (for UAF detection)
+ @field generation Generation counter incremented on each free (for UAF
+ detection)
  @field alloc_pc Program counter at allocation site (for debugging)
  @field type_kind Type of allocation (for type checking on dereference)
 */
 typedef struct AllocHeader {
-    size_t size;            // Allocated size (rounded, excluding header)
-    size_t requested_size;  // Original requested size (for bounds checking)
-    int magic;              // Magic number for debugging (0xDEADBEEF)
-    long long canary;       // Front canary (if heap canaries enabled)
-    int freed;              // 1 if freed (for UAF detection)
-    int generation;         // Generation counter (incremented on free)
-    int creation_generation; // Generation when pointer was created (for temporal safety)
-    long long alloc_pc;     // PC at allocation site (for leak detection)
-    int type_kind;          // Type of allocation (TypeKind enum, for type checking)
+    size_t size;             // Allocated size (rounded, excluding header)
+    size_t requested_size;   // Original requested size (for bounds checking)
+    int magic;               // Magic number for debugging (0xDEADBEEF)
+    long long canary;        // Front canary (if heap canaries enabled)
+    int freed;               // 1 if freed (for UAF detection)
+    int generation;          // Generation counter (incremented on free)
+    int creation_generation; // Generation when pointer was created (for
+                             // temporal safety)
+    long long alloc_pc;      // PC at allocation site (for leak detection)
+    int type_kind; // Type of allocation (TypeKind enum, for type checking)
 } AllocHeader;
 
 /*!
@@ -918,7 +966,6 @@ typedef struct ScopeVarList {
     ScopeVarNode *tail;
 } ScopeVarList;
 
-
 /*!
  @struct ProvenanceInfo
  @abstract Tracks pointer provenance (origin) for validation.
@@ -927,7 +974,7 @@ typedef struct ScopeVarList {
  @field size Size of the original object.
 */
 typedef struct ProvenanceInfo {
-    int origin_type;  // 0=HEAP, 1=STACK, 2=GLOBAL
+    int origin_type; // 0=HEAP, 1=STACK, 2=GLOBAL
     long long base;
     size_t size;
 } ProvenanceInfo;
@@ -940,28 +987,29 @@ typedef struct ProvenanceInfo {
  @field line_no Line number in source file.
 */
 typedef struct SourceMap {
-    long long pc_offset;  // Offset in text segment
-    File *file;           // Source file
-    int line_no;          // Line number in source
-    int col_no;           // Column number (1-based)
-    int end_col_no;       // End column number (1-based)
+    long long pc_offset; // Offset in text segment
+    File *file;          // Source file
+    int line_no;         // Line number in source
+    int col_no;          // Column number (1-based)
+    int end_col_no;      // End column number (1-based)
 } SourceMap;
 
 /*!
  @struct DebugSymbol
  @abstract Represents a variable's debug information for expression evaluation.
  @field name Variable name (for lookup).
- @field offset Offset from BP (negative for locals) or address in data segment (globals).
+ @field offset Offset from BP (negative for locals) or address in data segment
+ (globals).
  @field ty Type of the variable.
  @field is_local True if local variable (BP-relative), false if global.
  @field scope_depth Scope depth (for handling shadowing).
 */
 typedef struct DebugSymbol {
-    char *name;           // Variable name
-    long long offset;     // BP offset (locals) or data segment address (globals)
-    Type *ty;             // Variable type
-    int is_local;         // 1=local (BP-relative), 0=global (data segment)
-    int scope_depth;      // Scope depth for shadowing resolution
+    char *name;       // Variable name
+    long long offset; // BP offset (locals) or data segment address (globals)
+    Type *ty;         // Variable type
+    int is_local;     // 1=local (BP-relative), 0=global (data segment)
+    int scope_depth;  // Scope depth for shadowing resolution
 } DebugSymbol;
 
 /*!
@@ -980,23 +1028,24 @@ typedef struct DebugSymbol {
 #endif
 
 // Watchpoint type flags
-#define WATCH_READ   (1 << 0)  // Trigger on reads
-#define WATCH_WRITE  (1 << 1)  // Trigger on writes
-#define WATCH_CHANGE (1 << 2)  // Only trigger if value actually changes
+#define WATCH_READ (1 << 0)   // Trigger on reads
+#define WATCH_WRITE (1 << 1)  // Trigger on writes
+#define WATCH_CHANGE (1 << 2) // Only trigger if value actually changes
 
 typedef struct Watchpoint {
-    void *address;        // Address being watched
-    int size;             // Size in bytes
-    int type;             // WATCH_READ | WATCH_WRITE | WATCH_CHANGE
-    long long old_value;  // Last value (for change detection)
-    char *expr;           // Original expression (for display)
-    int enabled;          // 1 if enabled, 0 if disabled
-    int hit_count;        // Number of times triggered
+    void *address;       // Address being watched
+    int size;            // Size in bytes
+    int type;            // WATCH_READ | WATCH_WRITE | WATCH_CHANGE
+    long long old_value; // Last value (for change detection)
+    char *expr;          // Original expression (for display)
+    int enabled;         // 1 if enabled, 0 if disabled
+    int hit_count;       // Number of times triggered
 } Watchpoint;
 
 /*!
  @struct Breakpoint
- @abstract Represents a debugger breakpoint at a specific program counter location.
+ @abstract Represents a debugger breakpoint at a specific program counter
+ location.
  @field pc Program counter address where the breakpoint is set.
  @field enabled Whether this breakpoint is currently active.
  @field hit_count Number of times this breakpoint has been hit.
@@ -1006,15 +1055,16 @@ typedef struct Watchpoint {
 #endif
 
 typedef struct Breakpoint {
-    long long *pc;      // PC address of breakpoint
-    int enabled;        // 1 if enabled, 0 if disabled
-    int hit_count;      // Number of times hit
-    char *condition;    // Optional condition expression (NULL if unconditional)
+    long long *pc;   // PC address of breakpoint
+    int enabled;     // 1 if enabled, 0 if disabled
+    int hit_count;   // Number of times hit
+    char *condition; // Optional condition expression (NULL if unconditional)
 } Breakpoint;
 
 /*!
  @struct CompileError
- @abstract Represents a compilation error or warning collected during compilation.
+ @abstract Represents a compilation error or warning collected during
+ compilation.
  @field next Pointer to the next error in the linked list.
  @field message Formatted error message string.
  @field filename Source file name where the error occurred.
@@ -1023,12 +1073,12 @@ typedef struct Breakpoint {
  @field severity 0 for error, 1 for warning.
 */
 typedef struct CompileError {
-    struct CompileError *next;  // Next error in linked list
-    char *message;              // Formatted error message
-    char *filename;             // Source file name
-    int line_no;                // Line number
-    int col_no;                 // Column number
-    int severity;               // 0 = error, 1 = warning
+    struct CompileError *next; // Next error in linked list
+    char *message;             // Formatted error message
+    char *filename;            // Source file name
+    int line_no;               // Line number
+    int col_no;                // Column number
+    int severity;              // 0 = error, 1 = warning
 } CompileError;
 
 /*!
@@ -1040,15 +1090,16 @@ typedef struct CompileError {
  @field next Pointer to the next block in the chain.
 */
 typedef struct ArenaBlock {
-    char *base;                 // Start of memory block
-    char *ptr;                  // Current allocation pointer (bump pointer)
-    size_t size;                // Total block size
-    struct ArenaBlock *next;    // Next block in chain
+    char *base;              // Start of memory block
+    char *ptr;               // Current allocation pointer (bump pointer)
+    size_t size;             // Total block size
+    struct ArenaBlock *next; // Next block in chain
 } ArenaBlock;
 
 /*!
  @struct Arena
- @abstract Arena allocator for fast, bulk memory allocation with single deallocation.
+ @abstract Arena allocator for fast, bulk memory allocation with single
+ deallocation.
  @field current Currently active block for allocations.
  @field blocks Linked list of all allocated blocks (for cleanup).
  @field default_block_size Default size for new blocks (typically 1MB).
@@ -1058,16 +1109,17 @@ typedef struct ArenaBlock {
              frontend (tokens, AST nodes) which have fire-and-forget lifetime.
 */
 typedef struct Arena {
-    ArenaBlock *current;        // Current block for allocations
-    ArenaBlock *blocks;         // All blocks (for cleanup)
-    size_t default_block_size;  // Default block size (1MB)
+    ArenaBlock *current;       // Current block for allocations
+    ArenaBlock *blocks;        // All blocks (for cleanup)
+    size_t default_block_size; // Default block size (1MB)
 } Arena;
 
 /*!
  @struct Debugger
  @abstract Encapsulates all debugger state for the JCC VM.
  @discussion Contains breakpoints, stepping control, source mapping,
-             debug symbols, and watchpoints. Enabled via JCC_ENABLE_DEBUGGER flag.
+             debug symbols, and watchpoints. Enabled via JCC_ENABLE_DEBUGGER
+ flag.
 */
 #ifndef MAX_DEBUG_SYMBOLS
 #define MAX_DEBUG_SYMBOLS 4096
@@ -1078,20 +1130,20 @@ typedef struct Debugger {
     int num_breakpoints;
 
     // Stepping control
-    int single_step;                    // Single-step mode (stop after each instruction)
-    int step_over;                      // Step over mode (skip function calls)
-    int step_out;                       // Step out mode (run until function returns)
-    long long *step_over_return_addr;   // Return address for step over
-    long long *step_out_bp;             // Base pointer for step out
-    int debugger_attached;              // Debugger REPL is active
+    int single_step; // Single-step mode (stop after each instruction)
+    int step_over;   // Step over mode (skip function calls)
+    int step_out;    // Step out mode (run until function returns)
+    long long *step_over_return_addr; // Return address for step over
+    long long *step_out_bp;           // Base pointer for step out
+    int debugger_attached;            // Debugger REPL is active
 
     // Source mapping (bytecode ↔ source lines)
-    SourceMap *source_map;              // Array of PC to source location mappings
-    int source_map_count;               // Number of source map entries
-    int source_map_capacity;            // Allocated capacity
-    File *last_debug_file;              // Last file during debug info emission
-    int last_debug_line;                // Last line number during debug info emission
-    int last_debug_col;                 // Last column number during debug info emission
+    SourceMap *source_map;   // Array of PC to source location mappings
+    int source_map_count;    // Number of source map entries
+    int source_map_capacity; // Allocated capacity
+    File *last_debug_file;   // Last file during debug info emission
+    int last_debug_line;     // Last line number during debug info emission
+    int last_debug_col;      // Last column number during debug info emission
 
     // Debug symbols for expression evaluation
     DebugSymbol debug_symbols[MAX_DEBUG_SYMBOLS];
@@ -1118,73 +1170,83 @@ typedef struct Debugger {
 
 /*!
  @struct Compiler
- @abstract Encapsulates all compiler frontend state: preprocessor, parser, and code generator.
- @discussion Contains state for preprocessing (#include, #define, #if), parsing (AST construction,
-             scope management), and code generation (labels, patches, FFI). Separated from VM
-             runtime state to clarify the compilation/execution boundary.
+ @abstract Encapsulates all compiler frontend state: preprocessor, parser, and
+ code generator.
+ @discussion Contains state for preprocessing (#include, #define, #if), parsing
+ (AST construction, scope management), and code generation (labels, patches,
+ FFI). Separated from VM runtime state to clarify the compilation/execution
+ boundary.
 */
 typedef struct Compiler {
     // Preprocessor state
-    bool skip_preprocess;               // Skip preprocessing step
-    HashMap macros;                     // Macro definitions
-    CondIncl *cond_incl;                // Conditional inclusion stack
-    HashMap pragma_once;                // #pragma once tracking
-    HashMap included_headers;           // Track included headers for lazy stdlib loading
-    int include_next_idx;               // Index for #include_next
+    bool skip_preprocess;     // Skip preprocessing step
+    HashMap macros;           // Macro definitions
+    CondIncl *cond_incl;      // Conditional inclusion stack
+    HashMap pragma_once;      // #pragma once tracking
+    HashMap included_headers; // Track included headers for lazy stdlib loading
+    int include_next_idx;     // Index for #include_next
+
+    // Pragma macro state
+    PragmaMacro *pragma_macros; // Linked list of captured pragma macros
+    bool in_macro_mode;         // True when compiling/executing a pragma macro
+    bool in_macro_expansion;    // True during macro AST expansion pass
+    Obj *macro_globals; // Globals defined by pragma macros (separate from main
+                        // program)
 
     // #embed directive limits
-    size_t embed_limit;                 // Soft limit for #embed size (default: 10MB)
-    size_t embed_hard_limit;            // Secondary warning threshold (default: 50MB)
-    bool embed_hard_error;              // If true, exceeding limit is a hard error
+    size_t embed_limit;      // Soft limit for #embed size (default: 10MB)
+    size_t embed_hard_limit; // Secondary warning threshold (default: 50MB)
+    bool embed_hard_error;   // If true, exceeding limit is a hard error
 
     // Tokenization state
-    File *current_file;                 // Input file
-    File **input_files;                 // A list of all input files
-    bool at_bol;                        // True if at beginning of line
-    bool has_space;                     // True if follows a space character
+    File *current_file; // Input file
+    File **input_files; // A list of all input files
+    bool at_bol;        // True if at beginning of line
+    bool has_space;     // True if follows a space character
 
     // Parser state
-    Obj *locals;                        // All local variable instances during parsing
-    Obj *globals;                       // Global variables accumulated list
-    Scope *scope;                       // Current scope
-    Obj *initializing_var;              // Variable being initialized (for const initialization)
-    Obj *current_fn;                    // Function being parsed
-    int fn_nesting_depth;               // Current function nesting depth (0 = top-level)
-    Node *gotos;                        // Goto statements in current function
-    Node *labels;                       // Labels in current function
-    char *brk_label;                    // Current break jump target
-    char *cont_label;                   // Current continue jump target
-    Node *current_switch;               // Switch statement being parsed (NULL if none)
-    Obj *builtin_alloca;                // Builtin alloca function
-    Obj *builtin_setjmp;                // Builtin setjmp function
-    Obj *builtin_longjmp;               // Builtin longjmp function
+    Obj *locals;           // All local variable instances during parsing
+    Obj *globals;          // Global variables accumulated list
+    Scope *scope;          // Current scope
+    Obj *initializing_var; // Variable being initialized (for const
+                           // initialization)
+    Obj *current_fn;       // Function being parsed
+    int fn_nesting_depth;  // Current function nesting depth (0 = top-level)
+    Node *gotos;           // Goto statements in current function
+    Node *labels;          // Labels in current function
+    char *brk_label;       // Current break jump target
+    char *cont_label;      // Current continue jump target
+    Node *current_switch;  // Switch statement being parsed (NULL if none)
+    Obj *builtin_alloca;   // Builtin alloca function
+    Obj *builtin_setjmp;   // Builtin setjmp function
+    Obj *builtin_longjmp;  // Builtin longjmp function
 
     // Arena allocator for parser frontend (tokens, AST, preprocessor state)
-    Arena parser_arena;                 // Fast bump-pointer allocator
+    Arena parser_arena; // Fast bump-pointer allocator
 
-    StringArray include_paths;          // Quote include search paths
-    StringArray system_include_paths;   // System header search paths for <...>
-    HashMap include_cache;              // Cache for search_include_paths
-    StringArray file_buffers;           // Track allocated file buffers for cleanup
+    StringArray include_paths;        // Quote include search paths
+    StringArray system_include_paths; // System header search paths for <...>
+    HashMap include_cache;            // Cache for search_include_paths
+    StringArray file_buffers; // Track allocated file buffers for cleanup
 
     // URL include cache (only used when JCC_HAS_CURL is enabled)
-    char *url_cache_dir;                // Directory for caching downloaded headers
-    HashMap url_to_path;                // Maps URLs to cached file paths
+    char *url_cache_dir; // Directory for caching downloaded headers
+    HashMap url_to_path; // Maps URLs to cached file paths
 
     // Code generation state
-    int label_counter;                  // For generating unique labels
-    int local_offset;                   // Current local variable offset
+    int label_counter; // For generating unique labels
+    int local_offset;  // Current local variable offset
 
     struct {
-        long long *location;            // Location in text segment to patch
-        Obj *function;                  // Function to call
+        long long *location; // Location in text segment to patch
+        Obj *function;       // Function to call
     } call_patches[MAX_CALLS];
     int num_call_patches;
 
     // Function address patches for function pointers
     struct {
-        long long *location;            // Location of IMM operand to patch
-        Obj *function;                  // Function whose address to use
+        long long *location; // Location of IMM operand to patch
+        Obj *function;       // Function whose address to use
     } func_addr_patches[MAX_CALLS];
     int num_func_addr_patches;
 
@@ -1194,45 +1256,46 @@ typedef struct Compiler {
     int num_goto_patches;
 
     // Switch statement code generation (for dense switches)
-    long long *current_switch_table;    // Jump table being filled
-    long current_switch_min;            // Minimum case value
-    long current_switch_size;           // Jump table size
-    Node *current_switch_default;       // Default case node
-    long long *current_default_patch;   // Patch location for default case jump
+    long long *current_switch_table;  // Jump table being filled
+    long current_switch_min;          // Minimum case value
+    long current_switch_size;         // Jump table size
+    Node *current_switch_default;     // Default case node
+    long long *current_default_patch; // Patch location for default case jump
 
     // Switch statement code generation (for sparse switches)
-    long long *current_sparse_case_table;   // Array of jump addresses
-    int current_sparse_num;                 // Number of case entries
-    Node *sparse_case_nodes[MAX_SPARSE_CASES];          // Case nodes
-    long long *sparse_jump_addrs[MAX_SPARSE_CASES];     // Jump address pointers
+    long long *current_sparse_case_table;           // Array of jump addresses
+    int current_sparse_num;                         // Number of case entries
+    Node *sparse_case_nodes[MAX_SPARSE_CASES];      // Case nodes
+    long long *sparse_jump_addrs[MAX_SPARSE_CASES]; // Jump address pointers
 
     // Inline assembly callback
-    JCCAsmCallback asm_callback;        // User-provided callback for asm statements
-    void *asm_user_data;                // User-provided context for callback
+    JCCAsmCallback asm_callback; // User-provided callback for asm statements
+    void *asm_user_data;         // User-provided context for callback
 
     // Foreign Function Interface (FFI)
-    ForeignFunc *ffi_table;             // Registry of foreign C functions
-    int ffi_count;                      // Number of registered functions
-    int ffi_capacity;                   // Capacity of ffi_table array
+    ForeignFunc *ffi_table; // Registry of foreign C functions
+    int ffi_count;          // Number of registered functions
+    int ffi_capacity;       // Capacity of ffi_table array
 
     // Current function being compiled (for VLA cleanup)
     Obj *current_codegen_fn;
 
     // Struct/union return buffer pool (copy-before-return approach)
-    char *return_buffer_pool[RETURN_BUFFER_POOL_SIZE];  // Pool of return buffers
-    int return_buffer_index;            // Current buffer index (rotates 0-7)
-    int return_buffer_size;             // Size of each buffer (1024 bytes)
+    char *return_buffer_pool[RETURN_BUFFER_POOL_SIZE]; // Pool of return buffers
+    int return_buffer_index; // Current buffer index (rotates 0-7)
+    int return_buffer_size;  // Size of each buffer (1024 bytes)
 
     // Linked programs for extern offset propagation
-    Obj **link_progs;                   // Array of original program lists
-    int link_prog_count;                // Number of programs
+    Obj **link_progs;    // Array of original program lists
+    int link_prog_count; // Number of programs
 
     // Per-instance state (moved from static globals for thread-safety)
-    int unique_name_counter;            // Counter for new_unique_name()
-    int counter_macro_value;            // __COUNTER__ macro value
+    int unique_name_counter; // Counter for new_unique_name()
+    int counter_macro_value; // __COUNTER__ macro value
 
     // Optimization settings
-    int opt_level;                      // Optimization level (0=none, 1=basic, 2=standard, 3=aggressive)
+    int opt_level; // Optimization level (0=none, 1=basic, 2=standard,
+                   // 3=aggressive)
 } Compiler;
 
 /*!
@@ -1246,43 +1309,51 @@ typedef struct Compiler {
 */
 struct JCC {
     // VM Registers (pure register-based architecture)
-    long long regs[32];        // General-purpose register file (NUM_REGS)
-    double fregs[32];          // Floating-point register file
-    long long *pc;             // Program counter
-    long long *bp;             // Base pointer (frame pointer)
-    long long *sp;             // Stack pointer
-    long long cycle;           // Instruction cycle counter
+    long long regs[32]; // General-purpose register file (NUM_REGS)
+    double fregs[32];   // Floating-point register file
+    long long *pc;      // Program counter
+    long long *bp;      // Base pointer (frame pointer)
+    long long *sp;      // Stack pointer
+    long long cycle;    // Instruction cycle counter
 
     // Exit detection (for returning from main)
-    long long *initial_sp;     // Initial stack pointer (for exit detection)
-    long long *initial_bp;     // Initial base pointer (for exit detection)
+    long long *initial_sp; // Initial stack pointer (for exit detection)
+    long long *initial_bp; // Initial base pointer (for exit detection)
 
     // Memory Segments
-    long long *text_seg;       // Text segment (bytecode instructions)
-    long long *text_ptr;       // Current write position (for code generation)
-    long long *stack_seg;      // Stack segment
-    long long *old_text_seg;   // Backup of original text segment pointer
-    char *data_seg;            // Data segment (global variables/constants)
-    char *data_ptr;            // Current write position in data segment
-    char *heap_seg;            // Heap segment (for VM malloc/free)
-    char *heap_ptr;            // Current allocation pointer (bump allocator)
-    char *heap_end;            // End of heap segment
-    FreeBlock *free_list;      // Head of free blocks list (for memory reuse)
+    long long *text_seg;     // Text segment (bytecode instructions)
+    long long *text_ptr;     // Current write position (for code generation)
+    long long *stack_seg;    // Stack segment
+    long long *old_text_seg; // Backup of original text segment pointer
+    char *data_seg;          // Data segment (global variables/constants)
+    char *data_ptr;          // Current write position in data segment
+    char *heap_seg;          // Heap segment (for VM malloc/free)
+    char *heap_ptr;          // Current allocation pointer (bump allocator)
+    char *heap_end;          // End of heap segment
+    FreeBlock *free_list;    // Head of free blocks list (for memory reuse)
 
     // Segregated free lists for optimized allocation
-    // Size classes: 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, LARGE (>8192)
-    FreeBlock *size_class_lists[12];  // One free list per size class (NUM_SIZE_CLASSES)
-    FreeBlock *large_list;            // For allocations > MAX_SMALL_ALLOC (8192)
+    // Size classes: 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, LARGE
+    // (>8192)
+    FreeBlock *
+        size_class_lists[12]; // One free list per size class (NUM_SIZE_CLASSES)
+    FreeBlock *large_list;    // For allocations > MAX_SMALL_ALLOC (8192)
 
     // Memory safety tracking
-    AllocRecord *alloc_list;   // List of active allocations (for leak detection)
-    HashMap init_state;        // Track initialization state of stack variables (for uninitialized detection)
-    HashMap stack_ptrs;        // Track stack pointers for dangling detection (ptr -> {bp, offset, size})
-    HashMap provenance;        // Track pointer provenance for stack/global (ptr -> {origin_type, base, size})
-    HashMap stack_var_meta;    // Unified stack variable metadata (bp+offset -> StackVarMeta)
-    // Note: alloc_map and ptr_tags removed - now using sorted_allocs for heap tracking
+    AllocRecord *alloc_list; // List of active allocations (for leak detection)
+    HashMap init_state; // Track initialization state of stack variables (for
+                        // uninitialized detection)
+    HashMap stack_ptrs; // Track stack pointers for dangling detection (ptr ->
+                        // {bp, offset, size})
+    HashMap provenance; // Track pointer provenance for stack/global (ptr ->
+                        // {origin_type, base, size})
+    HashMap stack_var_meta; // Unified stack variable metadata (bp+offset ->
+                            // StackVarMeta)
+    // Note: alloc_map and ptr_tags removed - now using sorted_allocs for heap
+    // tracking
 
-    // Sorted allocation array for O(log n) range queries (CHKP/CHKT performance and heap provenance)
+    // Sorted allocation array for O(log n) range queries (CHKP/CHKT performance
+    // and heap provenance)
     struct {
         void **addresses;      // Sorted array of base addresses
         AllocHeader **headers; // Parallel array of headers
@@ -1291,28 +1362,32 @@ struct JCC {
     } sorted_allocs;
 
     // Configuration
-    int poolsize;              // Size of memory segments (bytes)
-    int debug_vm;              // Enable debug output during execution
+    int poolsize; // Size of memory segments (bytes)
+    int debug_vm; // Enable debug output during execution
 
     // Runtime flags (bitwise combination of JCCFlags)
-    uint32_t flags;                     // JCCFlags bitfield for all safety and runtime features
-    long long stack_canary;             // Stack canary value (random if JCC_RANDOM_CANARIES set, else fixed)
-    int in_vm_alloc;                    // Reentrancy guard: prevents HashMap from triggering VM heap recursion
+    uint32_t flags; // JCCFlags bitfield for all safety and runtime features
+    long long stack_canary; // Stack canary value (random if JCC_RANDOM_CANARIES
+                            // set, else fixed)
+    int in_vm_alloc; // Reentrancy guard: prevents HashMap from triggering VM
+                     // heap recursion
 
     // Control Flow Integrity (shadow stack)
-    long long *shadow_stack;            // Shadow stack for return addresses (CFI)
-    long long *shadow_sp;               // Shadow stack pointer
+    long long *shadow_stack; // Shadow stack for return addresses (CFI)
+    long long *shadow_sp;    // Shadow stack pointer
 
     // Stack instrumentation state
-    int current_scope_id;               // Incremented for each scope entry
-    int current_function_scope_id;      // Scope ID of current function being generated
-    long long stack_high_water;         // Maximum stack usage tracking
-    ScopeVarList *scope_vars;           // Array of per-scope variable lists
-    int scope_vars_capacity;            // Capacity of scope_vars array
+    int current_scope_id;          // Incremented for each scope entry
+    int current_function_scope_id; // Scope ID of current function being
+                                   // generated
+    long long stack_high_water;    // Maximum stack usage tracking
+    ScopeVarList *scope_vars;      // Array of per-scope variable lists
+    int scope_vars_capacity;       // Capacity of scope_vars array
 
-    // Struct return buffer runtime state (runtime rotation for clean chained calls)
-    int runtime_return_buffer_index;    // Runtime rotating index for return buffers
-
+    // Struct return buffer runtime state (runtime rotation for clean chained
+    // calls)
+    int runtime_return_buffer_index; // Runtime rotating index for return
+                                     // buffers
 
     // Debugger state (enable via JCC_ENABLE_DEBUGGER flag)
     Debugger dbg;
@@ -1321,17 +1396,18 @@ struct JCC {
     Compiler compiler;
 
     // Error handling (setjmp/longjmp for exception-like behavior)
-    jmp_buf *error_jmp_buf;            // Jump buffer for error handling (NULL = use exit())
-    char *error_message;               // Last error message (when using longjmp)
+    jmp_buf
+        *error_jmp_buf;  // Jump buffer for error handling (NULL = use exit())
+    char *error_message; // Last error message (when using longjmp)
 
     // Error collection (for reporting multiple errors)
-    CompileError *errors;              // Linked list of collected errors
-    CompileError *errors_tail;         // Tail pointer for O(1) append
-    int error_count;                   // Number of errors collected
-    int warning_count;                 // Number of warnings collected
-    int max_errors;                    // Maximum errors before stopping (default: 20)
-    bool collect_errors;               // Enable error collection mode
-    bool warnings_as_errors;           // Treat warnings as errors (--Werror)
+    CompileError *errors;      // Linked list of collected errors
+    CompileError *errors_tail; // Tail pointer for O(1) append
+    int error_count;           // Number of errors collected
+    int warning_count;         // Number of warnings collected
+    int max_errors;            // Maximum errors before stopping (default: 20)
+    bool collect_errors;       // Enable error collection mode
+    bool warnings_as_errors;   // Treat warnings as errors (--Werror)
 };
 
 /*!
@@ -1462,57 +1538,72 @@ void cc_set_asm_callback(JCC *vm, JCCAsmCallback callback, void *user_data);
  @param returns_double 1 if function returns double, 0 if returns long long.
  @discussion Registered functions can be called from C code compiled to VM
              bytecode. The CALLF instruction handles argument marshalling.
-             All integer types are passed/returned as long long, floats as double.
+             All integer types are passed/returned as long long, floats as
+ double.
 */
-void cc_register_cfunc(JCC *vm, const char *name, void *func_ptr, int num_args, int returns_double);
+void cc_register_cfunc(JCC *vm, const char *name, void *func_ptr, int num_args,
+                       int returns_double);
 
 /*!
  @function cc_register_cfunc_ex
- @abstract Register a C function with detailed argument type information for correct FFI calling conventions.
+ @abstract Register a C function with detailed argument type information for
+ correct FFI calling conventions.
  @param vm The JCC instance.
  @param name Function name (must match declarations in C source).
  @param func_ptr Pointer to the native C function.
  @param num_args Total number of arguments.
  @param returns_double 1 if function returns double, 0 if returns long long.
- @param double_arg_mask Bitmask indicating which arguments are doubles. Bit N corresponds to argument N (0-indexed).
-                        For example: 0b11 = both args 0 and 1 are doubles (e.g., pow(double, double)).
-                                    0b01 = only arg 0 is double (e.g., ldexp(double, int)).
- @discussion Use this function instead of cc_register_cfunc() for functions that take multiple double
-             arguments or mix double and integer arguments. The bitmask ensures correct calling conventions
-             on all platforms. For functions with only integer arguments or single double arguments,
-             cc_register_cfunc() is sufficient.
+ @param double_arg_mask Bitmask indicating which arguments are doubles. Bit N
+ corresponds to argument N (0-indexed). For example: 0b11 = both args 0 and 1
+ are doubles (e.g., pow(double, double)). 0b01 = only arg 0 is double (e.g.,
+ ldexp(double, int)).
+ @discussion Use this function instead of cc_register_cfunc() for functions that
+ take multiple double arguments or mix double and integer arguments. The bitmask
+ ensures correct calling conventions on all platforms. For functions with only
+ integer arguments or single double arguments, cc_register_cfunc() is
+ sufficient.
 */
-void cc_register_cfunc_ex(JCC *vm, const char *name, void *func_ptr, int num_args, int returns_double, uint64_t double_arg_mask);
+void cc_register_cfunc_ex(JCC *vm, const char *name, void *func_ptr,
+                          int num_args, int returns_double,
+                          uint64_t double_arg_mask);
 
 /*!
  @function cc_register_variadic_cfunc
- @abstract Register a variadic native C function to be callable from VM code via FFI.
+ @abstract Register a variadic native C function to be callable from VM code via
+ FFI.
  @param vm The JCC instance.
  @param name Function name (must match declarations in C source).
  @param func_ptr Pointer to the native C variadic function.
- @param num_fixed_args Number of fixed arguments before the ... (e.g., printf has 1: format string).
+ @param num_fixed_args Number of fixed arguments before the ... (e.g., printf
+ has 1: format string).
  @param returns_double 1 if function returns double, 0 if returns long long.
- @discussion This function is only available when JCC_HAS_FFI is defined. When libffi
-             is not available, use fixed-argument wrappers instead. Variadic functions
-             accept a variable number of arguments after the fixed arguments.
-             Example: printf has 1 fixed arg (format), fprintf has 2 (stream, format).
+ @discussion This function is only available when JCC_HAS_FFI is defined. When
+ libffi is not available, use fixed-argument wrappers instead. Variadic
+ functions accept a variable number of arguments after the fixed arguments.
+             Example: printf has 1 fixed arg (format), fprintf has 2 (stream,
+ format).
 */
-void cc_register_variadic_cfunc(JCC *vm, const char *name, void *func_ptr, int num_fixed_args, int returns_double);
+void cc_register_variadic_cfunc(JCC *vm, const char *name, void *func_ptr,
+                                int num_fixed_args, int returns_double);
 
 /*!
  @function cc_load_stdlib
  @abstract Register all standard library functions available via FFI.
  @param vm The JCC instance.
  @discussion Automatically registers 50+ standard library functions including:
-             - Memory: malloc, free, calloc, realloc, memcpy, memmove, memset, memcmp
-             - String: strlen, strcpy, strncpy, strcat, strcmp, strncmp, strchr, strstr
-             - I/O: puts, putchar, getchar, fopen, fclose, fread, fwrite, fgetc, fputc
+             - Memory: malloc, free, calloc, realloc, memcpy, memmove, memset,
+ memcmp
+             - String: strlen, strcpy, strncpy, strcat, strcmp, strncmp, strchr,
+ strstr
+             - I/O: puts, putchar, getchar, fopen, fclose, fread, fwrite, fgetc,
+ fputc
              - Math: sin, cos, tan, sqrt, pow, exp, log, floor, ceil, fabs
              - Conversion: atoi, atol, atof, strtol, strtod
              - System: exit, abort, system, open, close, read, write
 
-             This function is automatically called by cc_init(), but can be called
-             manually if you want to reset the FFI registry or initialize it separately.
+             This function is automatically called by cc_init(), but can be
+ called manually if you want to reset the FFI registry or initialize it
+ separately.
 */
 void cc_load_stdlib(JCC *vm);
 
@@ -1525,29 +1616,32 @@ void cc_load_stdlib(JCC *vm);
  @param num_args Expected number of arguments (must match registered function).
  @param returns_double Expected return type (must match registered function).
  @return 0 on success, -1 on error (function not found or signature mismatch).
- @discussion This function is useful for updating function pointers after loading
-             a dynamic library, or for redirecting calls to different implementations.
-             The function must already be registered via cc_register_cfunc or
-             cc_register_variadic_cfunc.
+ @discussion This function is useful for updating function pointers after
+ loading a dynamic library, or for redirecting calls to different
+ implementations. The function must already be registered via cc_register_cfunc
+ or cc_register_variadic_cfunc.
 */
-int cc_dlsym(JCC *vm, const char *name, void *func_ptr, int num_args, int returns_double);
+int cc_dlsym(JCC *vm, const char *name, void *func_ptr, int num_args,
+             int returns_double);
 
 /*!
  @function cc_dlopen
  @abstract Load a dynamic library and resolve all registered FFI functions.
  @param vm The JCC instance.
- @param lib_path Path to the dynamic library (.so, .dylib, .dll) or NULL for default libraries.
+ @param lib_path Path to the dynamic library (.so, .dylib, .dll) or NULL for
+ default libraries.
  @return 0 on success, -1 on error.
- @discussion This function opens a dynamic library and attempts to resolve all currently
-             registered FFI functions. Functions that cannot be resolved will print warnings
-             but won't fail the entire operation. If lib_path is NULL, the function searches
-             in default system libraries.
+ @discussion This function opens a dynamic library and attempts to resolve all
+ currently registered FFI functions. Functions that cannot be resolved will
+ print warnings but won't fail the entire operation. If lib_path is NULL, the
+ function searches in default system libraries.
 
              Platform-specific behavior:
              - Unix: Uses dlopen/dlsym to load .so/.dylib files
              - Windows: Uses LoadLibrary/GetProcAddress to load .dll files
 
-             The library handle is not closed after loading to keep function pointers valid.
+             The library handle is not closed after loading to keep function
+ pointers valid.
 */
 int cc_dlopen(JCC *vm, const char *lib_path);
 
@@ -1556,14 +1650,14 @@ int cc_dlopen(JCC *vm, const char *lib_path);
  @abstract Load the platform's standard C library and resolve FFI functions.
  @param vm The JCC instance.
  @return 0 on success, -1 on error.
- @discussion This function automatically detects and loads the correct C library for
-             the current platform:
+ @discussion This function automatically detects and loads the correct C library
+ for the current platform:
              - macOS: /usr/lib/libSystem.dylib
              - Linux: /lib64/libc.so.6 (or /lib/libc.so.6 on 32-bit)
              - FreeBSD: /lib/libc.so.7
              - Windows: msvcrt.dll
-             This is useful when you want to load stdlib functions dynamically instead
-             of registering them with explicit function pointers.
+             This is useful when you want to load stdlib functions dynamically
+ instead of registering them with explicit function pointers.
 */
 int cc_load_libc(JCC *vm);
 
@@ -1628,6 +1722,28 @@ Node *cc_parse_stmt(JCC *vm, Token **rest, Token *tok);
 */
 Node *cc_parse_compound_stmt(JCC *vm, Token **rest, Token *tok);
 void cc_init_parser(JCC *vm);
+
+/*!
+ @function cc_expand_pragma_macros
+ @abstract Expand all pragma macro calls in the AST.
+ @discussion Walks the AST and replaces ND_MACRO_CALL nodes with the
+             generated AST from executing the corresponding pragma macro.
+             Must be called after cc_parse and before cc_compile.
+ @param vm The JCC instance.
+ @param prog Linked list of top-level Obj returned by cc_parse.
+*/
+void cc_expand_pragma_macros(JCC *vm, Obj *prog);
+
+/*!
+ @function cc_serialize_program
+ @abstract Serialize a program AST back to C source code.
+ @discussion Used with -M flag to output macro-expanded source that
+             can be compiled with gcc or other C compilers.
+ @param f Output file stream.
+ @param vm The JCC instance.
+ @param prog Program AST to serialize.
+*/
+void cc_serialize_program(FILE *f, JCC *vm, Obj *prog);
 
 /*!
  @function cc_link_progs
@@ -1775,7 +1891,8 @@ void cc_debug_repl(JCC *vm);
  @param expr Original expression string (for display purposes).
  @return Watchpoint index, or -1 if failed (too many watchpoints).
 */
-int cc_add_watchpoint(JCC *vm, void *address, int size, int type, const char *expr);
+int cc_add_watchpoint(JCC *vm, void *address, int size, int type,
+                      const char *expr);
 
 /*!
  @function cc_remove_watchpoint
@@ -1794,7 +1911,8 @@ void cc_remove_watchpoint(JCC *vm, int index);
  @param out_line Pointer to receive the line number (can be NULL).
  @return 1 if location found, 0 if not found.
 */
-int cc_get_source_location(JCC *vm, long long *pc, File **out_file, int *out_line, int *out_col);
+int cc_get_source_location(JCC *vm, long long *pc, File **out_file,
+                           int *out_line, int *out_col);
 
 /*!
  @function cc_find_pc_for_source
@@ -1843,7 +1961,8 @@ int cc_dlopen(JCC *vm, const char *lib_path);
  @param returns_double 1 if function returns double, 0 if returns long long.
  @return 0 on success, -1 on failure.
 */
-int cc_dlsym(JCC *vm, const char *name, void *func_ptr, int num_args, int returns_double);
+int cc_dlsym(JCC *vm, const char *name, void *func_ptr, int num_args,
+             int returns_double);
 
 #ifdef __cplusplus
 }

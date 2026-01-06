@@ -17,8 +17,8 @@
  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-#include "jcc.h"
 #include "./internal.h"
+#include "jcc.h"
 #include <getopt.h>
 
 static void usage(const char *argv0, int exit_code) {
@@ -28,12 +28,16 @@ static void usage(const char *argv0, int exit_code) {
     printf("Options:\n");
     printf("\t-h/--help           Show this message\n");
     printf("\t-I <path>           Add <path> to include search paths\n");
-    printf("\t   --isystem <path> Add <path> to system include paths (for non-standard headers)\n");
+    printf("\t   --isystem <path> Add <path> to system include paths (for "
+           "non-standard headers)\n");
     printf("\t-D <macro>[=def]    Define a macro\n");
     printf("\t-U <macro>          Undefine a macro\n");
     printf("\t-a/--ast            Dump AST (TODO)\n");
     printf("\t-P/--print-tokens   Print preprocessed tokens to stdout\n");
-    printf("\t-E/--preprocess     Output preprocessed source code (traditional C -E)\n");
+    printf("\t-E/--preprocess     Output preprocessed source code (traditional "
+           "C -E)\n");
+    printf("\t-M/--macro-expand   Output macro-expanded source code (for gcc "
+           "compatibility)\n");
     printf("\t-j/--json           Output header declarations as JSON\n");
     printf("\t-X/--no-preprocess  Disable preprocessing step\n");
     printf("\t-S/--no-stdlib      Do not link standard library\n");
@@ -43,40 +47,62 @@ static void usage(const char *argv0, int exit_code) {
     printf("\t-g/--debug          Enable interactive debugger\n");
     printf("\nSafety Levels (preset flag combinations):\n");
     printf("\t-0/--safety=none     No safety checks (maximum performance)\n");
-    printf("\t-1/--safety=basic    Essential low-overhead checks (~5-10%% overhead)\n");
-    printf("\t-2/--safety=standard Comprehensive development safety (~20-40%% overhead)\n");
-    printf("\t-3/--safety=max      All safety features for deep debugging (~60-100%%+ overhead)\n");
+    printf("\t-1/--safety=basic    Essential low-overhead checks (~5-10%% "
+           "overhead)\n");
+    printf("\t-2/--safety=standard Comprehensive development safety (~20-40%% "
+           "overhead)\n");
+    printf("\t-3/--safety=max      All safety features for deep debugging "
+           "(~60-100%%+ overhead)\n");
     printf("\nMemory Safety Options (can be combined with safety levels):\n");
     printf("\t-b/--bounds-checks           Runtime array bounds checking\n");
     printf("\t-f/--uaf-detection           Use-after-free detection\n");
-    printf("\t-t/--type-checks             Runtime type checking on pointer dereferences\n");
+    printf("\t-t/--type-checks             Runtime type checking on pointer "
+           "dereferences\n");
     printf("\t-z/--uninitialized-detection Uninitialized variable detection\n");
     printf("\t-O/--overflow-checks         Detect signed integer overflow\n");
     printf("\t-s/--stack-canaries          Stack overflow protection\n");
     printf("\t-k/--heap-canaries           Heap overflow protection\n");
-    printf("\t-l/--memory-leak-detection   Track allocations and report leaks at exit\n");
-    printf("\t-i/--stack-instrumentation   Track stack variable lifetimes and accesses\n");
-    printf("\t   --stack-errors            Enable runtime errors for stack instrumentation\n");
-    printf("\t-p/--pointer-sanitizer       Enable all pointer checks (bounds, UAF, type)\n");
-    printf("\t   --dangling-pointers       Detect use of stack pointers after function return\n");
-    printf("\t   --alignment-checks        Validate pointer alignment for type\n");
-    printf("\t   --provenance-tracking     Track pointer origin and validate operations\n");
-    printf("\t   --invalid-arithmetic      Detect pointer arithmetic outside object bounds\n");
-    printf("\t-F/--format-string-checks    Validate format strings in printf-family functions\n");
-    printf("\t   --random-canaries         Use random stack canaries (prevents predictable bypass)\n");
-    printf("\t   --memory-poisoning        Poison allocated/freed memory (0xCD/0xDD patterns)\n");
-    printf("\t-T/--memory-tagging          Temporal memory tagging (track pointer generation tags)\n");
-    printf("\t-V/--vm-heap                 Route all malloc/free through VM heap (enables memory safety)\n");
+    printf("\t-l/--memory-leak-detection   Track allocations and report leaks "
+           "at exit\n");
+    printf("\t-i/--stack-instrumentation   Track stack variable lifetimes and "
+           "accesses\n");
+    printf("\t   --stack-errors            Enable runtime errors for stack "
+           "instrumentation\n");
+    printf("\t-p/--pointer-sanitizer       Enable all pointer checks (bounds, "
+           "UAF, type)\n");
+    printf("\t   --dangling-pointers       Detect use of stack pointers after "
+           "function return\n");
+    printf(
+        "\t   --alignment-checks        Validate pointer alignment for type\n");
+    printf("\t   --provenance-tracking     Track pointer origin and validate "
+           "operations\n");
+    printf("\t   --invalid-arithmetic      Detect pointer arithmetic outside "
+           "object bounds\n");
+    printf("\t-F/--format-string-checks    Validate format strings in "
+           "printf-family functions\n");
+    printf("\t   --random-canaries         Use random stack canaries (prevents "
+           "predictable bypass)\n");
+    printf("\t   --memory-poisoning        Poison allocated/freed memory "
+           "(0xCD/0xDD patterns)\n");
+    printf("\t-T/--memory-tagging          Temporal memory tagging (track "
+           "pointer generation tags)\n");
+    printf("\t-V/--vm-heap                 Route all malloc/free through VM "
+           "heap (enables memory safety)\n");
     printf("\nPreprocessor Options:\n");
-    printf("\t   --embed-limit=SIZE        Set #embed file size warning limit (e.g., 50MB, 100mb, default: 10MB)\n");
-    printf("\t   --embed-hard-limit        Make #embed limit a hard error instead of warning\n");
+    printf("\t   --embed-limit=SIZE        Set #embed file size warning limit "
+           "(e.g., 50MB, 100mb, default: 10MB)\n");
+    printf("\t   --embed-hard-limit        Make #embed limit a hard error "
+           "instead of warning\n");
     printf("\nOptimization Levels:\n");
-    printf("\t   --optimize[=LEVEL]        Enable bytecode optimization (default: disabled)\n");
-    printf("\t                             LEVEL: 0=none, 1=basic, 2=standard, 3=aggressive\n");
+    printf("\t   --optimize[=LEVEL]        Enable bytecode optimization "
+           "(default: disabled)\n");
+    printf("\t                             LEVEL: 0=none, 1=basic, 2=standard, "
+           "3=aggressive\n");
     printf("\t                             -O0: No optimization\n");
     printf("\t                             -O1: Constant folding only\n");
     printf("\t                             -O2: Constant folding + peephole\n");
-    printf("\t                             -O3: All optimizations (including dead code elimination)\n");
+    printf("\t                             -O3: All optimizations (including "
+           "dead code elimination)\n");
     printf("\nExample:\n");
     printf("\t%s -o hello hello.c\n", argv0);
     printf("\t%s -I ./include -D DEBUG -o prog prog.c\n", argv0);
@@ -94,15 +120,17 @@ static char *read_stdin_to_tmp(void) {
         return NULL;
     if (GetTempFileNameA(tmpPath, "asi", 0, tmpFile) == 0)
         return NULL;
-    HANDLE h = CreateFileA(tmpFile, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
-                           FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+    HANDLE h =
+        CreateFileA(tmpFile, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
+                    FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
     if (h == INVALID_HANDLE_VALUE)
         return NULL;
     char buf[4096];
     size_t n;
     while ((n = fread(buf, 1, sizeof(buf), stdin)) > 0) {
         DWORD written = 0;
-        if (!WriteFile(h, buf, (DWORD)n, &written, NULL) || written != (DWORD)n) {
+        if (!WriteFile(h, buf, (DWORD)n, &written, NULL) ||
+            written != (DWORD)n) {
             CloseHandle(h);
             DeleteFileA(tmpFile);
             return NULL;
@@ -126,7 +154,11 @@ static char *read_stdin_to_tmp(void) {
         ssize_t w = 0;
         while (w < n) {
             ssize_t m = write(fd, buf + w, n - w);
-            if (m < 0) { close(fd); unlink(template); return NULL; }
+            if (m < 0) {
+                close(fd);
+                unlink(template);
+                return NULL;
+            }
             w += m;
         }
     }
@@ -166,14 +198,19 @@ static size_t parse_size(const char *str, const char *flag_name) {
         // Parse suffix (KB, MB, GB, etc.)
         if (strcasecmp(endptr, "kb") == 0 || strcasecmp(endptr, "k") == 0) {
             multiplier = 1024;
-        } else if (strcasecmp(endptr, "mb") == 0 || strcasecmp(endptr, "m") == 0) {
+        } else if (strcasecmp(endptr, "mb") == 0 ||
+                   strcasecmp(endptr, "m") == 0) {
             multiplier = 1024 * 1024;
-        } else if (strcasecmp(endptr, "gb") == 0 || strcasecmp(endptr, "g") == 0) {
+        } else if (strcasecmp(endptr, "gb") == 0 ||
+                   strcasecmp(endptr, "g") == 0) {
             multiplier = 1024 * 1024 * 1024;
         } else if (strcasecmp(endptr, "b") == 0) {
-            multiplier = 1;  // Bytes
+            multiplier = 1; // Bytes
         } else {
-            fprintf(stderr, "error: invalid size suffix '%s' for %s (use KB, MB, GB, or B)\n", endptr, flag_name);
+            fprintf(stderr,
+                    "error: invalid size suffix '%s' for %s (use KB, MB, GB, "
+                    "or B)\n",
+                    endptr, flag_name);
             exit(1);
         }
     }
@@ -181,8 +218,7 @@ static size_t parse_size(const char *str, const char *flag_name) {
     return (size_t)(value * multiplier);
 }
 
-
-int main(int argc, const char* argv[]) {
+int main(int argc, const char *argv[]) {
     int exit_code = 0;
     const char **input_files = NULL;
     int input_files_count = 0;
@@ -196,24 +232,25 @@ int main(int argc, const char* argv[]) {
     int defines_count = 0;
     const char **undefs = NULL; // -U
     int undefs_count = 0;
-    char *out_file = NULL; // -o (single)
-    int dump_ast = 0;      // -a
-    int disassemble = 0;   // -d
-    int verbose = 0;       // -v
-    uint32_t flags = 0;    // JCCFlags bitfield for runtime features
-    int print_tokens = 0; // -P
-    int preprocess_only = 0; // -E
-    int skip_preprocess = 0; // -X
-    int skip_stdlib = 0; // -S
-    int output_json = 0; // -j
+    char *out_file = NULL;     // -o (single)
+    int dump_ast = 0;          // -a
+    int disassemble = 0;       // -d
+    int verbose = 0;           // -v
+    uint32_t flags = 0;        // JCCFlags bitfield for runtime features
+    int print_tokens = 0;      // -P
+    int preprocess_only = 0;   // -E
+    int macro_expand_only = 0; // -M
+    int skip_preprocess = 0;   // -X
+    int skip_stdlib = 0;       // -S
+    int output_json = 0;       // -j
 #ifdef JCC_HAS_CURL
     char *url_cache_dir = NULL; // --url-cache-dir
-    int url_cache_clear = 0; // --url-cache-clear
+    int url_cache_clear = 0;    // --url-cache-clear
 #endif
-    int max_errors = 20; // --max-errors (default: 20)
+    int max_errors = 20;        // --max-errors (default: 20)
     int warnings_as_errors = 0; // --Werror
-    size_t embed_limit = 0; // --embed-limit (0 = use default)
-    int embed_hard_error = 0; // --embed-hard-limit
+    size_t embed_limit = 0;     // --embed-limit (0 = use default)
+    int embed_hard_error = 0;   // --embed-hard-limit
     int opt_level = 0; // -O0/-O1/-O2/-O3 (default: 0 = no optimization)
 
     if (argc <= 1)
@@ -227,6 +264,7 @@ int main(int argc, const char* argv[]) {
         {"ast", no_argument, 0, 'a'},
         {"print-tokens", no_argument, 0, 'P'},
         {"preprocess", no_argument, 0, 'E'},
+        {"macro-expand", no_argument, 0, 'M'},
         {"no-preprocess", no_argument, 0, 'X'},
         {"no-stdlib", no_argument, 0, 'S'},
         {"json", no_argument, 0, 'j'},
@@ -264,13 +302,13 @@ int main(int argc, const char* argv[]) {
         {"embed-limit", required_argument, 0, 1014},
         {"embed-hard-limit", no_argument, 0, 1015},
         {"optimize", optional_argument, 0, 1016},
-        {0, 0, 0, 0}
-    };
+        {0, 0, 0, 0}};
 
-    const char *optstring = "0123haI:D:U:o:dvgbftzOskpliPEXSjFTVC";
+    const char *optstring = "0123haI:D:U:o:dvgbftzOskpliPEMXSjFTVC";
     int opt;
     opterr = 0; // we'll handle errors explicitly
-    while ((opt = getopt_long(argc, (char * const *)argv, optstring, long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, (char *const *)argv, optstring,
+                              long_options, NULL)) != -1) {
         switch (opt) {
         case 'h':
             usage(argv[0], 0);
@@ -295,19 +333,27 @@ int main(int argc, const char* argv[]) {
             // --safety=<level> flag
             if (strcmp(optarg, "none") == 0 || strcmp(optarg, "0") == 0) {
                 flags = 0;
-            } else if (strcmp(optarg, "basic") == 0 || strcmp(optarg, "1") == 0) {
+            } else if (strcmp(optarg, "basic") == 0 ||
+                       strcmp(optarg, "1") == 0) {
                 flags |= JCC_SAFETY_BASIC;
-            } else if (strcmp(optarg, "standard") == 0 || strcmp(optarg, "2") == 0) {
+            } else if (strcmp(optarg, "standard") == 0 ||
+                       strcmp(optarg, "2") == 0) {
                 flags |= JCC_SAFETY_STANDARD;
             } else if (strcmp(optarg, "max") == 0 || strcmp(optarg, "3") == 0) {
                 flags |= JCC_SAFETY_MAX;
             } else {
-                fprintf(stderr, "error: invalid safety level '%s' (use none/basic/standard/max or 0/1/2/3)\n", optarg);
+                fprintf(stderr,
+                        "error: invalid safety level '%s' (use "
+                        "none/basic/standard/max or 0/1/2/3)\n",
+                        optarg);
                 usage(argv[0], 1);
             }
             break;
         case 'o':
-            if (out_file) { fprintf(stderr, "error: only one -o/--out allowed\n"); usage(argv[0], 1); }
+            if (out_file) {
+                fprintf(stderr, "error: only one -o/--out allowed\n");
+                usage(argv[0], 1);
+            }
             out_file = strdup(optarg);
             break;
         case 'd':
@@ -323,11 +369,14 @@ int main(int argc, const char* argv[]) {
             flags |= JCC_ENABLE_DEBUGGER;
             break;
         case 'I':
-            inc_paths = realloc(inc_paths, sizeof(*inc_paths) * (inc_paths_count + 1));
+            inc_paths =
+                realloc(inc_paths, sizeof(*inc_paths) * (inc_paths_count + 1));
             inc_paths[inc_paths_count++] = strdup(optarg);
             break;
         case 1013: // --isystem
-            sys_inc_paths = realloc(sys_inc_paths, sizeof(*sys_inc_paths) * (sys_inc_paths_count + 1));
+            sys_inc_paths =
+                realloc(sys_inc_paths,
+                        sizeof(*sys_inc_paths) * (sys_inc_paths_count + 1));
             sys_inc_paths[sys_inc_paths_count++] = strdup(optarg);
             break;
         case 'D':
@@ -407,6 +456,9 @@ int main(int argc, const char* argv[]) {
         case 'E':
             preprocess_only = 1;
             break;
+        case 'M':
+            macro_expand_only = 1;
+            break;
         case 'X':
             skip_preprocess = 1;
             break;
@@ -427,35 +479,42 @@ int main(int argc, const char* argv[]) {
         case 1010:
             max_errors = atoi(optarg);
             if (max_errors <= 0) {
-                fprintf(stderr, "error: --max-errors must be a positive integer\n");
+                fprintf(stderr,
+                        "error: --max-errors must be a positive integer\n");
                 usage(argv[0], 1);
             }
             break;
         case 1011:
             warnings_as_errors = 1;
             break;
-        case 1014:  // --embed-limit
+        case 1014: // --embed-limit
             embed_limit = parse_size(optarg, "--embed-limit");
             break;
-        case 1015:  // --embed-hard-limit
+        case 1015: // --embed-hard-limit
             embed_hard_error = 1;
             break;
-        case 1016:  // --optimize (or -O)
+        case 1016: // --optimize (or -O)
             if (optarg == NULL) {
                 // Just -O or --optimize without argument means -O1
                 opt_level = 1;
-            } else if (optarg[0] >= '0' && optarg[0] <= '3' && optarg[1] == '\0') {
+            } else if (optarg[0] >= '0' && optarg[0] <= '3' &&
+                       optarg[1] == '\0') {
                 opt_level = optarg[0] - '0';
             } else {
-                fprintf(stderr, "error: invalid optimization level '%s' (use 0, 1, 2, or 3)\n", optarg);
+                fprintf(stderr,
+                        "error: invalid optimization level '%s' (use 0, 1, 2, "
+                        "or 3)\n",
+                        optarg);
                 usage(argv[0], 1);
             }
             break;
         case '?':
             if (optopt)
-                fprintf(stderr, "error: option -%c requires an argument\n", optopt);
-            else if (optind > 0 && argv[optind-1] && argv[optind-1][0] == '-')
-                fprintf(stderr, "error: unknown option %s\n", argv[optind-1]);
+                fprintf(stderr, "error: option -%c requires an argument\n",
+                        optopt);
+            else if (optind > 0 && argv[optind - 1] &&
+                     argv[optind - 1][0] == '-')
+                fprintf(stderr, "error: unknown option %s\n", argv[optind - 1]);
             else
                 fprintf(stderr, "error: unknown parsing error\n");
             usage(argv[0], 1);
@@ -469,10 +528,12 @@ int main(int argc, const char* argv[]) {
     for (int i = optind; i < argc; i++) {
         const char *a = argv[i];
         if (strcmp(a, "-") == 0) {
-            input_files = realloc(input_files, sizeof(*input_files) * (input_files_count + 1));
+            input_files = realloc(input_files, sizeof(*input_files) *
+                                                   (input_files_count + 1));
             input_files[input_files_count++] = strdup("-");
         } else {
-            input_files = realloc(input_files, sizeof(*input_files) * (input_files_count + 1));
+            input_files = realloc(input_files, sizeof(*input_files) *
+                                                   (input_files_count + 1));
             input_files[input_files_count++] = strdup(a);
         }
     }
@@ -482,11 +543,13 @@ int main(int argc, const char* argv[]) {
         usage((char *)argv[0], 1);
     }
 
-    // If the only input file is "-", read stdin into a temporary file and replace it
+    // If the only input file is "-", read stdin into a temporary file and
+    // replace it
     if (input_files_count == 1 && strcmp(input_files[0], "-") == 0) {
         char *tmp = read_stdin_to_tmp();
         if (!tmp) {
-            fprintf(stderr, "error: failed to read stdin into temporary file\n");
+            fprintf(stderr,
+                    "error: failed to read stdin into temporary file\n");
             // cleanup before exit
             for (int i = 0; i < inc_paths_count; i++)
                 free((void *)inc_paths[i]);
@@ -524,18 +587,19 @@ int main(int argc, const char* argv[]) {
         if (len > 4 && strcmp(input_file + len - 4, ".jbc") == 0) {
             // Load bytecode file
             if (cc_load_bytecode(&vm, input_file) != 0) {
-                fprintf(stderr, "error: failed to load bytecode from %s\n", input_file);
+                fprintf(stderr, "error: failed to load bytecode from %s\n",
+                        input_file);
                 exit_code = 1;
                 goto BAIL;
             }
-            
+
             if (disassemble) {
                 cc_disassemble(&vm);
                 goto BAIL;
             }
-            
+
             // Run the loaded bytecode
-            exit_code = cc_run(&vm, argc, (char**)argv);
+            exit_code = cc_run(&vm, argc, (char **)argv);
             goto BAIL;
         }
     }
@@ -543,7 +607,8 @@ int main(int argc, const char* argv[]) {
     // Configure #embed limits if specified
     if (embed_limit > 0) {
         vm.compiler.embed_limit = embed_limit;
-        vm.compiler.embed_hard_limit = embed_limit;  // Use same value for both warnings
+        vm.compiler.embed_hard_limit =
+            embed_limit; // Use same value for both warnings
     }
     if (embed_hard_error) {
         vm.compiler.embed_hard_error = true;
@@ -602,7 +667,7 @@ int main(int argc, const char* argv[]) {
         cc_undef(&vm, (char *)undefs[i]);
 
     vm.compiler.skip_preprocess = skip_preprocess;
-    input_tokens = calloc(input_files_count, sizeof(Token*));
+    input_tokens = calloc(input_files_count, sizeof(Token *));
     for (int i = 0; i < input_files_count; i++) {
         input_tokens[i] = cc_preprocess(&vm, input_files[i]);
         if (!input_tokens[i]) {
@@ -625,7 +690,8 @@ int main(int argc, const char* argv[]) {
         for (int i = 0; i < input_files_count; i++) {
             FILE *f = out_file ? fopen(out_file, "w") : stdout;
             if (!f) {
-                fprintf(stderr, "error: failed to open output file %s\n", out_file);
+                fprintf(stderr, "error: failed to open output file %s\n",
+                        out_file);
                 goto BAIL;
             }
 
@@ -636,7 +702,7 @@ int main(int argc, const char* argv[]) {
         goto BAIL;
     }
 
-    input_progs = calloc(input_files_count, sizeof(Obj*));
+    input_progs = calloc(input_files_count, sizeof(Obj *));
     for (int i = 0; i < input_files_count; i++) {
         input_progs[i] = cc_parse(&vm, input_tokens[i]);
         if (!input_progs[i]) {
@@ -652,12 +718,15 @@ int main(int argc, const char* argv[]) {
         goto BAIL;
     }
 
-    // For JSON output, we don't need to link (especially useful for header files without main())
+    // For JSON output, we don't need to link (especially useful for header
+    // files without main())
     if (output_json) {
-        // Link programs, but don't fail if linking fails (e.g., no main() in header file)
+        // Link programs, but don't fail if linking fails (e.g., no main() in
+        // header file)
         Obj *merged_prog = cc_link_progs(&vm, input_progs, input_files_count);
         if (!merged_prog && input_files_count == 1) {
-            // If linking failed and we have a single file, just use that file's AST
+            // If linking failed and we have a single file, just use that file's
+            // AST
             merged_prog = input_progs[0];
         } else if (!merged_prog) {
             fprintf(stderr, "error: failed to link programs for JSON output\n");
@@ -679,6 +748,29 @@ int main(int argc, const char* argv[]) {
     Obj *merged_prog = cc_link_progs(&vm, input_progs, input_files_count);
     if (!merged_prog) {
         fprintf(stderr, "error: failed to link programs\n");
+        goto BAIL;
+    }
+
+    // Expand pragma macros in the AST
+    cc_expand_pragma_macros(&vm, merged_prog);
+
+    // Check for errors after macro expansion
+    if (cc_has_errors(&vm)) {
+        cc_print_all_errors(&vm);
+        exit_code = 1;
+        goto BAIL;
+    }
+
+    // If -M flag is set, output macro-expanded source and exit
+    if (macro_expand_only) {
+        FILE *f = out_file ? fopen(out_file, "w") : stdout;
+        if (!f) {
+            fprintf(stderr, "error: failed to open output file %s\n", out_file);
+            goto BAIL;
+        }
+        cc_serialize_program(f, &vm, merged_prog);
+        if (f != stdout)
+            fclose(f);
         goto BAIL;
     }
 
@@ -724,14 +816,15 @@ int main(int argc, const char* argv[]) {
     }
 
     // Run the program
-    exit_code = cc_run(&vm, argc, (char**)argv);
+    exit_code = cc_run(&vm, argc, (char **)argv);
 
 BAIL:
     cc_destroy(&vm);
     if (input_tokens)
         free(input_tokens);
     if (input_progs) {
-        // Don't free individual Obj* - they're arena-allocated and freed by cc_destroy()
+        // Don't free individual Obj* - they're arena-allocated and freed by
+        // cc_destroy()
         free(input_progs);
     }
     if (out_file)

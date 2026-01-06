@@ -23,8 +23,8 @@
  *   RI format:  [OPCODE] [rd:8|unused:56] [immediate:64]
  */
 
-#include "jcc.h"
 #include "./internal.h"
+#include "jcc.h"
 #include <limits.h>
 
 // ========== Arithmetic Operations ==========
@@ -35,21 +35,20 @@ int op_ADD3_fn(JCC *vm) {
     DECODE_RRR(operands, rd, rs1, rs2);
     long long a = vm->regs[rs1];
     long long b = vm->regs[rs2];
-    
+
     // Check for signed addition overflow (only if overflow checks enabled)
     if (vm->flags & JCC_OVERFLOW_CHECKS) {
-        if ((b > 0 && a > LLONG_MAX - b) ||
-            (b < 0 && a < LLONG_MIN - b)) {
+        if ((b > 0 && a > LLONG_MAX - b) || (b < 0 && a < LLONG_MIN - b)) {
             printf("\n========== INTEGER OVERFLOW ==========\n");
             printf("Addition overflow detected\n");
             printf("Operands: %lld + %lld\n", a, b);
-            printf("PC:       0x%llx (offset: %lld)\n",
-                    (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+            printf("PC:       0x%llx (offset: %lld)\n", (long long)vm->pc,
+                   (long long)(vm->pc - vm->text_seg));
             printf("======================================\n");
             return -1;
         }
     }
-    
+
     if (rd != REG_ZERO)
         vm->regs[rd] = a + b;
     return 0;
@@ -61,21 +60,20 @@ int op_SUB3_fn(JCC *vm) {
     DECODE_RRR(operands, rd, rs1, rs2);
     long long a = vm->regs[rs1];
     long long b = vm->regs[rs2];
-    
+
     // Check for signed subtraction overflow (only if overflow checks enabled)
     if (vm->flags & JCC_OVERFLOW_CHECKS) {
-        if ((b < 0 && a > LLONG_MAX + b) ||
-            (b > 0 && a < LLONG_MIN + b)) {
+        if ((b < 0 && a > LLONG_MAX + b) || (b > 0 && a < LLONG_MIN + b)) {
             printf("\n========== INTEGER OVERFLOW ==========\n");
             printf("Subtraction overflow detected\n");
             printf("Operands: %lld - %lld\n", a, b);
-            printf("PC:       0x%llx (offset: %lld)\n",
-                    (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+            printf("PC:       0x%llx (offset: %lld)\n", (long long)vm->pc,
+                   (long long)(vm->pc - vm->text_seg));
             printf("======================================\n");
             return -1;
         }
     }
-    
+
     if (rd != REG_ZERO)
         vm->regs[rd] = a - b;
     return 0;
@@ -87,8 +85,9 @@ int op_MUL3_fn(JCC *vm) {
     DECODE_RRR(operands, rd, rs1, rs2);
     long long a = vm->regs[rs1];
     long long b = vm->regs[rs2];
-    
-    // Check for signed multiplication overflow (only if overflow checks enabled)
+
+    // Check for signed multiplication overflow (only if overflow checks
+    // enabled)
     if ((vm->flags & JCC_OVERFLOW_CHECKS) && a != 0 && b != 0) {
         if (a == LLONG_MIN || b == LLONG_MIN) {
             // LLONG_MIN * anything except 0, 1, -1 overflows
@@ -97,8 +96,8 @@ int op_MUL3_fn(JCC *vm) {
                 printf("\n========== INTEGER OVERFLOW ==========\n");
                 printf("Multiplication overflow detected\n");
                 printf("Operands: %lld * %lld\n", a, b);
-                printf("PC:       0x%llx (offset: %lld)\n",
-                        (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                printf("PC:       0x%llx (offset: %lld)\n", (long long)vm->pc,
+                       (long long)(vm->pc - vm->text_seg));
                 printf("======================================\n");
                 return -1;
             }
@@ -108,14 +107,14 @@ int op_MUL3_fn(JCC *vm) {
                 printf("\n========== INTEGER OVERFLOW ==========\n");
                 printf("Multiplication overflow detected\n");
                 printf("Operands: %lld * %lld\n", a, b);
-                printf("PC:       0x%llx (offset: %lld)\n",
-                        (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                printf("PC:       0x%llx (offset: %lld)\n", (long long)vm->pc,
+                       (long long)(vm->pc - vm->text_seg));
                 printf("======================================\n");
                 return -1;
             }
         }
     }
-    
+
     if (rd != REG_ZERO)
         vm->regs[rd] = a * b;
     return 0;
@@ -127,30 +126,30 @@ int op_DIV3_fn(JCC *vm) {
     DECODE_RRR(operands, rd, rs1, rs2);
     long long a = vm->regs[rs1];
     long long b = vm->regs[rs2];
-    
+
     // Check for division by zero
     if (b == 0) {
         printf("\n========== DIVISION BY ZERO ==========\n");
         printf("Attempted division by zero\n");
         printf("Operands: %lld / 0\n", a);
-        printf("PC:       0x%llx (offset: %lld)\n",
-                (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+        printf("PC:       0x%llx (offset: %lld)\n", (long long)vm->pc,
+               (long long)(vm->pc - vm->text_seg));
         printf("======================================\n");
         return -1;
     }
-    
+
     // Check for signed division overflow (LLONG_MIN / -1)
     if (a == LLONG_MIN && b == -1) {
         printf("\n========== INTEGER OVERFLOW ==========\n");
         printf("Division overflow detected\n");
         printf("Operands: %lld / %lld\n", a, b);
         printf("Result would overflow (LLONG_MIN / -1 = LLONG_MAX + 1)\n");
-        printf("PC:       0x%llx (offset: %lld)\n",
-                (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+        printf("PC:       0x%llx (offset: %lld)\n", (long long)vm->pc,
+               (long long)(vm->pc - vm->text_seg));
         printf("======================================\n");
         return -1;
     }
-    
+
     if (rd != REG_ZERO)
         vm->regs[rd] = a / b;
     return 0;
@@ -162,18 +161,18 @@ int op_MOD3_fn(JCC *vm) {
     DECODE_RRR(operands, rd, rs1, rs2);
     long long a = vm->regs[rs1];
     long long b = vm->regs[rs2];
-    
+
     // Check for modulo by zero
     if (b == 0) {
         printf("\n========== MODULO BY ZERO ==========\n");
         printf("Attempted modulo by zero\n");
         printf("Operands: %lld %% 0\n", a);
-        printf("PC:       0x%llx (offset: %lld)\n",
-                (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+        printf("PC:       0x%llx (offset: %lld)\n", (long long)vm->pc,
+               (long long)(vm->pc - vm->text_seg));
         printf("======================================\n");
         return -1;
     }
-    
+
     if (rd != REG_ZERO)
         vm->regs[rd] = a % b;
     return 0;
@@ -311,7 +310,7 @@ int op_MOV3_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs1, rs2;
     DECODE_RRR(operands, rd, rs1, rs2);
-    (void)rs2;  // Unused
+    (void)rs2; // Unused
     if (rd != REG_ZERO)
         vm->regs[rd] = vm->regs[rs1];
     return 0;
@@ -321,25 +320,27 @@ int op_MOV3_fn(JCC *vm) {
 
 int op_ENT3_fn(JCC *vm) {
     // Enter function: [ENT3] [stack_size:32|param_count:32] [float_param_mask]
-    // Creates new stack frame and copies REG_A0-REG_An and FREG_A0-FREG_An to parameter slots
+    // Creates new stack frame and copies REG_A0-REG_An and FREG_A0-FREG_An to
+    // parameter slots
     long long operands = *vm->pc++;
     int stack_size = (int)(operands & 0xFFFFFFFF);
     int param_count = (int)((operands >> 32) & 0xFFFFFFFF);
-    long long float_param_mask = *vm->pc++;  // Second operand: which params are floats
-    
+    long long float_param_mask =
+        *vm->pc++; // Second operand: which params are floats
+
     // Save old base pointer
     *--vm->sp = (long long)vm->bp;
     vm->bp = vm->sp;
-    
+
     // If stack canaries are enabled, write canary after old bp
     if (vm->flags & JCC_STACK_CANARIES) {
         *--vm->sp = vm->stack_canary;
     }
-    
+
     // Allocate space for local variables AND parameters
     // Parameters are now stored at negative offsets like locals
     vm->sp = vm->sp - stack_size;
-    
+
     // Copy register arguments to their stack slots
     // Parameters are at bp[-1], bp[-2], ... bp[-param_count]
     // Map: REG_Ai/FREG_Ai -> bp[-i-1] depending on float_param_mask
@@ -349,13 +350,16 @@ int op_ENT3_fn(JCC *vm) {
     for (int i = 0; i < param_count && i < 8; i++) {
         long long *param_slot = vm->bp - 1 - i;
         if (vm->flags & JCC_STACK_CANARIES) {
-            param_slot--;  // Account for canary slot
+            param_slot--; // Account for canary slot
         }
-        
+
         if (float_param_mask & (1LL << i)) {
             // Float parameter - copy from fregs[]
             // Store double bits as long long
-            union { double d; long long ll; } conv;
+            union {
+                double d;
+                long long ll;
+            } conv;
             conv.d = vm->fregs[FREG_A0 + float_reg_idx];
             *param_slot = conv.ll;
             float_reg_idx++;
@@ -365,34 +369,37 @@ int op_ENT3_fn(JCC *vm) {
             int_reg_idx++;
         }
     }
-    
+
     // Stack overflow checking (for stack instrumentation)
     if (vm->flags & JCC_STACK_INSTR) {
         long long stack_used = (char *)vm->initial_sp - (char *)vm->sp;
-        if (stack_used > (long long)(vm->poolsize * sizeof(long long) * 3 / 4)) {
+        if (stack_used >
+            (long long)(vm->poolsize * sizeof(long long) * 3 / 4)) {
             if (vm->flags & JCC_STACK_INSTR_ERRORS) {
                 printf("\n===========================================\n");
                 printf("STACK OVERFLOW: Stack usage exceeded 75%% threshold\n");
                 printf("  Stack used: %lld bytes\n", stack_used);
-                printf("  Stack size: %lld bytes\n", (long long)(vm->poolsize * sizeof(long long)));
+                printf("  Stack size: %lld bytes\n",
+                       (long long)(vm->poolsize * sizeof(long long)));
                 printf("===========================================\n");
                 return -1;
             } else if (vm->debug_vm) {
-                printf("WARNING: Stack usage %lld bytes exceeds threshold\n", stack_used);
+                printf("WARNING: Stack usage %lld bytes exceeds threshold\n",
+                       stack_used);
             }
         }
     }
-    
+
     return 0;
 }
 
 int op_LEV3_fn(JCC *vm) {
     // Leave function: return value already in REG_A0/FREG_A0, restore frame
     // (Caller placed return value in REG_A0 before LEV3)
-    
+
     // Restore stack pointer to base pointer
     vm->sp = vm->bp;
-    
+
     // If stack canaries are enabled, check canary
     if (vm->flags & JCC_STACK_CANARIES) {
         long long canary = vm->sp[-1];
@@ -401,20 +408,20 @@ int op_LEV3_fn(JCC *vm) {
             printf("Stack canary corrupted!\n");
             printf("Expected: 0x%llx\n", vm->stack_canary);
             printf("Found:    0x%llx\n", canary);
-            printf("PC:       0x%llx (offset: %lld)\n",
-                    (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+            printf("PC:       0x%llx (offset: %lld)\n", (long long)vm->pc,
+                   (long long)(vm->pc - vm->text_seg));
             printf("This indicates a stack buffer overflow.\n");
             printf("=============================================\n");
             return -1;
         }
     }
-    
+
     // Restore old base pointer
     vm->bp = (long long *)*vm->sp++;
-    
+
     // Get return address
     long long ret_addr = *vm->sp++;
-    
+
     // CFI validation
     if (vm->flags & JCC_CFI) {
         long long shadow_ret_addr = *vm->shadow_sp++;
@@ -424,19 +431,19 @@ int op_LEV3_fn(JCC *vm) {
             printf("Expected return address: 0x%llx\n", shadow_ret_addr);
             printf("Actual return address:   0x%llx\n", ret_addr);
             printf("Current PC offset:       %lld\n",
-                    (long long)(vm->pc - vm->text_seg));
+                   (long long)(vm->pc - vm->text_seg));
             printf("This indicates a ROP attack or stack corruption.\n");
             printf("====================================\n");
             return -1;
         }
     }
-    
+
     // Check if returning from main (ret_addr == 0)
     if (ret_addr == 0) {
-        vm->pc = NULL;  // Signal end of execution
+        vm->pc = NULL; // Signal end of execution
         return 0;
     }
-    
+
     vm->pc = (long long *)ret_addr;
     return 0;
 }
@@ -451,7 +458,7 @@ int op_FADD3_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs1, rs2;
     DECODE_RRR(operands, rd, rs1, rs2);
-    
+
     vm->fregs[rd] = vm->fregs[rs1] + vm->fregs[rs2];
     return 0;
 }
@@ -462,7 +469,7 @@ int op_FSUB3_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs1, rs2;
     DECODE_RRR(operands, rd, rs1, rs2);
-    
+
     vm->fregs[rd] = vm->fregs[rs1] - vm->fregs[rs2];
     return 0;
 }
@@ -473,7 +480,7 @@ int op_FMUL3_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs1, rs2;
     DECODE_RRR(operands, rd, rs1, rs2);
-    
+
     vm->fregs[rd] = vm->fregs[rs1] * vm->fregs[rs2];
     return 0;
 }
@@ -484,7 +491,7 @@ int op_FDIV3_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs1, rs2;
     DECODE_RRR(operands, rd, rs1, rs2);
-    
+
     // Division by zero check
     if (vm->fregs[rs2] == 0.0) {
         printf("\n========== DIVISION BY ZERO ==========\n");
@@ -493,7 +500,7 @@ int op_FDIV3_fn(JCC *vm) {
         printf("======================================\n");
         return -1;
     }
-    
+
     vm->fregs[rd] = vm->fregs[rs1] / vm->fregs[rs2];
     return 0;
 }
@@ -504,7 +511,7 @@ int op_FNEG3_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs1;
     DECODE_RR(operands, rd, rs1);
-    
+
     vm->fregs[rd] = -vm->fregs[rs1];
     return 0;
 }
@@ -517,7 +524,7 @@ int op_FEQ3_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs1, rs2;
     DECODE_RRR(operands, rd, rs1, rs2);
-    
+
     vm->regs[rd] = (vm->fregs[rs1] == vm->fregs[rs2]);
     return 0;
 }
@@ -528,7 +535,7 @@ int op_FNE3_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs1, rs2;
     DECODE_RRR(operands, rd, rs1, rs2);
-    
+
     vm->regs[rd] = (vm->fregs[rs1] != vm->fregs[rs2]);
     return 0;
 }
@@ -539,7 +546,7 @@ int op_FLT3_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs1, rs2;
     DECODE_RRR(operands, rd, rs1, rs2);
-    
+
     vm->regs[rd] = (vm->fregs[rs1] < vm->fregs[rs2]);
     return 0;
 }
@@ -550,7 +557,7 @@ int op_FLE3_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs1, rs2;
     DECODE_RRR(operands, rd, rs1, rs2);
-    
+
     vm->regs[rd] = (vm->fregs[rs1] <= vm->fregs[rs2]);
     return 0;
 }
@@ -561,7 +568,7 @@ int op_FGT3_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs1, rs2;
     DECODE_RRR(operands, rd, rs1, rs2);
-    
+
     vm->regs[rd] = (vm->fregs[rs1] > vm->fregs[rs2]);
     return 0;
 }
@@ -572,7 +579,7 @@ int op_FGE3_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs1, rs2;
     DECODE_RRR(operands, rd, rs1, rs2);
-    
+
     vm->regs[rd] = (vm->fregs[rs1] >= vm->fregs[rs2]);
     return 0;
 }
@@ -587,7 +594,7 @@ int op_ADDI3_fn(JCC *vm) {
     int rd, rs1;
     DECODE_RR(operands, rd, rs1);
     long long imm = *vm->pc++;
-    
+
     if (rd != REG_ZERO)
         vm->regs[rd] = vm->regs[rs1] + imm;
     return 0;
@@ -600,7 +607,7 @@ int op_NEG3_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs1;
     DECODE_RR(operands, rd, rs1);
-    
+
     if (rd != REG_ZERO)
         vm->regs[rd] = -vm->regs[rs1];
     return 0;
@@ -614,7 +621,7 @@ int op_LDR_B_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs;
     DECODE_RR(operands, rd, rs);
-    
+
     if (rd != REG_ZERO)
         vm->regs[rd] = *(char *)vm->regs[rs];
     return 0;
@@ -626,7 +633,7 @@ int op_LDR_H_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs;
     DECODE_RR(operands, rd, rs);
-    
+
     if (rd != REG_ZERO)
         vm->regs[rd] = *(short *)vm->regs[rs];
     return 0;
@@ -638,7 +645,7 @@ int op_LDR_W_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs;
     DECODE_RR(operands, rd, rs);
-    
+
     if (rd != REG_ZERO)
         vm->regs[rd] = *(int *)vm->regs[rs];
     return 0;
@@ -650,7 +657,7 @@ int op_LDR_D_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs;
     DECODE_RR(operands, rd, rs);
-    
+
     if (rd != REG_ZERO)
         vm->regs[rd] = *(long long *)vm->regs[rs];
     return 0;
@@ -662,7 +669,7 @@ int op_STR_B_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs;
     DECODE_RR(operands, rd, rs);
-    
+
     *(char *)vm->regs[rs] = (char)vm->regs[rd];
     return 0;
 }
@@ -673,7 +680,7 @@ int op_STR_H_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs;
     DECODE_RR(operands, rd, rs);
-    
+
     *(short *)vm->regs[rs] = (short)vm->regs[rd];
     return 0;
 }
@@ -684,7 +691,7 @@ int op_STR_W_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs;
     DECODE_RR(operands, rd, rs);
-    
+
     *(int *)vm->regs[rs] = (int)vm->regs[rd];
     return 0;
 }
@@ -695,7 +702,7 @@ int op_STR_D_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs;
     DECODE_RR(operands, rd, rs);
-    
+
     *(long long *)vm->regs[rs] = vm->regs[rd];
     return 0;
 }
@@ -706,7 +713,7 @@ int op_FLDR_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs;
     DECODE_RR(operands, rd, rs);
-    
+
     vm->fregs[rd] = *(double *)vm->regs[rs];
     return 0;
 }
@@ -717,7 +724,7 @@ int op_FSTR_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs;
     DECODE_RR(operands, rd, rs);
-    
+
     *(double *)vm->regs[rs] = vm->fregs[rd];
     return 0;
 }
@@ -731,7 +738,7 @@ int op_LEA3_fn(JCC *vm) {
     int rd;
     DECODE_R(operands, rd);
     long long offset = *vm->pc++;
-    
+
     if (rd != REG_ZERO)
         vm->regs[rd] = (long long)(vm->bp + offset);
     return 0;
@@ -743,7 +750,7 @@ int op_I2F3_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs;
     DECODE_RR(operands, rd, rs);
-    
+
     vm->fregs[rd] = (double)vm->regs[rs];
     return 0;
 }
@@ -754,7 +761,7 @@ int op_F2I3_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs;
     DECODE_RR(operands, rd, rs);
-    
+
     if (rd != REG_ZERO)
         vm->regs[rd] = (long long)vm->fregs[rs];
     return 0;
@@ -767,9 +774,12 @@ int op_FR2R_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs;
     DECODE_RR(operands, rd, rs);
-    
+
     if (rd != REG_ZERO) {
-        union { double d; long long ll; } conv;
+        union {
+            double d;
+            long long ll;
+        } conv;
         conv.d = vm->fregs[rs];
         vm->regs[rd] = conv.ll;
     }
@@ -783,8 +793,11 @@ int op_R2FR_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs;
     DECODE_RR(operands, rd, rs);
-    
-    union { double d; long long ll; } conv;
+
+    union {
+        double d;
+        long long ll;
+    } conv;
     conv.ll = vm->regs[rs];
     vm->fregs[rd] = conv.d;
     return 0;
@@ -797,7 +810,7 @@ int op_JZ3_fn(JCC *vm) {
     int rs;
     DECODE_R(operands, rs);
     long long target = *vm->pc++;
-    
+
     if (vm->regs[rs] == 0)
         vm->pc = (long long *)target;
     return 0;
@@ -810,7 +823,7 @@ int op_JNZ3_fn(JCC *vm) {
     int rs;
     DECODE_R(operands, rs);
     long long target = *vm->pc++;
-    
+
     if (vm->regs[rs] != 0)
         vm->pc = (long long *)target;
     return 0;
@@ -822,7 +835,7 @@ int op_NOT3_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs;
     DECODE_RR(operands, rd, rs);
-    
+
     if (rd != REG_ZERO)
         vm->regs[rd] = !vm->regs[rs];
     return 0;
@@ -834,7 +847,7 @@ int op_BNOT3_fn(JCC *vm) {
     long long operands = *vm->pc++;
     int rd, rs;
     DECODE_RR(operands, rd, rs);
-    
+
     if (rd != REG_ZERO)
         vm->regs[rd] = ~vm->regs[rs];
     return 0;
@@ -849,40 +862,41 @@ int op_CHKP3_fn(JCC *vm) {
     int rs;
     DECODE_R(operands, rs);
     long long ptr = vm->regs[rs];
-    
+
     if (!(vm->flags & JCC_POINTER_CHECKS)) {
         return 0;
     }
-    
+
     if (ptr == 0) {
         printf("\n========== NULL POINTER DEREFERENCE ==========\n");
         printf("Attempted to dereference NULL pointer\n");
-        printf("PC: 0x%llx (offset: %lld)\n",
-                (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+        printf("PC: 0x%llx (offset: %lld)\n", (long long)vm->pc,
+               (long long)(vm->pc - vm->text_seg));
         printf("============================================\n");
         return -1;
     }
-    
+
     // Check if pointer is in heap range
     if (ptr >= (long long)vm->heap_seg && ptr < (long long)vm->heap_end) {
         // Find allocation header - need to search backwards
         AllocHeader *header = ((AllocHeader *)ptr) - 1;
-        
+
         // Check if freed (UAF detection)
-        if ((vm->flags & JCC_UAF_DETECTION) && header->magic == 0xDEADBEEF && header->freed) {
+        if ((vm->flags & JCC_UAF_DETECTION) && header->magic == 0xDEADBEEF &&
+            header->freed) {
             printf("\n========== USE-AFTER-FREE DETECTED ==========\n");
             printf("Attempted to access freed memory\n");
             printf("Address:     0x%llx\n", ptr);
             printf("Size:        %zu bytes\n", header->size);
             printf("Allocated at PC offset: %lld\n", header->alloc_pc);
             printf("Generation:  %d (freed)\n", header->generation);
-            printf("Current PC:  0x%llx (offset: %lld)\n",
-                    (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+            printf("Current PC:  0x%llx (offset: %lld)\n", (long long)vm->pc,
+                   (long long)(vm->pc - vm->text_seg));
             printf("============================================\n");
             return -1;
         }
     }
-    
+
     return 0;
 }
 
@@ -894,26 +908,26 @@ int op_CHKA3_fn(JCC *vm) {
     DECODE_R(operands, rs);
     size_t alignment = (size_t)*vm->pc++;
     long long ptr = vm->regs[rs];
-    
+
     if (!(vm->flags & JCC_ALIGNMENT_CHECKS)) {
         return 0;
     }
-    
+
     if (ptr == 0) {
-        return 0;  // NULL will be caught by CHKP3
+        return 0; // NULL will be caught by CHKP3
     }
-    
+
     if (alignment > 1 && (ptr % alignment) != 0) {
         printf("\n========== ALIGNMENT ERROR ==========\n");
         printf("Pointer is misaligned for type\n");
         printf("Address:       0x%llx\n", ptr);
         printf("Required alignment: %zu bytes\n", alignment);
-        printf("Current PC:    0x%llx (offset: %lld)\n",
-                (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+        printf("Current PC:    0x%llx (offset: %lld)\n", (long long)vm->pc,
+               (long long)(vm->pc - vm->text_seg));
         printf("=====================================\n");
         return -1;
     }
-    
+
     return 0;
 }
 
@@ -925,40 +939,44 @@ int op_CHKT3_fn(JCC *vm) {
     DECODE_R(operands, rs);
     int expected_type = (int)*vm->pc++;
     long long ptr = vm->regs[rs];
-    
+
     if (!(vm->flags & JCC_TYPE_CHECKS)) {
         return 0;
     }
-    
+
     if (ptr == 0) {
-        return 0;  // NULL will be caught by CHKP3
+        return 0; // NULL will be caught by CHKP3
     }
-    
+
     // Skip check for void* (TY_VOID) and generic pointers (TY_PTR)
     if (expected_type == TY_VOID || expected_type == TY_PTR) {
         return 0;
     }
-    
+
     // Only check heap allocations
     if (ptr >= (long long)vm->heap_seg && ptr < (long long)vm->heap_end) {
         AllocHeader *header = ((AllocHeader *)ptr) - 1;
-        
+
         if (header->magic == 0xDEADBEEF) {
             int actual_type = header->type_kind;
-            
+
             if (actual_type != TY_VOID && actual_type != TY_PTR) {
                 if (actual_type != expected_type) {
                     const char *type_names[] = {
-                        "void", "bool", "char", "short", "int", "long",
-                        "float", "double", "long double", "enum", "pointer",
-                        "function", "array", "vla", "struct", "union"
-                    };
-                    
-                    const char *expected_name = (expected_type >= 0 && expected_type < 16)
-                        ? type_names[expected_type] : "unknown";
-                    const char *actual_name = (actual_type >= 0 && actual_type < 16)
-                        ? type_names[actual_type] : "unknown";
-                    
+                        "void",        "bool", "char",    "short",
+                        "int",         "long", "float",   "double",
+                        "long double", "enum", "pointer", "function",
+                        "array",       "vla",  "struct",  "union"};
+
+                    const char *expected_name =
+                        (expected_type >= 0 && expected_type < 16)
+                            ? type_names[expected_type]
+                            : "unknown";
+                    const char *actual_name =
+                        (actual_type >= 0 && actual_type < 16)
+                            ? type_names[actual_type]
+                            : "unknown";
+
                     printf("\n========== TYPE MISMATCH DETECTED ==========\n");
                     printf("Pointer type mismatch on dereference\n");
                     printf("Address:       0x%llx\n", ptr);
@@ -966,14 +984,15 @@ int op_CHKT3_fn(JCC *vm) {
                     printf("Actual type:   %s\n", actual_name);
                     printf("Allocated at PC offset: %lld\n", header->alloc_pc);
                     printf("Current PC:    0x%llx (offset: %lld)\n",
-                            (long long)vm->pc, (long long)(vm->pc - vm->text_seg));
+                           (long long)vm->pc,
+                           (long long)(vm->pc - vm->text_seg));
                     printf("============================================\n");
                     return -1;
                 }
             }
         }
     }
-    
+
     return 0;
 }
 
@@ -986,12 +1005,12 @@ int op_JMP_fn(JCC *vm) {
 
 int op_CALL_fn(JCC *vm) {
     // Call subroutine: push return address to main stack and shadow stack
-    long long target = *vm->pc;  // Target address is operand at current pc
-    long long ret_addr = (long long)(vm->pc+1);  // Return after operand
-    
+    long long target = *vm->pc; // Target address is operand at current pc
+    long long ret_addr = (long long)(vm->pc + 1); // Return after operand
+
     *--vm->sp = ret_addr;
     if (vm->flags & JCC_CFI) {
-        *--vm->shadow_sp = ret_addr;  // Also push to shadow stack for CFI
+        *--vm->shadow_sp = ret_addr; // Also push to shadow stack for CFI
     }
     vm->pc = (long long *)target;
     return 0;
@@ -1086,8 +1105,8 @@ int op_SX4_fn(JCC *vm) {
 }
 
 int op_ZX1_fn(JCC *vm) {
-    // Zero extend 1 byte to 8 bytes: regs[rd] = (long long)(unsigned char)regs[rs]
-    // Format: [ZX1] [rd:8|rs:8|unused:48]
+    // Zero extend 1 byte to 8 bytes: regs[rd] = (long long)(unsigned
+    // char)regs[rs] Format: [ZX1] [rd:8|rs:8|unused:48]
     long long operands = *vm->pc++;
     int rd, rs;
     DECODE_RR(operands, rd, rs);
@@ -1096,8 +1115,8 @@ int op_ZX1_fn(JCC *vm) {
 }
 
 int op_ZX2_fn(JCC *vm) {
-    // Zero extend 2 bytes to 8 bytes: regs[rd] = (long long)(unsigned short)regs[rs]
-    // Format: [ZX2] [rd:8|rs:8|unused:48]
+    // Zero extend 2 bytes to 8 bytes: regs[rd] = (long long)(unsigned
+    // short)regs[rs] Format: [ZX2] [rd:8|rs:8|unused:48]
     long long operands = *vm->pc++;
     int rd, rs;
     DECODE_RR(operands, rd, rs);
@@ -1106,8 +1125,8 @@ int op_ZX2_fn(JCC *vm) {
 }
 
 int op_ZX4_fn(JCC *vm) {
-    // Zero extend 4 bytes to 8 bytes: regs[rd] = (long long)(unsigned int)regs[rs]
-    // Format: [ZX4] [rd:8|rs:8|unused:48]
+    // Zero extend 4 bytes to 8 bytes: regs[rd] = (long long)(unsigned
+    // int)regs[rs] Format: [ZX4] [rd:8|rs:8|unused:48]
     long long operands = *vm->pc++;
     int rd, rs;
     DECODE_RR(operands, rd, rs);
@@ -1121,7 +1140,7 @@ int op_MALC_fn(JCC *vm) {
     // malloc: size in REG_A0, return pointer in REG_A0
     long long requested_size = vm->regs[REG_A0];
     if (requested_size <= 0) {
-        vm->regs[REG_A0] = 0;  // Return NULL for invalid size
+        vm->regs[REG_A0] = 0; // Return NULL for invalid size
         return 0;
     }
 
@@ -1132,7 +1151,7 @@ int op_MALC_fn(JCC *vm) {
     // Check for OOM
     size_t available = (size_t)(vm->heap_end - vm->heap_ptr);
     if (total_size > available) {
-        vm->regs[REG_A0] = 0;  // Out of memory
+        vm->regs[REG_A0] = 0; // Out of memory
         return 0;
     }
 
@@ -1147,7 +1166,7 @@ int op_MALC_fn(JCC *vm) {
     header->type_kind = TY_VOID;
 
     vm->heap_ptr = vm->heap_ptr + total_size;
-    vm->regs[REG_A0] = (long long)(header + 1);  // Return pointer after header
+    vm->regs[REG_A0] = (long long)(header + 1); // Return pointer after header
 
     if (vm->debug_vm) {
         printf("MALC: allocated %zu bytes at 0x%llx\n", size, vm->regs[REG_A0]);
@@ -1159,7 +1178,7 @@ int op_MFRE_fn(JCC *vm) {
     // free: pointer in REG_A0
     void *ptr = (void *)vm->regs[REG_A0];
     if (!ptr) {
-        return 0;  // free(NULL) is a no-op
+        return 0; // free(NULL) is a no-op
     }
 
     AllocHeader *header = ((AllocHeader *)ptr) - 1;
@@ -1167,7 +1186,8 @@ int op_MFRE_fn(JCC *vm) {
     // Validate header
     if (header->magic != 0xDEADBEEF) {
         printf("\n========== INVALID FREE ==========\n");
-        printf("Pointer does not appear to be from malloc: 0x%llx\n", (long long)ptr);
+        printf("Pointer does not appear to be from malloc: 0x%llx\n",
+               (long long)ptr);
         printf("===================================\n");
         return -1;
     }
@@ -1227,7 +1247,8 @@ int op_REALC_fn(JCC *vm) {
 
     // Copy data
     void *new_ptr = (void *)vm->regs[REG_A0];
-    size_t copy_size = old_size < (size_t)new_size ? old_size : (size_t)new_size;
+    size_t copy_size =
+        old_size < (size_t)new_size ? old_size : (size_t)new_size;
     memcpy(new_ptr, ptr, copy_size);
 
     // Free old block
@@ -1259,25 +1280,25 @@ int op_CALC_fn(JCC *vm) {
 
 int op_CHKB_fn(JCC *vm) {
     // Check array bounds (stub for now)
-    vm->pc++;  // Skip operand
+    vm->pc++; // Skip operand
     return 0;
 }
 
 int op_CHKI_fn(JCC *vm) {
     // Check initialization (stub for now)
-    vm->pc++;  // Skip operand
+    vm->pc++; // Skip operand
     return 0;
 }
 
 int op_MARKI_fn(JCC *vm) {
     // Mark as initialized (stub for now)
-    vm->pc++;  // Skip operand
+    vm->pc++; // Skip operand
     return 0;
 }
 
 int op_MARKA_fn(JCC *vm) {
     // Mark address (stub for now)
-    vm->pc += 3;  // Skip 3 operands
+    vm->pc += 3; // Skip 3 operands
     return 0;
 }
 
@@ -1288,37 +1309,37 @@ int op_CHKPA_fn(JCC *vm) {
 
 int op_MARKP_fn(JCC *vm) {
     // Mark provenance (stub for now)
-    vm->pc += 3;  // Skip 3 operands
+    vm->pc += 3; // Skip 3 operands
     return 0;
 }
 
 int op_SCOPEIN_fn(JCC *vm) {
     // Enter scope (stub for now)
-    vm->pc++;  // Skip operand
+    vm->pc++; // Skip operand
     return 0;
 }
 
 int op_SCOPEOUT_fn(JCC *vm) {
     // Exit scope (stub for now)
-    vm->pc++;  // Skip operand
+    vm->pc++; // Skip operand
     return 0;
 }
 
 int op_CHKL_fn(JCC *vm) {
     // Check liveness (stub for now)
-    vm->pc++;  // Skip operand
+    vm->pc++; // Skip operand
     return 0;
 }
 
 int op_MARKR_fn(JCC *vm) {
     // Mark read (stub for now)
-    vm->pc++;  // Skip operand
+    vm->pc++; // Skip operand
     return 0;
 }
 
 int op_MARKW_fn(JCC *vm) {
     // Mark write (stub for now)
-    vm->pc++;  // Skip operand
+    vm->pc++; // Skip operand
     return 0;
 }
 
@@ -1330,7 +1351,7 @@ int op_SETJMP_fn(JCC *vm) {
     jmp_buf[0] = (long long)vm->pc;
     jmp_buf[1] = (long long)vm->sp;
     jmp_buf[2] = (long long)vm->bp;
-    vm->regs[REG_A0] = 0;  // setjmp returns 0 on direct call
+    vm->regs[REG_A0] = 0; // setjmp returns 0 on direct call
     return 0;
 }
 
@@ -1341,7 +1362,7 @@ int op_LONGJMP_fn(JCC *vm) {
     vm->pc = (long long *)jmp_buf[0];
     vm->sp = (long long *)jmp_buf[1];
     vm->bp = (long long *)jmp_buf[2];
-    vm->regs[REG_A0] = val ? val : 1;  // Return value (never 0)
+    vm->regs[REG_A0] = val ? val : 1; // Return value (never 0)
     return 0;
 }
 
@@ -1350,12 +1371,13 @@ int op_LONGJMP_fn(JCC *vm) {
 int op_CALLF_fn(JCC *vm) {
     // Foreign function call using register-based calling convention
     // Operands: [ffi_idx, nargs, double_arg_mask]
-    // Arguments: REG_A0-A7 for integers, FREG_A0-A7 for doubles (based on double_arg_mask)
-    
+    // Arguments: REG_A0-A7 for integers, FREG_A0-A7 for doubles (based on
+    // double_arg_mask)
+
     int func_idx = (int)*vm->pc++;
     int actual_nargs = (int)*vm->pc++;
     uint64_t double_arg_mask = (uint64_t)*vm->pc++;
-    
+
     if (func_idx < 0 || func_idx >= vm->compiler.ffi_count) {
         printf("error: invalid FFI function index: %d\n", func_idx);
         return -1;
@@ -1368,8 +1390,10 @@ int op_CALLF_fn(JCC *vm) {
     }
 
     if (vm->debug_vm)
-        printf("CALLF: calling %s with %d args (fixed: %d, variadic: %d, double_mask: 0x%llx)\n",
-                ff->name, actual_nargs, ff->num_fixed_args, ff->is_variadic, (unsigned long long)double_arg_mask);
+        printf("CALLF: calling %s with %d args (fixed: %d, variadic: %d, "
+               "double_mask: 0x%llx)\n",
+               ff->name, actual_nargs, ff->num_fixed_args, ff->is_variadic,
+               (unsigned long long)double_arg_mask);
 
     // Collect arguments from registers
     long long args[8];
@@ -1390,7 +1414,8 @@ int op_CALLF_fn(JCC *vm) {
     // libffi implementation
     ffi_cif cif;
     ffi_type **arg_types = NULL;
-    ffi_type *return_type = ff->returns_double ? &ffi_type_double : &ffi_type_sint64;
+    ffi_type *return_type =
+        ff->returns_double ? &ffi_type_double : &ffi_type_sint64;
 
     if (actual_nargs > 0) {
         arg_types = malloc(actual_nargs * sizeof(ffi_type *));
@@ -1413,13 +1438,14 @@ int op_CALLF_fn(JCC *vm) {
         status = ffi_prep_cif_var(&cif, FFI_DEFAULT_ABI, ff->num_fixed_args,
                                   actual_nargs, return_type, arg_types);
     } else {
-        status = ffi_prep_cif(&cif, FFI_DEFAULT_ABI, actual_nargs,
-                              return_type, arg_types);
+        status = ffi_prep_cif(&cif, FFI_DEFAULT_ABI, actual_nargs, return_type,
+                              arg_types);
     }
-    
+
     if (status != FFI_OK) {
         printf("error: failed to prepare FFI cif (status=%d)\n", status);
-        if (arg_types) free(arg_types);
+        if (arg_types)
+            free(arg_types);
         return -1;
     }
 
@@ -1440,7 +1466,8 @@ int op_CALLF_fn(JCC *vm) {
         vm->regs[REG_A0] = result;
     }
 
-    if (arg_types) free(arg_types);
+    if (arg_types)
+        free(arg_types);
 
 #else
     // Fallback implementation without libffi
@@ -1459,11 +1486,15 @@ int op_CALLF_fn(JCC *vm) {
         if (is_variadic_arg) {
             stack_args++;
         } else if (is_double) {
-            if (fp_reg_idx >= 8) stack_args++;
-            else fp_reg_idx++;
+            if (fp_reg_idx >= 8)
+                stack_args++;
+            else
+                fp_reg_idx++;
         } else {
-            if (int_reg_idx >= 8) stack_args++;
-            else int_reg_idx++;
+            if (int_reg_idx >= 8)
+                stack_args++;
+            else
+                int_reg_idx++;
         }
     }
 
@@ -1497,32 +1528,64 @@ int op_CALLF_fn(JCC *vm) {
         if (is_variadic_arg) {
             stack_area[stack_idx++] = args[i];
         } else if (is_double) {
-            double val = *(double*)&args[i];
+            double val = *(double *)&args[i];
             if (fp_reg_idx < 8) {
-                switch(fp_reg_idx++) {
-                    case 0: d0 = val; break;
-                    case 1: d1 = val; break;
-                    case 2: d2 = val; break;
-                    case 3: d3 = val; break;
-                    case 4: d4 = val; break;
-                    case 5: d5 = val; break;
-                    case 6: d6 = val; break;
-                    case 7: d7 = val; break;
+                switch (fp_reg_idx++) {
+                case 0:
+                    d0 = val;
+                    break;
+                case 1:
+                    d1 = val;
+                    break;
+                case 2:
+                    d2 = val;
+                    break;
+                case 3:
+                    d3 = val;
+                    break;
+                case 4:
+                    d4 = val;
+                    break;
+                case 5:
+                    d5 = val;
+                    break;
+                case 6:
+                    d6 = val;
+                    break;
+                case 7:
+                    d7 = val;
+                    break;
                 }
             } else {
                 stack_area[stack_idx++] = args[i];
             }
         } else {
             if (int_reg_idx < 8) {
-                switch(int_reg_idx++) {
-                    case 0: x0 = args[i]; break;
-                    case 1: x1 = args[i]; break;
-                    case 2: x2 = args[i]; break;
-                    case 3: x3 = args[i]; break;
-                    case 4: x4 = args[i]; break;
-                    case 5: x5 = args[i]; break;
-                    case 6: x6 = args[i]; break;
-                    case 7: x7 = args[i]; break;
+                switch (int_reg_idx++) {
+                case 0:
+                    x0 = args[i];
+                    break;
+                case 1:
+                    x1 = args[i];
+                    break;
+                case 2:
+                    x2 = args[i];
+                    break;
+                case 3:
+                    x3 = args[i];
+                    break;
+                case 4:
+                    x4 = args[i];
+                    break;
+                case 5:
+                    x5 = args[i];
+                    break;
+                case 6:
+                    x6 = args[i];
+                    break;
+                case 7:
+                    x7 = args[i];
+                    break;
                 }
             } else {
                 stack_area[stack_idx++] = args[i];
@@ -1534,49 +1597,51 @@ int op_CALLF_fn(JCC *vm) {
 
     if (ff->returns_double) {
         register double result __asm__("d0");
-        __asm__ volatile(
-            "sub sp, sp, %2\n\t"
-            "cbz %2, 2f\n\t"
-            "mov x10, sp\n\t"
-            "mov x11, %3\n\t"
-            "mov x12, %4\n\t"
-            "1:\n\t"
-            "ldr x13, [x11], #8\n\t"
-            "str x13, [x10], #8\n\t"
-            "subs x12, x12, #1\n\t"
-            "b.ne 1b\n\t"
-            "2:\n\t"
-            "blr %1\n\t"
-            "add sp, sp, %2"
-            : "=r"(result)
-            : "r"(ff->func_ptr), "r"((long long)stack_bytes), "r"(stack_area), "r"((long long)stack_args),
-              "r"(x0), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5), "r"(x6), "r"(x7),
-              "w"(d0), "w"(d1), "w"(d2), "w"(d3), "w"(d4), "w"(d5), "w"(d6), "w"(d7)
-            : "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "x18", "memory"
-        );
+        __asm__ volatile("sub sp, sp, %2\n\t"
+                         "cbz %2, 2f\n\t"
+                         "mov x10, sp\n\t"
+                         "mov x11, %3\n\t"
+                         "mov x12, %4\n\t"
+                         "1:\n\t"
+                         "ldr x13, [x11], #8\n\t"
+                         "str x13, [x10], #8\n\t"
+                         "subs x12, x12, #1\n\t"
+                         "b.ne 1b\n\t"
+                         "2:\n\t"
+                         "blr %1\n\t"
+                         "add sp, sp, %2"
+                         : "=r"(result)
+                         : "r"(ff->func_ptr), "r"((long long)stack_bytes),
+                           "r"(stack_area), "r"((long long)stack_args), "r"(x0),
+                           "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5), "r"(x6),
+                           "r"(x7), "w"(d0), "w"(d1), "w"(d2), "w"(d3), "w"(d4),
+                           "w"(d5), "w"(d6), "w"(d7)
+                         : "x9", "x10", "x11", "x12", "x13", "x14", "x15",
+                           "x16", "x17", "x18", "memory");
         vm->fregs[FREG_A0] = result;
     } else {
         register long long result __asm__("x0");
-        __asm__ volatile(
-            "sub sp, sp, %2\n\t"
-            "cbz %2, 2f\n\t"
-            "mov x10, sp\n\t"
-            "mov x11, %3\n\t"
-            "mov x12, %4\n\t"
-            "1:\n\t"
-            "ldr x13, [x11], #8\n\t"
-            "str x13, [x10], #8\n\t"
-            "subs x12, x12, #1\n\t"
-            "b.ne 1b\n\t"
-            "2:\n\t"
-            "blr %1\n\t"
-            "add sp, sp, %2"
-            : "=r"(result)
-            : "r"(ff->func_ptr), "r"((long long)stack_bytes), "r"(stack_area), "r"((long long)stack_args),
-              "r"(x0), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5), "r"(x6), "r"(x7),
-              "w"(d0), "w"(d1), "w"(d2), "w"(d3), "w"(d4), "w"(d5), "w"(d6), "w"(d7)
-            : "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "x18", "memory"
-        );
+        __asm__ volatile("sub sp, sp, %2\n\t"
+                         "cbz %2, 2f\n\t"
+                         "mov x10, sp\n\t"
+                         "mov x11, %3\n\t"
+                         "mov x12, %4\n\t"
+                         "1:\n\t"
+                         "ldr x13, [x11], #8\n\t"
+                         "str x13, [x10], #8\n\t"
+                         "subs x12, x12, #1\n\t"
+                         "b.ne 1b\n\t"
+                         "2:\n\t"
+                         "blr %1\n\t"
+                         "add sp, sp, %2"
+                         : "=r"(result)
+                         : "r"(ff->func_ptr), "r"((long long)stack_bytes),
+                           "r"(stack_area), "r"((long long)stack_args), "r"(x0),
+                           "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5), "r"(x6),
+                           "r"(x7), "w"(d0), "w"(d1), "w"(d2), "w"(d3), "w"(d4),
+                           "w"(d5), "w"(d6), "w"(d7)
+                         : "x9", "x10", "x11", "x12", "x13", "x14", "x15",
+                           "x16", "x17", "x18", "memory");
         vm->regs[REG_A0] = result;
     }
 #elif defined(__x86_64__) || defined(__amd64__)
@@ -1584,7 +1649,7 @@ int op_CALLF_fn(JCC *vm) {
     // Integer args: rdi, rsi, rdx, rcx, r8, r9
     // FP args: xmm0-xmm7
     // For variadic functions, AL contains number of vector registers used
-    
+
     int num_fixed = ff->is_variadic ? ff->num_fixed_args : actual_nargs;
     int int_reg_idx = 0;
     int fp_reg_idx = 0;
@@ -1598,11 +1663,15 @@ int op_CALLF_fn(JCC *vm) {
         if (is_variadic_arg) {
             stack_args++;
         } else if (is_double) {
-            if (fp_reg_idx >= 8) stack_args++;
-            else fp_reg_idx++;
+            if (fp_reg_idx >= 8)
+                stack_args++;
+            else
+                fp_reg_idx++;
         } else {
-            if (int_reg_idx >= 6) stack_args++;
-            else int_reg_idx++;
+            if (int_reg_idx >= 6)
+                stack_args++;
+            else
+                int_reg_idx++;
         }
     }
 
@@ -1635,31 +1704,59 @@ int op_CALLF_fn(JCC *vm) {
         if (is_variadic_arg) {
             stack_area[stack_idx++] = args[i];
         } else if (is_double) {
-            double val = *(double*)&args[i];
+            double val = *(double *)&args[i];
             if (fp_reg_idx < 8) {
                 num_xmm_used = fp_reg_idx + 1;
-                switch(fp_reg_idx++) {
-                    case 0: xmm0 = val; break;
-                    case 1: xmm1 = val; break;
-                    case 2: xmm2 = val; break;
-                    case 3: xmm3 = val; break;
-                    case 4: xmm4 = val; break;
-                    case 5: xmm5 = val; break;
-                    case 6: xmm6 = val; break;
-                    case 7: xmm7 = val; break;
+                switch (fp_reg_idx++) {
+                case 0:
+                    xmm0 = val;
+                    break;
+                case 1:
+                    xmm1 = val;
+                    break;
+                case 2:
+                    xmm2 = val;
+                    break;
+                case 3:
+                    xmm3 = val;
+                    break;
+                case 4:
+                    xmm4 = val;
+                    break;
+                case 5:
+                    xmm5 = val;
+                    break;
+                case 6:
+                    xmm6 = val;
+                    break;
+                case 7:
+                    xmm7 = val;
+                    break;
                 }
             } else {
                 stack_area[stack_idx++] = args[i];
             }
         } else {
             if (int_reg_idx < 6) {
-                switch(int_reg_idx++) {
-                    case 0: rdi = args[i]; break;
-                    case 1: rsi = args[i]; break;
-                    case 2: rdx = args[i]; break;
-                    case 3: rcx = args[i]; break;
-                    case 4: r8 = args[i]; break;
-                    case 5: r9 = args[i]; break;
+                switch (int_reg_idx++) {
+                case 0:
+                    rdi = args[i];
+                    break;
+                case 1:
+                    rsi = args[i];
+                    break;
+                case 2:
+                    rdx = args[i];
+                    break;
+                case 3:
+                    rcx = args[i];
+                    break;
+                case 4:
+                    r8 = args[i];
+                    break;
+                case 5:
+                    r9 = args[i];
+                    break;
                 }
             } else {
                 stack_area[stack_idx++] = args[i];
@@ -1669,7 +1766,7 @@ int op_CALLF_fn(JCC *vm) {
 
     // Stack must be 16-byte aligned before call
     int stack_bytes = (stack_args * 8 + 15) & ~15;
-    
+
     // For variadic functions, AL must contain number of XMM registers used
     unsigned char num_xmm = ff->is_variadic ? (unsigned char)num_xmm_used : 0;
 
@@ -1679,40 +1776,39 @@ int op_CALLF_fn(JCC *vm) {
             long long sb = stack_bytes;
             long long sa = stack_args;
             __asm__ volatile(
-                "mov %2, %%r10\n\t"            // Save stack_bytes in r10
-                "sub %%r10, %%rsp\n\t"         // Allocate stack space
-                "mov %%rsp, %%r11\n\t"         // Destination pointer
-                "mov %3, %%r12\n\t"            // Source pointer (stack_area)
-                "mov %4, %%r13\n\t"            // Counter (stack_args)
+                "mov %2, %%r10\n\t"    // Save stack_bytes in r10
+                "sub %%r10, %%rsp\n\t" // Allocate stack space
+                "mov %%rsp, %%r11\n\t" // Destination pointer
+                "mov %3, %%r12\n\t"    // Source pointer (stack_area)
+                "mov %4, %%r13\n\t"    // Counter (stack_args)
                 "test %%r13, %%r13\n\t"
                 "jz 2f\n\t"
                 "1:\n\t"
-                "mov (%%r12), %%r14\n\t"       // Load from source
-                "mov %%r14, (%%r11)\n\t"       // Store to stack
+                "mov (%%r12), %%r14\n\t" // Load from source
+                "mov %%r14, (%%r11)\n\t" // Store to stack
                 "add $8, %%r12\n\t"
                 "add $8, %%r11\n\t"
                 "dec %%r13\n\t"
                 "jnz 1b\n\t"
                 "2:\n\t"
-                "movzbl %5, %%eax\n\t"         // Load num_xmm into AL
-                "call *%1\n\t"                 // Call the function
-                "add %%r10, %%rsp"             // Restore stack
+                "movzbl %5, %%eax\n\t" // Load num_xmm into AL
+                "call *%1\n\t"         // Call the function
+                "add %%r10, %%rsp"     // Restore stack
                 : "=x"(result)
-                : "r"(ff->func_ptr), "m"(sb), "r"(stack_area), "m"(sa), "m"(num_xmm),
-                  "r"(rdi), "r"(rsi), "r"(rdx), "r"(rcx), "r"(r8), "r"(r9),
-                  "x"(xmm0), "x"(xmm1), "x"(xmm2), "x"(xmm3), "x"(xmm4), "x"(xmm5), "x"(xmm6), "x"(xmm7)
-                : "r10", "r11", "r12", "r13", "r14", "rax", "memory", "cc"
-            );
+                : "r"(ff->func_ptr), "m"(sb), "r"(stack_area), "m"(sa),
+                  "m"(num_xmm), "r"(rdi), "r"(rsi), "r"(rdx), "r"(rcx), "r"(r8),
+                  "r"(r9), "x"(xmm0), "x"(xmm1), "x"(xmm2), "x"(xmm3),
+                  "x"(xmm4), "x"(xmm5), "x"(xmm6), "x"(xmm7)
+                : "r10", "r11", "r12", "r13", "r14", "rax", "memory", "cc");
         } else {
-            __asm__ volatile(
-                "movzbl %1, %%eax\n\t"         // Load num_xmm into AL
-                "call *%2\n\t"                 // Call the function
-                : "=x"(result)
-                : "m"(num_xmm), "r"(ff->func_ptr),
-                  "r"(rdi), "r"(rsi), "r"(rdx), "r"(rcx), "r"(r8), "r"(r9),
-                  "x"(xmm0), "x"(xmm1), "x"(xmm2), "x"(xmm3), "x"(xmm4), "x"(xmm5), "x"(xmm6), "x"(xmm7)
-                : "rax", "r10", "r11", "memory", "cc"
-            );
+            __asm__ volatile("movzbl %1, %%eax\n\t" // Load num_xmm into AL
+                             "call *%2\n\t"         // Call the function
+                             : "=x"(result)
+                             : "m"(num_xmm), "r"(ff->func_ptr), "r"(rdi),
+                               "r"(rsi), "r"(rdx), "r"(rcx), "r"(r8), "r"(r9),
+                               "x"(xmm0), "x"(xmm1), "x"(xmm2), "x"(xmm3),
+                               "x"(xmm4), "x"(xmm5), "x"(xmm6), "x"(xmm7)
+                             : "rax", "r10", "r11", "memory", "cc");
         }
         vm->fregs[FREG_A0] = result;
     } else {
@@ -1721,47 +1817,47 @@ int op_CALLF_fn(JCC *vm) {
             long long sb = stack_bytes;
             long long sa = stack_args;
             __asm__ volatile(
-                "mov %2, %%r10\n\t"            // Save stack_bytes in r10
-                "sub %%r10, %%rsp\n\t"         // Allocate stack space
-                "mov %%rsp, %%r11\n\t"         // Destination pointer
-                "mov %3, %%r12\n\t"            // Source pointer (stack_area)
-                "mov %4, %%r13\n\t"            // Counter (stack_args)
+                "mov %2, %%r10\n\t"    // Save stack_bytes in r10
+                "sub %%r10, %%rsp\n\t" // Allocate stack space
+                "mov %%rsp, %%r11\n\t" // Destination pointer
+                "mov %3, %%r12\n\t"    // Source pointer (stack_area)
+                "mov %4, %%r13\n\t"    // Counter (stack_args)
                 "test %%r13, %%r13\n\t"
                 "jz 2f\n\t"
                 "1:\n\t"
-                "mov (%%r12), %%r14\n\t"       // Load from source
-                "mov %%r14, (%%r11)\n\t"       // Store to stack
+                "mov (%%r12), %%r14\n\t" // Load from source
+                "mov %%r14, (%%r11)\n\t" // Store to stack
                 "add $8, %%r12\n\t"
                 "add $8, %%r11\n\t"
                 "dec %%r13\n\t"
                 "jnz 1b\n\t"
                 "2:\n\t"
-                "movzbl %5, %%eax\n\t"         // Load num_xmm into AL
-                "call *%1\n\t"                 // Call the function
-                "add %%r10, %%rsp"             // Restore stack
+                "movzbl %5, %%eax\n\t" // Load num_xmm into AL
+                "call *%1\n\t"         // Call the function
+                "add %%r10, %%rsp"     // Restore stack
                 : "=a"(result)
-                : "r"(ff->func_ptr), "m"(sb), "r"(stack_area), "m"(sa), "m"(num_xmm),
-                  "r"(rdi), "r"(rsi), "r"(rdx), "r"(rcx), "r"(r8), "r"(r9),
-                  "x"(xmm0), "x"(xmm1), "x"(xmm2), "x"(xmm3), "x"(xmm4), "x"(xmm5), "x"(xmm6), "x"(xmm7)
-                : "r10", "r11", "r12", "r13", "r14", "memory", "cc"
-            );
+                : "r"(ff->func_ptr), "m"(sb), "r"(stack_area), "m"(sa),
+                  "m"(num_xmm), "r"(rdi), "r"(rsi), "r"(rdx), "r"(rcx), "r"(r8),
+                  "r"(r9), "x"(xmm0), "x"(xmm1), "x"(xmm2), "x"(xmm3),
+                  "x"(xmm4), "x"(xmm5), "x"(xmm6), "x"(xmm7)
+                : "r10", "r11", "r12", "r13", "r14", "memory", "cc");
         } else {
-            __asm__ volatile(
-                "movzbl %1, %%eax\n\t"         // Load num_xmm into AL
-                "call *%2\n\t"                 // Call the function
-                : "=a"(result)
-                : "m"(num_xmm), "r"(ff->func_ptr),
-                  "r"(rdi), "r"(rsi), "r"(rdx), "r"(rcx), "r"(r8), "r"(r9),
-                  "x"(xmm0), "x"(xmm1), "x"(xmm2), "x"(xmm3), "x"(xmm4), "x"(xmm5), "x"(xmm6), "x"(xmm7)
-                : "r10", "r11", "memory", "cc"
-            );
+            __asm__ volatile("movzbl %1, %%eax\n\t" // Load num_xmm into AL
+                             "call *%2\n\t"         // Call the function
+                             : "=a"(result)
+                             : "m"(num_xmm), "r"(ff->func_ptr), "r"(rdi),
+                               "r"(rsi), "r"(rdx), "r"(rcx), "r"(r8), "r"(r9),
+                               "x"(xmm0), "x"(xmm1), "x"(xmm2), "x"(xmm3),
+                               "x"(xmm4), "x"(xmm5), "x"(xmm6), "x"(xmm7)
+                             : "r10", "r11", "memory", "cc");
         }
         vm->regs[REG_A0] = result;
     }
 #else
-    #error "FFI inline assembly not implemented for this platform. Build with -DJCC_HAS_FFI to use libffi."
+#error                                                                         \
+    "FFI inline assembly not implemented for this platform. Build with -DJCC_HAS_FFI to use libffi."
 #endif
-#endif  // JCC_HAS_FFI
+#endif // JCC_HAS_FFI
     return 0;
 }
 

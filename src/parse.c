@@ -16,7 +16,8 @@
  You should have received a copy of the GNU General Public License
  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
- This file was original part of chibicc by Rui Ueyama (MIT) https://github.com/rui314/chibicc
+ This file was original part of chibicc by Rui Ueyama (MIT)
+ https://github.com/rui314/chibicc
 */
 
 // This file contains a recursive descent parser for C.
@@ -37,8 +38,8 @@
 // So it is very easy to lookahead arbitrary number of tokens in this
 // parser.
 
-#include "jcc.h"
 #include "./internal.h"
+#include "jcc.h"
 #include <limits.h>
 
 #ifndef MAX
@@ -65,7 +66,7 @@ typedef struct {
     bool is_inline;
     bool is_tls;
     bool is_constexpr;
-    bool is_block_var;  // __block storage qualifier (Apple blocks)
+    bool is_block_var; // __block storage qualifier (Apple blocks)
     int align;
 } VarAttr;
 
@@ -104,7 +105,7 @@ struct InitDesg {
 // Error placeholder variable for recovery
 static Obj error_var_obj = {
     .name = "<error>",
-    .ty = NULL,  // Will be set to ty_error during initialization
+    .ty = NULL, // Will be set to ty_error during initialization
     .is_local = false,
 };
 static Obj *error_var = &error_var_obj;
@@ -119,14 +120,19 @@ static Type *type_suffix(JCC *vm, Token **rest, Token *tok, Type *ty);
 static Type *declarator(JCC *vm, Token **rest, Token *tok, Type *ty);
 static Token *attribute_list(JCC *vm, Token *tok, Type *ty);
 static Token *c23_attribute_list(JCC *vm, Token *tok, Type *ty);
-static Node *declaration(JCC *vm, Token **rest, Token *tok, Type *basety, VarAttr *attr);
-static void array_initializer2(JCC *vm, Token **rest, Token *tok, Initializer *init, int i);
-static void struct_initializer2(JCC *vm, Token **rest, Token *tok, Initializer *init, Member *mem);
+static Node *declaration(JCC *vm, Token **rest, Token *tok, Type *basety,
+                         VarAttr *attr);
+static void array_initializer2(JCC *vm, Token **rest, Token *tok,
+                               Initializer *init, int i);
+static void struct_initializer2(JCC *vm, Token **rest, Token *tok,
+                                Initializer *init, Member *mem);
 static void initializer2(JCC *vm, Token **rest, Token *tok, Initializer *init);
-static Initializer *initializer(JCC *vm, Token **rest, Token *tok, Type *ty, Type **new_ty);
+static Initializer *initializer(JCC *vm, Token **rest, Token *tok, Type *ty,
+                                Type **new_ty);
 static Node *lvar_initializer(JCC *vm, Token **rest, Token *tok, Obj *var);
 static void gvar_initializer(JCC *vm, Token **rest, Token *tok, Obj *var);
-static Node *create_vla_init(JCC *vm, Initializer *init, Type *ty, Obj *var, Token *tok);
+static Node *create_vla_init(JCC *vm, Initializer *init, Type *ty, Obj *var,
+                             Token *tok);
 static Node *compound_stmt(JCC *vm, Token **rest, Token *tok);
 static Node *stmt(JCC *vm, Token **rest, Token *tok);
 static Node *expr_stmt(JCC *vm, Token **rest, Token *tok);
@@ -197,6 +203,17 @@ static VarScope *find_var(JCC *vm, Token *tok) {
     return NULL;
 }
 
+// Find a pragma macro by name
+static PragmaMacro *find_pragma_macro(JCC *vm, Token *tok) {
+    for (PragmaMacro *pm = vm->compiler.pragma_macros; pm; pm = pm->next) {
+        if (strlen(pm->name) == tok->len &&
+            strncmp(pm->name, tok->loc, tok->len) == 0) {
+            return pm;
+        }
+    }
+    return NULL;
+}
+
 static Type *find_tag(JCC *vm, Token *tok) {
     for (Scope *sc = vm->compiler.scope; sc; sc = sc->next) {
         // Linear search through linked list (typically 1-10 entries per scope)
@@ -218,7 +235,8 @@ static Node *new_node(JCC *vm, NodeKind kind, Token *tok) {
     return node;
 }
 
-static Node *new_binary(JCC *vm, NodeKind kind, Node *lhs, Node *rhs, Token *tok) {
+static Node *new_binary(JCC *vm, NodeKind kind, Node *lhs, Node *rhs,
+                        Token *tok) {
     Node *node = new_node(vm, kind, tok);
     node->lhs = lhs;
     node->rhs = rhs;
@@ -276,7 +294,8 @@ Node *new_cast(JCC *vm, Node *expr, Type *ty) {
 }
 
 static VarScope *push_scope(JCC *vm, char *name, int name_len) {
-    VarScopeNode *node = arena_alloc(&vm->compiler.parser_arena, sizeof(VarScopeNode));
+    VarScopeNode *node =
+        arena_alloc(&vm->compiler.parser_arena, sizeof(VarScopeNode));
     memset(node, 0, sizeof(VarScopeNode));
     node->name = name;
     node->name_len = name_len;
@@ -288,7 +307,8 @@ static VarScope *push_scope(JCC *vm, char *name, int name_len) {
 }
 
 static Initializer *new_initializer(JCC *vm, Type *ty, bool is_flexible) {
-    Initializer *init = arena_alloc(&vm->compiler.parser_arena, sizeof(Initializer));
+    Initializer *init =
+        arena_alloc(&vm->compiler.parser_arena, sizeof(Initializer));
     memset(init, 0, sizeof(Initializer));
     init->ty = ty;
 
@@ -298,14 +318,16 @@ static Initializer *new_initializer(JCC *vm, Type *ty, bool is_flexible) {
             return init;
         }
 
-        init->children = arena_alloc(&vm->compiler.parser_arena, ty->array_len * sizeof(Initializer *));
+        init->children = arena_alloc(&vm->compiler.parser_arena,
+                                     ty->array_len * sizeof(Initializer *));
         memset(init->children, 0, ty->array_len * sizeof(Initializer *));
         for (int i = 0; i < ty->array_len; i++)
             init->children[i] = new_initializer(vm, ty->base, false);
         return init;
     }
 
-    // VLA initialization: treat like flexible array - will be sized during parsing
+    // VLA initialization: treat like flexible array - will be sized during
+    // parsing
     if (ty->kind == TY_VLA) {
         init->is_flexible = true;
         return init;
@@ -317,12 +339,14 @@ static Initializer *new_initializer(JCC *vm, Type *ty, bool is_flexible) {
         for (Member *mem = ty->members; mem; mem = mem->next)
             len++;
 
-        init->children = arena_alloc(&vm->compiler.parser_arena, len * sizeof(Initializer *));
+        init->children = arena_alloc(&vm->compiler.parser_arena,
+                                     len * sizeof(Initializer *));
         memset(init->children, 0, len * sizeof(Initializer *));
 
         for (Member *mem = ty->members; mem; mem = mem->next) {
             if (is_flexible && ty->is_flexible && !mem->next) {
-                Initializer *child = arena_alloc(&vm->compiler.parser_arena, sizeof(Initializer));
+                Initializer *child = arena_alloc(&vm->compiler.parser_arena,
+                                                 sizeof(Initializer));
                 memset(child, 0, sizeof(Initializer));
                 child->ty = mem->ty;
                 child->is_flexible = true;
@@ -395,9 +419,12 @@ static Token *skip_to_stmt_end(JCC *vm, Token *tok) {
     int paren_depth = 0, brace_depth = 0;
 
     while (tok->kind != TK_EOF) {
-        if (equal(tok, "(")) paren_depth++;
-        if (equal(tok, ")") && paren_depth > 0) paren_depth--;
-        if (equal(tok, "{")) brace_depth++;
+        if (equal(tok, "("))
+            paren_depth++;
+        if (equal(tok, ")") && paren_depth > 0)
+            paren_depth--;
+        if (equal(tok, "{"))
+            brace_depth++;
         if (equal(tok, "}")) {
             if (brace_depth > 0) {
                 brace_depth--;
@@ -420,13 +447,18 @@ static Token *skip_to_decl_boundary(JCC *vm, Token *tok) {
     int paren_depth = 0;
 
     while (tok->kind != TK_EOF) {
-        if (equal(tok, "(")) paren_depth++;
-        if (equal(tok, ")") && paren_depth > 0) paren_depth--;
+        if (equal(tok, "("))
+            paren_depth++;
+        if (equal(tok, ")") && paren_depth > 0)
+            paren_depth--;
 
         if (paren_depth == 0) {
-            if (equal(tok, ",")) return tok->next;  // Next declarator
-            if (equal(tok, ";")) return tok->next;  // End of declaration
-            if (equal(tok, "{")) return tok;        // Function body start
+            if (equal(tok, ","))
+                return tok->next; // Next declarator
+            if (equal(tok, ";"))
+                return tok->next; // End of declaration
+            if (equal(tok, "{"))
+                return tok; // Function body start
         }
 
         tok = tok->next;
@@ -444,7 +476,8 @@ static Type *find_typedef(JCC *vm, Token *tok) {
 }
 
 static void push_tag_scope(JCC *vm, Token *tok, Type *ty) {
-    TagScopeNode *node = arena_alloc(&vm->compiler.parser_arena, sizeof(TagScopeNode));
+    TagScopeNode *node =
+        arena_alloc(&vm->compiler.parser_arena, sizeof(TagScopeNode));
     node->name = tok->loc;
     node->name_len = tok->len;
     node->ty = ty;
@@ -479,16 +512,16 @@ static Type *declspec(JCC *vm, Token **rest, Token *tok, VarAttr *attr) {
     // keyword "void" so far. With this, we can use a switch statement
     // as you can see below.
     enum {
-        VOID     = 1 << 0,
-        BOOL     = 1 << 2,
-        CHAR     = 1 << 4,
-        SHORT    = 1 << 6,
-        INT      = 1 << 8,
-        LONG     = 1 << 10,
-        FLOAT    = 1 << 12,
-        DOUBLE   = 1 << 14,
-        OTHER    = 1 << 16,
-        SIGNED   = 1 << 17,
+        VOID = 1 << 0,
+        BOOL = 1 << 2,
+        CHAR = 1 << 4,
+        SHORT = 1 << 6,
+        INT = 1 << 8,
+        LONG = 1 << 10,
+        FLOAT = 1 << 12,
+        DOUBLE = 1 << 14,
+        OTHER = 1 << 16,
+        SIGNED = 1 << 17,
         UNSIGNED = 1 << 18,
     };
 
@@ -511,11 +544,14 @@ static Type *declspec(JCC *vm, Token **rest, Token *tok, VarAttr *attr) {
         }
 
         // Handle storage class specifiers.
-        if (equal(tok, "typedef") || equal(tok, "static") || equal(tok, "extern") ||
-            equal(tok, "inline") || equal(tok, "_Thread_local") || equal(tok, "__thread") ||
+        if (equal(tok, "typedef") || equal(tok, "static") ||
+            equal(tok, "extern") || equal(tok, "inline") ||
+            equal(tok, "_Thread_local") || equal(tok, "__thread") ||
             equal(tok, "constexpr") || equal(tok, "__block")) {
             if (!attr)
-                error_tok(vm, tok, "storage class specifier is not allowed in this context");
+                error_tok(
+                    vm, tok,
+                    "storage class specifier is not allowed in this context");
 
             if (equal(tok, "typedef"))
                 attr->is_typedef = true;
@@ -532,15 +568,18 @@ static Type *declspec(JCC *vm, Token **rest, Token *tok, VarAttr *attr) {
             else
                 attr->is_tls = true;
 
-            if (attr->is_typedef &&
-                attr->is_static + attr->is_extern + attr->is_inline + attr->is_tls > 1)
-                error_tok(vm, tok, "typedef may not be used together with static,"
+            if (attr->is_typedef && attr->is_static + attr->is_extern +
+                                            attr->is_inline + attr->is_tls >
+                                        1)
+                error_tok(vm, tok,
+                          "typedef may not be used together with static,"
                           " extern, inline, __thread or _Thread_local");
-            
+
             // __block is mutually exclusive with auto, register, static, extern
             if (attr->is_block_var &&
                 (attr->is_static || attr->is_extern || attr->is_tls))
-                error_tok(vm, tok, "__block may not be used together with static,"
+                error_tok(vm, tok,
+                          "__block may not be used together with static,"
                           " extern, __thread or _Thread_local");
             tok = tok->next;
             continue;
@@ -559,14 +598,17 @@ static Type *declspec(JCC *vm, Token **rest, Token *tok, VarAttr *attr) {
         }
 
         // These keywords are recognized but ignored.
-        if (consume(vm, &tok, tok, "auto") || consume(vm, &tok, tok, "register") ||
-            consume(vm, &tok, tok, "restrict") || consume(vm, &tok, tok, "__restrict") ||
-            consume(vm, &tok, tok, "__restrict__") || consume(vm, &tok, tok, "_Noreturn"))
+        if (consume(vm, &tok, tok, "auto") ||
+            consume(vm, &tok, tok, "register") ||
+            consume(vm, &tok, tok, "restrict") ||
+            consume(vm, &tok, tok, "__restrict") ||
+            consume(vm, &tok, tok, "__restrict__") ||
+            consume(vm, &tok, tok, "_Noreturn"))
             continue;
 
         if (equal(tok, "_Atomic")) {
             tok = tok->next;
-            if (equal(tok , "(")) {
+            if (equal(tok, "(")) {
                 ty = typename(vm, &tok, tok->next);
                 tok = skip(vm, tok, ")");
             }
@@ -638,65 +680,65 @@ static Type *declspec(JCC *vm, Token **rest, Token *tok, VarAttr *attr) {
             unreachable();
 
         switch (counter) {
-            case VOID:
-                ty = ty_void;
-                break;
-            case BOOL:
-                ty = ty_bool;
-                break;
-            case CHAR:
-            case SIGNED + CHAR:
-                ty = ty_char;
-                break;
-            case UNSIGNED + CHAR:
-                ty = ty_uchar;
-                break;
-            case SHORT:
-            case SHORT + INT:
-            case SIGNED + SHORT:
-            case SIGNED + SHORT + INT:
-                ty = ty_short;
-                break;
-            case UNSIGNED + SHORT:
-            case UNSIGNED + SHORT + INT:
-                ty = ty_ushort;
-                break;
-            case INT:
-            case SIGNED:
-            case SIGNED + INT:
-                ty = ty_int;
-                break;
-            case UNSIGNED:
-            case UNSIGNED + INT:
-                ty = ty_uint;
-                break;
-            case LONG:
-            case LONG + INT:
-            case LONG + LONG:
-            case LONG + LONG + INT:
-            case SIGNED + LONG:
-            case SIGNED + LONG + INT:
-            case SIGNED + LONG + LONG:
-            case SIGNED + LONG + LONG + INT:
-                ty = ty_long;
-                break;
-            case UNSIGNED + LONG:
-            case UNSIGNED + LONG + INT:
-            case UNSIGNED + LONG + LONG:
-            case UNSIGNED + LONG + LONG + INT:
-                ty = ty_ulong;
-                break;
-            case FLOAT:
-                ty = ty_float;
-                break;
-            case DOUBLE:
-                ty = ty_double;
-                break;
-            case LONG + DOUBLE:
-                ty = ty_ldouble;
-                break;
-            default:
-                error_tok(vm, tok, "invalid type");
+        case VOID:
+            ty = ty_void;
+            break;
+        case BOOL:
+            ty = ty_bool;
+            break;
+        case CHAR:
+        case SIGNED + CHAR:
+            ty = ty_char;
+            break;
+        case UNSIGNED + CHAR:
+            ty = ty_uchar;
+            break;
+        case SHORT:
+        case SHORT + INT:
+        case SIGNED + SHORT:
+        case SIGNED + SHORT + INT:
+            ty = ty_short;
+            break;
+        case UNSIGNED + SHORT:
+        case UNSIGNED + SHORT + INT:
+            ty = ty_ushort;
+            break;
+        case INT:
+        case SIGNED:
+        case SIGNED + INT:
+            ty = ty_int;
+            break;
+        case UNSIGNED:
+        case UNSIGNED + INT:
+            ty = ty_uint;
+            break;
+        case LONG:
+        case LONG + INT:
+        case LONG + LONG:
+        case LONG + LONG + INT:
+        case SIGNED + LONG:
+        case SIGNED + LONG + INT:
+        case SIGNED + LONG + LONG:
+        case SIGNED + LONG + LONG + INT:
+            ty = ty_long;
+            break;
+        case UNSIGNED + LONG:
+        case UNSIGNED + LONG + INT:
+        case UNSIGNED + LONG + LONG:
+        case UNSIGNED + LONG + LONG + INT:
+            ty = ty_ulong;
+            break;
+        case FLOAT:
+            ty = ty_float;
+            break;
+        case DOUBLE:
+            ty = ty_double;
+            break;
+        case LONG + DOUBLE:
+            ty = ty_ldouble;
+            break;
+        default:
+            error_tok(vm, tok, "invalid type");
         }
 
         tok = tok->next;
@@ -814,8 +856,9 @@ static Type *pointers(JCC *vm, Token **rest, Token *tok, Type *ty) {
         // Handle const/volatile qualification on the pointer itself
         // Example: "int *const p" makes the pointer const, not the pointee
         // Example: "int *volatile p" makes the pointer volatile
-        while (equal(tok, "const") || equal(tok, "volatile") || equal(tok, "restrict") ||
-               equal(tok, "__restrict") || equal(tok, "__restrict__")) {
+        while (equal(tok, "const") || equal(tok, "volatile") ||
+               equal(tok, "restrict") || equal(tok, "__restrict") ||
+               equal(tok, "__restrict__")) {
             if (equal(tok, "const")) {
                 ty = copy_type(vm, ty);
                 ty->is_const = true;
@@ -830,7 +873,8 @@ static Type *pointers(JCC *vm, Token **rest, Token *tok, Type *ty) {
     return ty;
 }
 
-// declarator = attribute? pointers ("(" ident ")" | "(" declarator ")" | ident) type-suffix attribute?
+// declarator = attribute? pointers ("(" ident ")" | "(" declarator ")" | ident)
+// type-suffix attribute?
 static Type *declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
     // Handle __attribute__ before declarator
     tok = attribute_list(vm, tok, ty);
@@ -842,27 +886,27 @@ static Type *declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
     // The ^ indicates this is a block type, not a function pointer
     if (equal(tok, "(") && equal(tok->next, "^")) {
         // Token *start = tok;
-        tok = tok->next->next;  // Skip '(' and '^'
-        
+        tok = tok->next->next; // Skip '(' and '^'
+
         Token *name = NULL;
         Token *name_pos = tok;
-        
+
         if (tok->kind == TK_IDENT) {
             name = tok;
             tok = tok->next;
         }
-        
+
         tok = skip(vm, tok, ")");
-        
+
         // Now parse the parameter list: (params)
         // This creates the function signature that the block will have
         Type *func_ty = type_suffix(vm, rest, tok, ty);
-        
+
         // Create a block type instead of function pointer
         Type *block_ty = block_type(vm, func_ty->return_ty, func_ty->params);
         block_ty->name = name;
         block_ty->name_pos = name_pos;
-        
+
         return block_ty;
     }
 
@@ -895,7 +939,8 @@ static Type *declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
     return ty;
 }
 
-// abstract-declarator = attribute? pointers ("(" abstract-declarator ")")? type-suffix attribute?
+// abstract-declarator = attribute? pointers ("(" abstract-declarator ")")?
+// type-suffix attribute?
 static Type *abstract_declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
     // Handle __attribute__ before abstract declarator
     tok = attribute_list(vm, tok, ty);
@@ -905,12 +950,12 @@ static Type *abstract_declarator(JCC *vm, Token **rest, Token *tok, Type *ty) {
 
     // Handle block type: int (^)(params) in abstract declarators (for casts)
     if (equal(tok, "(") && equal(tok->next, "^")) {
-        tok = tok->next->next;  // Skip '(' and '^'
+        tok = tok->next->next; // Skip '(' and '^'
         tok = skip(vm, tok, ")");
-        
+
         // Parse the parameter list
         Type *func_ty = type_suffix(vm, rest, tok, ty);
-        
+
         // Create a block type
         return block_type(vm, func_ty->return_ty, func_ty->params);
     }
@@ -997,7 +1042,8 @@ static Type *enum_specifier(JCC *vm, Token **rest, Token *tok) {
         sc->enum_val = val;
 
         // Store enum constant in Type structure for code emission
-        struct EnumConstant *ec = arena_alloc(&vm->compiler.parser_arena, sizeof(struct EnumConstant));
+        struct EnumConstant *ec = arena_alloc(&vm->compiler.parser_arena,
+                                              sizeof(struct EnumConstant));
         memset(ec, 0, sizeof(struct EnumConstant));
         ec->name = name;
         ec->value = val;
@@ -1046,15 +1092,14 @@ static Type *typeof_unqual_specifier(JCC *vm, Token **rest, Token *tok) {
 }
 
 // Get size for a type (no adjustment needed - types are already correct)
-static int get_vm_size(Type *ty) {
-    return ty->size;
-}
+static int get_vm_size(Type *ty) { return ty->size; }
 
 // Generate code for computing a VLA size.
 static Node *compute_vla_size(JCC *vm, Type *ty, Token *tok) {
     Node *node = new_node(vm, ND_NULL_EXPR, tok);
     if (ty->base)
-        node = new_binary(vm, ND_COMMA, node, compute_vla_size(vm, ty->base, tok), tok);
+        node = new_binary(vm, ND_COMMA, node,
+                          compute_vla_size(vm, ty->base, tok), tok);
 
     if (ty->kind != TY_VLA)
         return node;
@@ -1063,17 +1108,20 @@ static Node *compute_vla_size(JCC *vm, Type *ty, Token *tok) {
     if (ty->base->kind == TY_VLA)
         base_sz = new_var_node(vm, ty->base->vla_size, tok);
     else
-        base_sz = new_num(vm, get_vm_size(ty->base), tok);  // Use VM-adjusted size
+        base_sz =
+            new_num(vm, get_vm_size(ty->base), tok); // Use VM-adjusted size
 
     ty->vla_size = new_lvar(vm, "", 0, ty_ulong);
-    Node *expr = new_binary(vm, ND_ASSIGN, new_var_node(vm, ty->vla_size, tok),
-                            new_binary(vm, ND_MUL, ty->vla_len, base_sz, tok),
-                            tok);
+    Node *expr =
+        new_binary(vm, ND_ASSIGN, new_var_node(vm, ty->vla_size, tok),
+                   new_binary(vm, ND_MUL, ty->vla_len, base_sz, tok), tok);
     return new_binary(vm, ND_COMMA, node, expr, tok);
 }
 
 static Node *new_alloca(JCC *vm, Node *sz) {
-    Node *node = new_unary(vm, ND_FUNCALL, new_var_node(vm, vm->compiler.builtin_alloca, sz->tok), sz->tok);
+    Node *node = new_unary(
+        vm, ND_FUNCALL, new_var_node(vm, vm->compiler.builtin_alloca, sz->tok),
+        sz->tok);
     node->func_ty = vm->compiler.builtin_alloca->ty;
     node->ty = vm->compiler.builtin_alloca->ty->return_ty;
     node->args = sz;
@@ -1081,8 +1129,10 @@ static Node *new_alloca(JCC *vm, Node *sz) {
     return node;
 }
 
-// declaration = declspec (declarator ("=" expr)? ("," declarator ("=" expr)?)*)? ";"
-static Node *declaration(JCC *vm, Token **rest, Token *tok, Type *basety, VarAttr *attr) {
+// declaration = declspec (declarator ("=" expr)? ("," declarator ("="
+// expr)?)*)? ";"
+static Node *declaration(JCC *vm, Token **rest, Token *tok, Type *basety,
+                         VarAttr *attr) {
     Node head = {};
     Node *cur = &head;
     int i = 0;
@@ -1094,22 +1144,28 @@ static Node *declaration(JCC *vm, Token **rest, Token *tok, Type *basety, VarAtt
         Type *ty = declarator(vm, &tok, tok, basety);
 
         if (ty->kind == TY_VOID) {
-            if (vm->collect_errors && error_tok_recover(vm, tok, "variable declared void")) {
+            if (vm->collect_errors &&
+                error_tok_recover(vm, tok, "variable declared void")) {
                 // Skip to next declarator or end of declaration
                 tok = skip_to_decl_boundary(vm, tok);
-                if (equal(tok, ";")) break;
-                if (equal(tok, ",")) continue;
+                if (equal(tok, ";"))
+                    break;
+                if (equal(tok, ","))
+                    continue;
                 break;
             }
             error_tok(vm, tok, "variable declared void");
         }
 
         if (!ty->name) {
-            if (vm->collect_errors && error_tok_recover(vm, ty->name_pos, "variable name omitted")) {
+            if (vm->collect_errors &&
+                error_tok_recover(vm, ty->name_pos, "variable name omitted")) {
                 // Skip to next declarator or end of declaration
                 tok = skip_to_decl_boundary(vm, tok);
-                if (equal(tok, ";")) break;
-                if (equal(tok, ",")) continue;
+                if (equal(tok, ";"))
+                    break;
+                if (equal(tok, ","))
+                    continue;
                 break;
             }
             error_tok(vm, ty->name_pos, "variable name omitted");
@@ -1127,7 +1183,8 @@ static Node *declaration(JCC *vm, Token **rest, Token *tok, Type *basety, VarAtt
         // Generate code for computing a VLA size. We need to do this
         // even if ty is not VLA because ty may be a pointer to VLA
         // (e.g. int (*foo)[n][m] where n and m are variables.)
-        cur = cur->next = new_unary(vm, ND_EXPR_STMT, compute_vla_size(vm, ty, tok), tok);
+        cur = cur->next =
+            new_unary(vm, ND_EXPR_STMT, compute_vla_size(vm, ty, tok), tok);
 
         if (ty->kind == TY_VLA) {
             // Variable length arrays (VLAs) are translated to alloca() calls.
@@ -1135,9 +1192,10 @@ static Node *declaration(JCC *vm, Token **rest, Token *tok, Type *basety, VarAtt
             // x = alloca(tmp)`.
             Obj *var = new_lvar(vm, get_ident(vm, ty->name), ty->name->len, ty);
             Token *tok_local = ty->name;
-            Node *expr = new_binary(vm, ND_ASSIGN, new_vla_ptr(vm, var, tok_local),
-                                    new_alloca(vm, new_var_node(vm, ty->vla_size, tok_local)),
-                                    tok_local);
+            Node *expr = new_binary(
+                vm, ND_ASSIGN, new_vla_ptr(vm, var, tok_local),
+                new_alloca(vm, new_var_node(vm, ty->vla_size, tok_local)),
+                tok_local);
 
             cur = cur->next = new_unary(vm, ND_EXPR_STMT, expr, tok_local);
 
@@ -1148,7 +1206,8 @@ static Node *declaration(JCC *vm, Token **rest, Token *tok, Type *basety, VarAtt
                 Initializer *init = initializer(vm, &tok, tok, ty, &new_ty);
                 Node *init_node = create_vla_init(vm, init, ty, var, tok_local);
                 if (init_node)
-                    cur = cur->next = new_unary(vm, ND_EXPR_STMT, init_node, tok_local);
+                    cur = cur->next =
+                        new_unary(vm, ND_EXPR_STMT, init_node, tok_local);
             }
 
             continue;
@@ -1161,18 +1220,22 @@ static Node *declaration(JCC *vm, Token **rest, Token *tok, Type *basety, VarAtt
             var->is_block_var = true;
 
         if (equal(tok, "=")) {
-            // Mark this variable as being initialized (allows const initialization)
-            // NOTE: Don't clear this until after add_type is called on the function body
-            // For now, just set it and it will be cleared when next variable is initialized
-            // This works because initializations happen sequentially
+            // Mark this variable as being initialized (allows const
+            // initialization) NOTE: Don't clear this until after add_type is
+            // called on the function body For now, just set it and it will be
+            // cleared when next variable is initialized This works because
+            // initializations happen sequentially
             vm->compiler.initializing_var = var;
             Node *expr = lvar_initializer(vm, &tok, tok->next, var);
             cur = cur->next = new_unary(vm, ND_EXPR_STMT, expr, tok);
-            // Don't clear here - will be cleared by next init or at end of parsing
+            // Don't clear here - will be cleared by next init or at end of
+            // parsing
         }
 
         if (var->ty->size < 0) {
-            if (vm->collect_errors && error_tok_recover(vm, ty->name, "variable has incomplete type")) {
+            if (vm->collect_errors &&
+                error_tok_recover(vm, ty->name,
+                                  "variable has incomplete type")) {
                 // Set a default size to allow parsing to continue
                 var->ty->size = 1;
                 continue;
@@ -1181,7 +1244,8 @@ static Node *declaration(JCC *vm, Token **rest, Token *tok, Type *basety, VarAtt
         }
 
         if (var->ty->kind == TY_VOID) {
-            if (vm->collect_errors && error_tok_recover(vm, ty->name, "variable declared void")) {
+            if (vm->collect_errors &&
+                error_tok_recover(vm, ty->name, "variable declared void")) {
                 // Already reported earlier, just continue
                 continue;
             }
@@ -1206,33 +1270,35 @@ static Token *skip_excess_element(JCC *vm, Token *tok) {
 }
 
 // string-initializer = string-literal
-static void string_initializer(JCC *vm, Token **rest, Token *tok, Initializer *init) {
+static void string_initializer(JCC *vm, Token **rest, Token *tok,
+                               Initializer *init) {
     if (init->is_flexible)
-        *init = *new_initializer(vm, array_of(vm, init->ty->base, tok->ty->array_len), false);
+        *init = *new_initializer(
+            vm, array_of(vm, init->ty->base, tok->ty->array_len), false);
 
     int len = MIN(init->ty->array_len, tok->ty->array_len);
 
     switch (init->ty->base->size) {
-        case 1: {
-            char *str = tok->str;
-            for (int i = 0; i < len; i++)
-                init->children[i]->expr = new_num(vm, str[i], tok);
-            break;
-        }
-        case 2: {
-            uint16_t *str = (uint16_t *)tok->str;
-            for (int i = 0; i < len; i++)
-                init->children[i]->expr = new_num(vm, str[i], tok);
-            break;
-        }
-        case 4: {
-            uint32_t *str = (uint32_t *)tok->str;
-            for (int i = 0; i < len; i++)
-                init->children[i]->expr = new_num(vm, str[i], tok);
-            break;
-        }
-        default:
-            unreachable();
+    case 1: {
+        char *str = tok->str;
+        for (int i = 0; i < len; i++)
+            init->children[i]->expr = new_num(vm, str[i], tok);
+        break;
+    }
+    case 2: {
+        uint16_t *str = (uint16_t *)tok->str;
+        for (int i = 0; i < len; i++)
+            init->children[i]->expr = new_num(vm, str[i], tok);
+        break;
+    }
+    case 4: {
+        uint32_t *str = (uint32_t *)tok->str;
+        for (int i = 0; i < len; i++)
+            init->children[i]->expr = new_num(vm, str[i], tok);
+        break;
+    }
+    default:
+        unreachable();
     }
 
     *rest = tok->next;
@@ -1263,7 +1329,8 @@ static void string_initializer(JCC *vm, Token **rest, Token *tok, Initializer *i
 //   struct { int a, b, c; } x = { .c=5 };
 //
 // The above initializer sets x.c to 5.
-static void array_designator(JCC *vm, Token **rest, Token *tok, Type *ty, int *begin, int *end) {
+static void array_designator(JCC *vm, Token **rest, Token *tok, Type *ty,
+                             int *begin, int *end) {
     *begin = const_expr(vm, &tok, tok->next);
     if (*begin >= ty->array_len)
         error_tok(vm, tok, "array designator index exceeds array bounds");
@@ -1273,7 +1340,8 @@ static void array_designator(JCC *vm, Token **rest, Token *tok, Type *ty, int *b
         if (*end >= ty->array_len)
             error_tok(vm, tok, "array designator index exceeds array bounds");
         if (*end < *begin)
-            error_tok(vm, tok, "array designator range [%d, %d] is empty", *begin, *end);
+            error_tok(vm, tok, "array designator range [%d, %d] is empty",
+                      *begin, *end);
     } else {
         *end = *begin;
     }
@@ -1299,7 +1367,8 @@ static Member *struct_designator(JCC *vm, Token **rest, Token *tok, Type *ty) {
         }
 
         // Regular struct member
-        if (mem->name->len == tok->len && !strncmp(mem->name->loc, tok->loc, tok->len)) {
+        if (mem->name->len == tok->len &&
+            !strncmp(mem->name->loc, tok->loc, tok->len)) {
             *rest = tok->next;
             return mem;
         }
@@ -1330,9 +1399,9 @@ static void designation(JCC *vm, Token **rest, Token *tok, Initializer *init) {
         designation(vm, &tok, tok, init->children[mem->idx]);
         init->expr = NULL;
 
-        // Only continue with struct_initializer2 if we're not immediately followed
-        // by another designator (which might re-designate the same nested struct)
-        // This allows {.tl.x = 10, .tl.y = 20} to work correctly
+        // Only continue with struct_initializer2 if we're not immediately
+        // followed by another designator (which might re-designate the same
+        // nested struct) This allows {.tl.x = 10, .tl.y = 20} to work correctly
         if (!equal(tok, ",") || !equal(tok->next, ".")) {
             struct_initializer2(vm, rest, tok, init, mem->next);
         } else {
@@ -1387,21 +1456,25 @@ static int count_array_init_elements(JCC *vm, Token *tok, Type *ty) {
 }
 
 // array-initializer1 = "{" initializer ("," initializer)* ","? "}"
-static void array_initializer1(JCC *vm, Token **rest, Token *tok, Initializer *init) {
+static void array_initializer1(JCC *vm, Token **rest, Token *tok,
+                               Initializer *init) {
     tok = skip(vm, tok, "{");
 
     if (init->is_flexible) {
         int len = count_array_init_elements(vm, tok, init->ty);
-        // For VLA, keep the VLA type but allocate children for initializer elements
+        // For VLA, keep the VLA type but allocate children for initializer
+        // elements
         if (init->ty->kind == TY_VLA) {
             init->is_flexible = false;
-            init->children = arena_alloc(&vm->compiler.parser_arena, len * sizeof(Initializer *));
+            init->children = arena_alloc(&vm->compiler.parser_arena,
+                                         len * sizeof(Initializer *));
             memset(init->children, 0, len * sizeof(Initializer *));
             for (int i = 0; i < len; i++)
                 init->children[i] = new_initializer(vm, init->ty->base, false);
         } else {
             // For flexible arrays, create a fixed-size array type
-            *init = *new_initializer(vm, array_of(vm, init->ty->base, len), false);
+            *init =
+                *new_initializer(vm, array_of(vm, init->ty->base, len), false);
         }
     }
 
@@ -1424,7 +1497,8 @@ static void array_initializer1(JCC *vm, Token **rest, Token *tok, Initializer *i
             continue;
         }
 
-        // For VLA, check if children[i] exists; for regular arrays, check array_len
+        // For VLA, check if children[i] exists; for regular arrays, check
+        // array_len
         if (init->ty->kind == TY_VLA) {
             if (init->children && init->children[i])
                 initializer2(vm, &tok, tok, init->children[i]);
@@ -1440,19 +1514,23 @@ static void array_initializer1(JCC *vm, Token **rest, Token *tok, Initializer *i
 }
 
 // array-initializer2 = initializer ("," initializer)*
-static void array_initializer2(JCC *vm, Token **rest, Token *tok, Initializer *init, int i) {
+static void array_initializer2(JCC *vm, Token **rest, Token *tok,
+                               Initializer *init, int i) {
     if (init->is_flexible) {
         int len = count_array_init_elements(vm, tok, init->ty);
-        // For VLA, keep the VLA type but allocate children for initializer elements
+        // For VLA, keep the VLA type but allocate children for initializer
+        // elements
         if (init->ty->kind == TY_VLA) {
             init->is_flexible = false;
-            init->children = arena_alloc(&vm->compiler.parser_arena, len * sizeof(Initializer *));
+            init->children = arena_alloc(&vm->compiler.parser_arena,
+                                         len * sizeof(Initializer *));
             memset(init->children, 0, len * sizeof(Initializer *));
             for (int j = 0; j < len; j++)
                 init->children[j] = new_initializer(vm, init->ty->base, false);
         } else {
             // For flexible arrays, create a fixed-size array type
-            *init = *new_initializer(vm, array_of(vm, init->ty->base, len), false);
+            *init =
+                *new_initializer(vm, array_of(vm, init->ty->base, len), false);
         }
     }
 
@@ -1474,7 +1552,8 @@ static void array_initializer2(JCC *vm, Token **rest, Token *tok, Initializer *i
 }
 
 // struct-initializer1 = "{" initializer ("," initializer)* ","? "}"
-static void struct_initializer1(JCC *vm, Token **rest, Token *tok, Initializer *init) {
+static void struct_initializer1(JCC *vm, Token **rest, Token *tok,
+                                Initializer *init) {
     tok = skip(vm, tok, "{");
 
     Member *mem = init->ty->members;
@@ -1502,7 +1581,8 @@ static void struct_initializer1(JCC *vm, Token **rest, Token *tok, Initializer *
 }
 
 // struct-initializer2 = initializer ("," initializer)*
-static void struct_initializer2(JCC *vm, Token **rest, Token *tok, Initializer *init, Member *mem) {
+static void struct_initializer2(JCC *vm, Token **rest, Token *tok,
+                                Initializer *init, Member *mem) {
     bool first = true;
 
     for (; mem && !is_end(tok); mem = mem->next) {
@@ -1522,7 +1602,8 @@ static void struct_initializer2(JCC *vm, Token **rest, Token *tok, Initializer *
     *rest = tok;
 }
 
-static void union_initializer(JCC *vm, Token **rest, Token *tok, Initializer *init) {
+static void union_initializer(JCC *vm, Token **rest, Token *tok,
+                              Initializer *init) {
     // Unlike structs, union initializers take only one initializer,
     // and that initializes the first union member by default.
     // You can initialize other member using a designated initializer.
@@ -1598,8 +1679,8 @@ static void initializer2(JCC *vm, Token **rest, Token *tok, Initializer *init) {
         }
 
         // A union can be initialized with another union. E.g.
-        // `union T x = y;` where y is a variable or expression of type `union T`.
-        // Handle that case first.
+        // `union T x = y;` where y is a variable or expression of type `union
+        // T`. Handle that case first.
         Node *expr = assign(vm, rest, tok);
         add_type(vm, expr);
         if (expr->ty->kind == TY_UNION) {
@@ -1639,7 +1720,8 @@ static Type *copy_struct_type(JCC *vm, Type *ty) {
     return ty;
 }
 
-static Initializer *initializer(JCC *vm, Token **rest, Token *tok, Type *ty, Type **new_ty) {
+static Initializer *initializer(JCC *vm, Token **rest, Token *tok, Type *ty,
+                                Type **new_ty) {
     Initializer *init = new_initializer(vm, ty, true);
     initializer2(vm, rest, tok, init);
 
@@ -1665,7 +1747,8 @@ static Node *init_desg_expr(JCC *vm, InitDesg *desg, Token *tok) {
         return new_var_node(vm, desg->var, tok);
 
     if (desg->member) {
-        Node *node = new_unary(vm, ND_MEMBER, init_desg_expr(vm, desg->next, tok), tok);
+        Node *node =
+            new_unary(vm, ND_MEMBER, init_desg_expr(vm, desg->next, tok), tok);
         node->member = desg->member;
         return node;
     }
@@ -1675,12 +1758,14 @@ static Node *init_desg_expr(JCC *vm, InitDesg *desg, Token *tok) {
     return new_unary(vm, ND_DEREF, new_add(vm, lhs, rhs, tok), tok);
 }
 
-static Node *create_lvar_init(JCC *vm, Initializer *init, Type *ty, InitDesg *desg, Token *tok) {
+static Node *create_lvar_init(JCC *vm, Initializer *init, Type *ty,
+                              InitDesg *desg, Token *tok) {
     if (ty->kind == TY_ARRAY) {
         Node *node = new_node(vm, ND_NULL_EXPR, tok);
         for (int i = 0; i < ty->array_len; i++) {
             InitDesg desg2 = {desg, i};
-            Node *rhs = create_lvar_init(vm, init->children[i], ty->base, &desg2, tok);
+            Node *rhs =
+                create_lvar_init(vm, init->children[i], ty->base, &desg2, tok);
             node = new_binary(vm, ND_COMMA, node, rhs, tok);
         }
         return node;
@@ -1691,7 +1776,8 @@ static Node *create_lvar_init(JCC *vm, Initializer *init, Type *ty, InitDesg *de
 
         for (Member *mem = ty->members; mem; mem = mem->next) {
             InitDesg desg2 = {desg, 0, mem};
-            Node *rhs = create_lvar_init(vm, init->children[mem->idx], mem->ty, &desg2, tok);
+            Node *rhs = create_lvar_init(vm, init->children[mem->idx], mem->ty,
+                                         &desg2, tok);
             node = new_binary(vm, ND_COMMA, node, rhs, tok);
         }
         return node;
@@ -1700,7 +1786,8 @@ static Node *create_lvar_init(JCC *vm, Initializer *init, Type *ty, InitDesg *de
     if (ty->kind == TY_UNION && !init->expr) {
         Member *mem = init->mem ? init->mem : ty->members;
         InitDesg desg2 = {desg, 0, mem};
-        return create_lvar_init(vm, init->children[mem->idx], mem->ty, &desg2, tok);
+        return create_lvar_init(vm, init->children[mem->idx], mem->ty, &desg2,
+                                tok);
     }
 
     if (!init->expr)
@@ -1711,9 +1798,11 @@ static Node *create_lvar_init(JCC *vm, Initializer *init, Type *ty, InitDesg *de
 }
 
 // Generate initialization for VLA
-// Unlike create_lvar_init which uses ty->array_len, VLAs have runtime-determined size
-// We generate assignments based on the number of initializer elements (known at parse time)
-static Node *create_vla_init(JCC *vm, Initializer *init, Type *ty, Obj *var, Token *tok) {
+// Unlike create_lvar_init which uses ty->array_len, VLAs have
+// runtime-determined size We generate assignments based on the number of
+// initializer elements (known at parse time)
+static Node *create_vla_init(JCC *vm, Initializer *init, Type *ty, Obj *var,
+                             Token *tok) {
     if (!init || ty->kind != TY_VLA)
         return NULL;
 
@@ -1736,7 +1825,8 @@ static Node *create_vla_init(JCC *vm, Initializer *init, Type *ty, Obj *var, Tok
     for (int i = 0; i < init_count; i++) {
         InitDesg desg2 = {&desg, i, NULL, NULL};
         if (init->children[i]) {
-            Node *rhs = create_lvar_init(vm, init->children[i], ty->base, &desg2, tok);
+            Node *rhs =
+                create_lvar_init(vm, init->children[i], ty->base, &desg2, tok);
             node = new_binary(vm, ND_COMMA, node, rhs, tok);
         }
     }
@@ -1795,12 +1885,13 @@ static void write_buf(char *buf, uint64_t val, int sz) {
         unreachable();
 }
 
-static Relocation *
-write_gvar_data(JCC *vm, Relocation *cur, Initializer *init, Type *ty, char *buf, int offset) {
+static Relocation *write_gvar_data(JCC *vm, Relocation *cur, Initializer *init,
+                                   Type *ty, char *buf, int offset) {
     if (ty->kind == TY_ARRAY) {
         int sz = ty->base->size;
         for (int i = 0; i < ty->array_len; i++)
-            cur = write_gvar_data(vm, cur, init->children[i], ty->base, buf, offset + sz * i);
+            cur = write_gvar_data(vm, cur, init->children[i], ty->base, buf,
+                                  offset + sz * i);
         return cur;
     }
 
@@ -1815,11 +1906,12 @@ write_gvar_data(JCC *vm, Relocation *cur, Initializer *init, Type *ty, char *buf
                 uint64_t oldval = read_buf(loc, mem->ty->size);
                 uint64_t newval = eval(vm, expr);
                 uint64_t mask = (1L << mem->bit_width) - 1;
-                uint64_t combined = oldval | ((newval & mask) << mem->bit_offset);
+                uint64_t combined =
+                    oldval | ((newval & mask) << mem->bit_offset);
                 write_buf(loc, combined, mem->ty->size);
             } else {
-                cur = write_gvar_data(vm, cur, init->children[mem->idx], mem->ty, buf,
-                                      offset + mem->offset);
+                cur = write_gvar_data(vm, cur, init->children[mem->idx],
+                                      mem->ty, buf, offset + mem->offset);
             }
         }
         return cur;
@@ -1853,7 +1945,8 @@ write_gvar_data(JCC *vm, Relocation *cur, Initializer *init, Type *ty, char *buf
         return cur;
     }
 
-    Relocation *rel = arena_alloc(&vm->compiler.parser_arena, sizeof(Relocation));
+    Relocation *rel =
+        arena_alloc(&vm->compiler.parser_arena, sizeof(Relocation));
     memset(rel, 0, sizeof(Relocation));
     rel->offset = offset;
     rel->label = label;
@@ -1869,7 +1962,8 @@ write_gvar_data(JCC *vm, Relocation *cur, Initializer *init, Type *ty, char *buf
 static void gvar_initializer(JCC *vm, Token **rest, Token *tok, Obj *var) {
     Initializer *init = initializer(vm, rest, tok, var->ty, &var->ty);
 
-    // For constexpr variables, save the initializer expression for compile-time evaluation
+    // For constexpr variables, save the initializer expression for compile-time
+    // evaluation
     if (var->is_constexpr && init && init->expr) {
         var->init_expr = init->expr;
     }
@@ -1888,11 +1982,15 @@ static bool is_typename(JCC *vm, Token *tok) {
 
     if (map.capacity == 0) {
         static char *kw[] = {
-            "void", "_Bool", "char", "short", "int", "long", "struct", "union",
-            "typedef", "enum", "static", "extern", "_Alignas", "signed", "unsigned",
-            "const", "volatile", "auto", "register", "restrict", "__restrict",
-            "__restrict__", "_Noreturn", "float", "double", "typeof", "typeof_unqual",
-            "inline", "_Thread_local", "__thread", "_Atomic", "constexpr", "__block",
+            "void",          "_Bool",        "char",          "short",
+            "int",           "long",         "struct",        "union",
+            "typedef",       "enum",         "static",        "extern",
+            "_Alignas",      "signed",       "unsigned",      "const",
+            "volatile",      "auto",         "register",      "restrict",
+            "__restrict",    "__restrict__", "_Noreturn",     "float",
+            "double",        "typeof",       "typeof_unqual", "inline",
+            "_Thread_local", "__thread",     "_Atomic",       "constexpr",
+            "__block",
         };
 
         for (int i = 0; i < sizeof(kw) / sizeof(*kw); i++)
@@ -2223,8 +2321,9 @@ static Node *compound_stmt(JCC *vm, Token **rest, Token *tok) {
 
             cur = cur->next = declaration(vm, &tok, tok, basety, &attr);
         } else {
-            // Clear initializing_var when we start parsing statements (non-declarations)
-            // This ensures const variables can be initialized but not assigned later
+            // Clear initializing_var when we start parsing statements
+            // (non-declarations) This ensures const variables can be
+            // initialized but not assigned later
             vm->compiler.initializing_var = NULL;
             cur = cur->next = stmt(vm, &tok, tok);
         }
@@ -2265,9 +2364,7 @@ static Node *expr(JCC *vm, Token **rest, Token *tok) {
     return node;
 }
 
-static int64_t eval(JCC *vm, Node *node) {
-    return eval2(vm, node, NULL);
-}
+static int64_t eval(JCC *vm, Node *node) { return eval2(vm, node, NULL); }
 
 // Evaluate a given node as a constant expression.
 //
@@ -2282,109 +2379,113 @@ static int64_t eval2(JCC *vm, Node *node, char ***label) {
         return eval_double(vm, node);
 
     switch (node->kind) {
-        case ND_ADD:
-            return eval2(vm, node->lhs, label) + eval(vm, node->rhs);
-        case ND_SUB:
-            return eval2(vm, node->lhs, label) - eval(vm, node->rhs);
-        case ND_MUL:
-            return eval(vm, node->lhs) * eval(vm, node->rhs);
-        case ND_DIV:
-            if (node->ty->is_unsigned)
-                return (uint64_t)eval(vm, node->lhs) / eval(vm, node->rhs);
-            return eval(vm, node->lhs) / eval(vm, node->rhs);
-        case ND_NEG:
-            return -eval(vm, node->lhs);
-        case ND_MOD:
-            if (node->ty->is_unsigned)
-                return (uint64_t)eval(vm, node->lhs) % eval(vm, node->rhs);
-            return eval(vm, node->lhs) % eval(vm, node->rhs);
-        case ND_BITAND:
-            return eval(vm, node->lhs) & eval(vm, node->rhs);
-        case ND_BITOR:
-            return eval(vm, node->lhs) | eval(vm, node->rhs);
-        case ND_BITXOR:
-            return eval(vm, node->lhs) ^ eval(vm, node->rhs);
-        case ND_SHL:
-            return eval(vm, node->lhs) << eval(vm, node->rhs);
-        case ND_SHR:
-            if (node->ty->is_unsigned && node->ty->size == 8)
-                return (uint64_t)eval(vm, node->lhs) >> eval(vm, node->rhs);
-            return eval(vm, node->lhs) >> eval(vm, node->rhs);
-        case ND_EQ:
-            return eval(vm, node->lhs) == eval(vm, node->rhs);
-        case ND_NE:
-            return eval(vm, node->lhs) != eval(vm, node->rhs);
-        case ND_LT:
-            if (node->lhs->ty->is_unsigned)
-                return (uint64_t)eval(vm, node->lhs) < eval(vm, node->rhs);
-            return eval(vm, node->lhs) < eval(vm, node->rhs);
-        case ND_LE:
-            if (node->lhs->ty->is_unsigned)
-                return (uint64_t)eval(vm, node->lhs) <= eval(vm, node->rhs);
-            return eval(vm, node->lhs) <= eval(vm, node->rhs);
-        case ND_COND:
-            return eval(vm, node->cond) ? eval2(vm, node->then, label) : eval2(vm, node->els, label);
-        case ND_COMMA:
-            return eval2(vm, node->rhs, label);
-        case ND_NOT:
-            return !eval(vm, node->lhs);
-        case ND_BITNOT:
-            return ~eval(vm, node->lhs);
-        case ND_LOGAND:
-            return eval(vm, node->lhs) && eval(vm, node->rhs);
-        case ND_LOGOR:
-            return eval(vm, node->lhs) || eval(vm, node->rhs);
-        case ND_CAST: {
-            int64_t val = eval2(vm, node->lhs, label);
-            if (is_integer(node->ty)) {
-                switch (node->ty->size) {
-                    case 1: return node->ty->is_unsigned ? (uint8_t)val : (int8_t)val;
-                    case 2: return node->ty->is_unsigned ? (uint16_t)val : (int16_t)val;
-                    case 4: return node->ty->is_unsigned ? (uint32_t)val : (int32_t)val;
-                }
+    case ND_ADD:
+        return eval2(vm, node->lhs, label) + eval(vm, node->rhs);
+    case ND_SUB:
+        return eval2(vm, node->lhs, label) - eval(vm, node->rhs);
+    case ND_MUL:
+        return eval(vm, node->lhs) * eval(vm, node->rhs);
+    case ND_DIV:
+        if (node->ty->is_unsigned)
+            return (uint64_t)eval(vm, node->lhs) / eval(vm, node->rhs);
+        return eval(vm, node->lhs) / eval(vm, node->rhs);
+    case ND_NEG:
+        return -eval(vm, node->lhs);
+    case ND_MOD:
+        if (node->ty->is_unsigned)
+            return (uint64_t)eval(vm, node->lhs) % eval(vm, node->rhs);
+        return eval(vm, node->lhs) % eval(vm, node->rhs);
+    case ND_BITAND:
+        return eval(vm, node->lhs) & eval(vm, node->rhs);
+    case ND_BITOR:
+        return eval(vm, node->lhs) | eval(vm, node->rhs);
+    case ND_BITXOR:
+        return eval(vm, node->lhs) ^ eval(vm, node->rhs);
+    case ND_SHL:
+        return eval(vm, node->lhs) << eval(vm, node->rhs);
+    case ND_SHR:
+        if (node->ty->is_unsigned && node->ty->size == 8)
+            return (uint64_t)eval(vm, node->lhs) >> eval(vm, node->rhs);
+        return eval(vm, node->lhs) >> eval(vm, node->rhs);
+    case ND_EQ:
+        return eval(vm, node->lhs) == eval(vm, node->rhs);
+    case ND_NE:
+        return eval(vm, node->lhs) != eval(vm, node->rhs);
+    case ND_LT:
+        if (node->lhs->ty->is_unsigned)
+            return (uint64_t)eval(vm, node->lhs) < eval(vm, node->rhs);
+        return eval(vm, node->lhs) < eval(vm, node->rhs);
+    case ND_LE:
+        if (node->lhs->ty->is_unsigned)
+            return (uint64_t)eval(vm, node->lhs) <= eval(vm, node->rhs);
+        return eval(vm, node->lhs) <= eval(vm, node->rhs);
+    case ND_COND:
+        return eval(vm, node->cond) ? eval2(vm, node->then, label)
+                                    : eval2(vm, node->els, label);
+    case ND_COMMA:
+        return eval2(vm, node->rhs, label);
+    case ND_NOT:
+        return !eval(vm, node->lhs);
+    case ND_BITNOT:
+        return ~eval(vm, node->lhs);
+    case ND_LOGAND:
+        return eval(vm, node->lhs) && eval(vm, node->rhs);
+    case ND_LOGOR:
+        return eval(vm, node->lhs) || eval(vm, node->rhs);
+    case ND_CAST: {
+        int64_t val = eval2(vm, node->lhs, label);
+        if (is_integer(node->ty)) {
+            switch (node->ty->size) {
+            case 1:
+                return node->ty->is_unsigned ? (uint8_t)val : (int8_t)val;
+            case 2:
+                return node->ty->is_unsigned ? (uint16_t)val : (int16_t)val;
+            case 4:
+                return node->ty->is_unsigned ? (uint32_t)val : (int32_t)val;
             }
-            return val;
         }
-        case ND_ADDR:
-            return eval_rval(vm, node->lhs, label);
-        case ND_LABEL_VAL:
-            *label = &node->unique_label;
-            return 0;
-        case ND_MEMBER:
-            if (!label)
-                error_tok(vm, node->tok, "not a compile-time constant");
-            if (node->ty->kind != TY_ARRAY)
-                error_tok(vm, node->tok, "invalid initializer");
-            return eval_rval(vm, node->lhs, label) + node->member->offset;
-        case ND_VAR:
-            if (!label)
-                error_tok(vm, node->tok, "not a compile-time constant");
-            if (node->var->ty->kind != TY_ARRAY && node->var->ty->kind != TY_FUNC)
-                error_tok(vm, node->tok, "invalid initializer");
-            *label = &node->var->name;
-            return 0;
-        case ND_NUM:
-            return node->val;
-        default:
+        return val;
+    }
+    case ND_ADDR:
+        return eval_rval(vm, node->lhs, label);
+    case ND_LABEL_VAL:
+        *label = &node->unique_label;
+        return 0;
+    case ND_MEMBER:
+        if (!label)
             error_tok(vm, node->tok, "not a compile-time constant");
-            return 0;
+        if (node->ty->kind != TY_ARRAY)
+            error_tok(vm, node->tok, "invalid initializer");
+        return eval_rval(vm, node->lhs, label) + node->member->offset;
+    case ND_VAR:
+        if (!label)
+            error_tok(vm, node->tok, "not a compile-time constant");
+        if (node->var->ty->kind != TY_ARRAY && node->var->ty->kind != TY_FUNC)
+            error_tok(vm, node->tok, "invalid initializer");
+        *label = &node->var->name;
+        return 0;
+    case ND_NUM:
+        return node->val;
+    default:
+        error_tok(vm, node->tok, "not a compile-time constant");
+        return 0;
     }
 }
 
 static int64_t eval_rval(JCC *vm, Node *node, char ***label) {
     switch (node->kind) {
-        case ND_VAR:
-            if (node->var->is_local)
-                error_tok(vm, node->tok, "not a compile-time constant");
-            *label = &node->var->name;
-            return 0;
-        case ND_DEREF:
-            return eval2(vm, node->lhs, label);
-        case ND_MEMBER:
-            return eval_rval(vm, node->lhs, label) + node->member->offset;
-        default:
-            error_tok(vm, node->tok, "invalid initializer");
-            return 0;
+    case ND_VAR:
+        if (node->var->is_local)
+            error_tok(vm, node->tok, "not a compile-time constant");
+        *label = &node->var->name;
+        return 0;
+    case ND_DEREF:
+        return eval2(vm, node->lhs, label);
+    case ND_MEMBER:
+        return eval_rval(vm, node->lhs, label) + node->member->offset;
+    default:
+        error_tok(vm, node->tok, "invalid initializer");
+        return 0;
     }
 }
 
@@ -2392,37 +2493,37 @@ static bool is_const_expr(JCC *vm, Node *node) {
     add_type(vm, node);
 
     switch (node->kind) {
-        case ND_ADD:
-        case ND_SUB:
-        case ND_MUL:
-        case ND_DIV:
-        case ND_BITAND:
-        case ND_BITOR:
-        case ND_BITXOR:
-        case ND_SHL:
-        case ND_SHR:
-        case ND_EQ:
-        case ND_NE:
-        case ND_LT:
-        case ND_LE:
-        case ND_LOGAND:
-        case ND_LOGOR:
-            return is_const_expr(vm, node->lhs) && is_const_expr(vm, node->rhs);
-        case ND_COND:
-            if (!is_const_expr(vm, node->cond))
-                return false;
-            return is_const_expr(vm, eval(vm, node->cond) ? node->then : node->els);
-        case ND_COMMA:
-            return is_const_expr(vm, node->rhs);
-        case ND_NEG:
-        case ND_NOT:
-        case ND_BITNOT:
-        case ND_CAST:
-            return is_const_expr(vm, node->lhs);
-        case ND_NUM:
-            return true;
-        default:
+    case ND_ADD:
+    case ND_SUB:
+    case ND_MUL:
+    case ND_DIV:
+    case ND_BITAND:
+    case ND_BITOR:
+    case ND_BITXOR:
+    case ND_SHL:
+    case ND_SHR:
+    case ND_EQ:
+    case ND_NE:
+    case ND_LT:
+    case ND_LE:
+    case ND_LOGAND:
+    case ND_LOGOR:
+        return is_const_expr(vm, node->lhs) && is_const_expr(vm, node->rhs);
+    case ND_COND:
+        if (!is_const_expr(vm, node->cond))
             return false;
+        return is_const_expr(vm, eval(vm, node->cond) ? node->then : node->els);
+    case ND_COMMA:
+        return is_const_expr(vm, node->rhs);
+    case ND_NEG:
+    case ND_NOT:
+    case ND_BITNOT:
+    case ND_CAST:
+        return is_const_expr(vm, node->lhs);
+    case ND_NUM:
+        return true;
+    default:
+        return false;
     }
 }
 
@@ -2441,29 +2542,30 @@ static double eval_double(JCC *vm, Node *node) {
     }
 
     switch (node->kind) {
-        case ND_ADD:
-            return eval_double(vm, node->lhs) + eval_double(vm, node->rhs);
-        case ND_SUB:
-            return eval_double(vm, node->lhs) - eval_double(vm, node->rhs);
-        case ND_MUL:
-            return eval_double(vm, node->lhs) * eval_double(vm, node->rhs);
-        case ND_DIV:
-            return eval_double(vm, node->lhs) / eval_double(vm, node->rhs);
-        case ND_NEG:
-            return -eval_double(vm, node->lhs);
-        case ND_COND:
-            return eval_double(vm, node->cond) ? eval_double(vm, node->then) : eval_double(vm, node->els);
-        case ND_COMMA:
-            return eval_double(vm, node->rhs);
-        case ND_CAST:
-            if (is_flonum(node->lhs->ty))
-                return eval_double(vm, node->lhs);
-            return eval(vm, node->lhs);
-        case ND_NUM:
-            return node->fval;
-        default:
-            error_tok(vm, node->tok, "not a compile-time constant");
-            return 0;
+    case ND_ADD:
+        return eval_double(vm, node->lhs) + eval_double(vm, node->rhs);
+    case ND_SUB:
+        return eval_double(vm, node->lhs) - eval_double(vm, node->rhs);
+    case ND_MUL:
+        return eval_double(vm, node->lhs) * eval_double(vm, node->rhs);
+    case ND_DIV:
+        return eval_double(vm, node->lhs) / eval_double(vm, node->rhs);
+    case ND_NEG:
+        return -eval_double(vm, node->lhs);
+    case ND_COND:
+        return eval_double(vm, node->cond) ? eval_double(vm, node->then)
+                                           : eval_double(vm, node->els);
+    case ND_COMMA:
+        return eval_double(vm, node->rhs);
+    case ND_CAST:
+        if (is_flonum(node->lhs->ty))
+            return eval_double(vm, node->lhs);
+        return eval(vm, node->lhs);
+    case ND_NUM:
+        return node->fval;
+    default:
+        error_tok(vm, node->tok, "not a compile-time constant");
+        return 0;
     }
 }
 
@@ -2482,22 +2584,23 @@ static Node *to_assign(JCC *vm, Node *binary) {
     if (binary->lhs->kind == ND_MEMBER) {
         Obj *var = new_lvar(vm, "", 0, pointer_to(vm, binary->lhs->lhs->ty));
 
-        Node *expr1 = new_binary(vm, ND_ASSIGN, new_var_node(vm, var, tok),
-                                 new_unary(vm, ND_ADDR, binary->lhs->lhs, tok), tok);
+        Node *expr1 =
+            new_binary(vm, ND_ASSIGN, new_var_node(vm, var, tok),
+                       new_unary(vm, ND_ADDR, binary->lhs->lhs, tok), tok);
 
-        Node *expr2 = new_unary(vm, ND_MEMBER,
-                                new_unary(vm, ND_DEREF, new_var_node(vm, var, tok), tok),
-                                tok);
+        Node *expr2 = new_unary(
+            vm, ND_MEMBER,
+            new_unary(vm, ND_DEREF, new_var_node(vm, var, tok), tok), tok);
         expr2->member = binary->lhs->member;
 
-        Node *expr3 = new_unary(vm, ND_MEMBER,
-                                new_unary(vm, ND_DEREF, new_var_node(vm, var, tok), tok),
-                                tok);
+        Node *expr3 = new_unary(
+            vm, ND_MEMBER,
+            new_unary(vm, ND_DEREF, new_var_node(vm, var, tok), tok), tok);
         expr3->member = binary->lhs->member;
 
-        Node *expr4 = new_binary(vm, ND_ASSIGN, expr2,
-                                 new_binary(vm, binary->kind, expr3, binary->rhs, tok),
-                                 tok);
+        Node *expr4 = new_binary(
+            vm, ND_ASSIGN, expr2,
+            new_binary(vm, binary->kind, expr3, binary->rhs, tok), tok);
 
         return new_binary(vm, ND_COMMA, expr1, expr4, tok);
     }
@@ -2521,31 +2624,33 @@ static Node *to_assign(JCC *vm, Node *binary) {
         Obj *new = new_lvar(vm, "", 0, binary->lhs->ty);
 
         cur = cur->next =
-        new_unary(vm, ND_EXPR_STMT,
-                  new_binary(vm, ND_ASSIGN, new_var_node(vm, addr, tok),
-                             new_unary(vm, ND_ADDR, binary->lhs, tok), tok),
-                  tok);
+            new_unary(vm, ND_EXPR_STMT,
+                      new_binary(vm, ND_ASSIGN, new_var_node(vm, addr, tok),
+                                 new_unary(vm, ND_ADDR, binary->lhs, tok), tok),
+                      tok);
 
         cur = cur->next =
-        new_unary(vm, ND_EXPR_STMT,
-                  new_binary(vm, ND_ASSIGN, new_var_node(vm, val, tok), binary->rhs, tok),
-                  tok);
+            new_unary(vm, ND_EXPR_STMT,
+                      new_binary(vm, ND_ASSIGN, new_var_node(vm, val, tok),
+                                 binary->rhs, tok),
+                      tok);
 
-        cur = cur->next =
-        new_unary(vm, ND_EXPR_STMT,
-                  new_binary(vm, ND_ASSIGN, new_var_node(vm, old, tok),
-                             new_unary(vm, ND_DEREF, new_var_node(vm, addr, tok), tok), tok),
-                  tok);
+        cur = cur->next = new_unary(
+            vm, ND_EXPR_STMT,
+            new_binary(
+                vm, ND_ASSIGN, new_var_node(vm, old, tok),
+                new_unary(vm, ND_DEREF, new_var_node(vm, addr, tok), tok), tok),
+            tok);
 
         Node *loop = new_node(vm, ND_DO, tok);
         loop->brk_label = new_unique_name(vm);
         loop->cont_label = new_unique_name(vm);
 
-        Node *body = new_binary(vm, ND_ASSIGN,
-                                new_var_node(vm, new, tok),
-                                new_binary(vm, binary->kind, new_var_node(vm, old, tok),
-                                           new_var_node(vm, val, tok), tok),
-                                tok);
+        Node *body =
+            new_binary(vm, ND_ASSIGN, new_var_node(vm, new, tok),
+                       new_binary(vm, binary->kind, new_var_node(vm, old, tok),
+                                  new_var_node(vm, val, tok), tok),
+                       tok);
 
         loop->then = new_node(vm, ND_BLOCK, tok);
         loop->then->body = new_unary(vm, ND_EXPR_STMT, body, tok);
@@ -2557,7 +2662,8 @@ static Node *to_assign(JCC *vm, Node *binary) {
         loop->cond = new_unary(vm, ND_NOT, cas, tok);
 
         cur = cur->next = loop;
-        cur = cur->next = new_unary(vm, ND_EXPR_STMT, new_var_node(vm, new, tok), tok);
+        cur = cur->next =
+            new_unary(vm, ND_EXPR_STMT, new_var_node(vm, new, tok), tok);
 
         Node *node = new_node(vm, ND_STMT_EXPR, tok);
         node->body = head.next;
@@ -2570,14 +2676,12 @@ static Node *to_assign(JCC *vm, Node *binary) {
     Node *expr1 = new_binary(vm, ND_ASSIGN, new_var_node(vm, var, tok),
                              new_unary(vm, ND_ADDR, binary->lhs, tok), tok);
 
-    Node *expr2 =
-    new_binary(vm, ND_ASSIGN,
-               new_unary(vm, ND_DEREF, new_var_node(vm, var, tok), tok),
-               new_binary(vm, binary->kind,
-                          new_unary(vm, ND_DEREF, new_var_node(vm, var, tok), tok),
-                          binary->rhs,
-                          tok),
-               tok);
+    Node *expr2 = new_binary(
+        vm, ND_ASSIGN, new_unary(vm, ND_DEREF, new_var_node(vm, var, tok), tok),
+        new_binary(vm, binary->kind,
+                   new_unary(vm, ND_DEREF, new_var_node(vm, var, tok), tok),
+                   binary->rhs, tok),
+        tok);
 
     return new_binary(vm, ND_COMMA, expr1, expr2, tok);
 }
@@ -2589,37 +2693,48 @@ static Node *assign(JCC *vm, Token **rest, Token *tok) {
     Node *node = conditional(vm, &tok, tok);
 
     if (equal(tok, "="))
-        return new_binary(vm, ND_ASSIGN, node, assign(vm, rest, tok->next), tok);
+        return new_binary(vm, ND_ASSIGN, node, assign(vm, rest, tok->next),
+                          tok);
 
     if (equal(tok, "+="))
-        return to_assign(vm, new_add(vm, node, assign(vm, rest, tok->next), tok));
+        return to_assign(vm,
+                         new_add(vm, node, assign(vm, rest, tok->next), tok));
 
     if (equal(tok, "-="))
-        return to_assign(vm, new_sub(vm, node, assign(vm, rest, tok->next), tok));
+        return to_assign(vm,
+                         new_sub(vm, node, assign(vm, rest, tok->next), tok));
 
     if (equal(tok, "*="))
-        return to_assign(vm, new_binary(vm, ND_MUL, node, assign(vm, rest, tok->next), tok));
+        return to_assign(
+            vm, new_binary(vm, ND_MUL, node, assign(vm, rest, tok->next), tok));
 
     if (equal(tok, "/="))
-        return to_assign(vm, new_binary(vm, ND_DIV, node, assign(vm, rest, tok->next), tok));
+        return to_assign(
+            vm, new_binary(vm, ND_DIV, node, assign(vm, rest, tok->next), tok));
 
     if (equal(tok, "%="))
-        return to_assign(vm, new_binary(vm, ND_MOD, node, assign(vm, rest, tok->next), tok));
+        return to_assign(
+            vm, new_binary(vm, ND_MOD, node, assign(vm, rest, tok->next), tok));
 
     if (equal(tok, "&="))
-        return to_assign(vm, new_binary(vm, ND_BITAND, node, assign(vm, rest, tok->next), tok));
+        return to_assign(vm, new_binary(vm, ND_BITAND, node,
+                                        assign(vm, rest, tok->next), tok));
 
     if (equal(tok, "|="))
-        return to_assign(vm, new_binary(vm, ND_BITOR, node, assign(vm, rest, tok->next), tok));
+        return to_assign(vm, new_binary(vm, ND_BITOR, node,
+                                        assign(vm, rest, tok->next), tok));
 
     if (equal(tok, "^="))
-        return to_assign(vm, new_binary(vm, ND_BITXOR, node, assign(vm, rest, tok->next), tok));
+        return to_assign(vm, new_binary(vm, ND_BITXOR, node,
+                                        assign(vm, rest, tok->next), tok));
 
     if (equal(tok, "<<="))
-        return to_assign(vm, new_binary(vm, ND_SHL, node, assign(vm, rest, tok->next), tok));
+        return to_assign(
+            vm, new_binary(vm, ND_SHL, node, assign(vm, rest, tok->next), tok));
 
     if (equal(tok, ">>="))
-        return to_assign(vm, new_binary(vm, ND_SHR, node, assign(vm, rest, tok->next), tok));
+        return to_assign(
+            vm, new_binary(vm, ND_SHR, node, assign(vm, rest, tok->next), tok));
 
     *rest = tok;
     return node;
@@ -2638,7 +2753,8 @@ static Node *conditional(JCC *vm, Token **rest, Token *tok) {
         // [GNU] Compile `a ?: b` as `tmp = a, tmp ? tmp : b`.
         add_type(vm, cond);
         Obj *var = new_lvar(vm, "", 0, cond->ty);
-        Node *lhs = new_binary(vm, ND_ASSIGN, new_var_node(vm, var, tok), cond, tok);
+        Node *lhs =
+            new_binary(vm, ND_ASSIGN, new_var_node(vm, var, tok), cond, tok);
         Node *rhs = new_node(vm, ND_COND, tok);
         rhs->cond = new_var_node(vm, var, tok);
         rhs->then = new_var_node(vm, var, tok);
@@ -2652,7 +2768,8 @@ static Node *conditional(JCC *vm, Token **rest, Token *tok) {
 
     // Try to recover if ':' is missing
     if (!equal(tok, ":")) {
-        if (vm->collect_errors && error_tok_recover(vm, tok, "expected ':' in ternary operator")) {
+        if (vm->collect_errors &&
+            error_tok_recover(vm, tok, "expected ':' in ternary operator")) {
             // Use 'then' expression as 'else' placeholder
             node->els = node->then;
             *rest = tok;
@@ -2672,7 +2789,8 @@ static Node *logor(JCC *vm, Token **rest, Token *tok) {
     Node *node = logand(vm, &tok, tok);
     while (equal(tok, "||")) {
         Token *start = tok;
-        node = new_binary(vm, ND_LOGOR, node, logand(vm, &tok, tok->next), start);
+        node =
+            new_binary(vm, ND_LOGOR, node, logand(vm, &tok, tok->next), start);
     }
     *rest = tok;
     return node;
@@ -2683,7 +2801,8 @@ static Node *logand(JCC *vm, Token **rest, Token *tok) {
     Node *node = bitor(vm, &tok, tok);
     while (equal(tok, "&&")) {
         Token *start = tok;
-        node = new_binary(vm, ND_LOGAND, node, bitor(vm, &tok, tok->next), start);
+        node =
+            new_binary(vm, ND_LOGAND, node, bitor(vm, &tok, tok->next), start);
     }
     *rest = tok;
     return node;
@@ -2694,7 +2813,8 @@ static Node *bitor(JCC *vm, Token **rest, Token *tok) {
     Node *node = bitxor(vm, &tok, tok);
     while (equal(tok, "|")) {
         Token *start = tok;
-        node = new_binary(vm, ND_BITOR, node, bitxor(vm, &tok, tok->next), start);
+        node =
+            new_binary(vm, ND_BITOR, node, bitxor(vm, &tok, tok->next), start);
     }
     *rest = tok;
     return node;
@@ -2705,7 +2825,8 @@ static Node *bitxor(JCC *vm, Token **rest, Token *tok) {
     Node *node = bitand(vm, &tok, tok);
     while (equal(tok, "^")) {
         Token *start = tok;
-        node = new_binary(vm, ND_BITXOR, node, bitand(vm, &tok, tok->next), start);
+        node =
+            new_binary(vm, ND_BITXOR, node, bitand(vm, &tok, tok->next), start);
     }
     *rest = tok;
     return node;
@@ -2716,7 +2837,8 @@ static Node *bitand(JCC *vm, Token **rest, Token *tok) {
     Node *node = equality(vm, &tok, tok);
     while (equal(tok, "&")) {
         Token *start = tok;
-        node = new_binary(vm, ND_BITAND, node, equality(vm, &tok, tok->next), start);
+        node = new_binary(vm, ND_BITAND, node, equality(vm, &tok, tok->next),
+                          start);
     }
     *rest = tok;
     return node;
@@ -2730,12 +2852,14 @@ static Node *equality(JCC *vm, Token **rest, Token *tok) {
         Token *start = tok;
 
         if (equal(tok, "==")) {
-            node = new_binary(vm, ND_EQ, node, relational(vm, &tok, tok->next), start);
+            node = new_binary(vm, ND_EQ, node, relational(vm, &tok, tok->next),
+                              start);
             continue;
         }
 
         if (equal(tok, "!=")) {
-            node = new_binary(vm, ND_NE, node, relational(vm, &tok, tok->next), start);
+            node = new_binary(vm, ND_NE, node, relational(vm, &tok, tok->next),
+                              start);
             continue;
         }
 
@@ -2752,22 +2876,26 @@ static Node *relational(JCC *vm, Token **rest, Token *tok) {
         Token *start = tok;
 
         if (equal(tok, "<")) {
-            node = new_binary(vm, ND_LT, node, shift(vm, &tok, tok->next), start);
+            node =
+                new_binary(vm, ND_LT, node, shift(vm, &tok, tok->next), start);
             continue;
         }
 
         if (equal(tok, "<=")) {
-            node = new_binary(vm, ND_LE, node, shift(vm, &tok, tok->next), start);
+            node =
+                new_binary(vm, ND_LE, node, shift(vm, &tok, tok->next), start);
             continue;
         }
 
         if (equal(tok, ">")) {
-            node = new_binary(vm, ND_LT, shift(vm, &tok, tok->next), node, start);
+            node =
+                new_binary(vm, ND_LT, shift(vm, &tok, tok->next), node, start);
             continue;
         }
 
         if (equal(tok, ">=")) {
-            node = new_binary(vm, ND_LE, shift(vm, &tok, tok->next), node, start);
+            node =
+                new_binary(vm, ND_LE, shift(vm, &tok, tok->next), node, start);
             continue;
         }
 
@@ -2848,12 +2976,14 @@ static Node *new_add(JCC *vm, Node *lhs, Node *rhs, Token *tok) {
 
     // VLA + num
     if (lhs->ty->base->kind == TY_VLA) {
-        rhs = new_binary(vm, ND_MUL, rhs, new_var_node(vm, lhs->ty->base->vla_size, tok), tok);
+        rhs = new_binary(vm, ND_MUL, rhs,
+                         new_var_node(vm, lhs->ty->base->vla_size, tok), tok);
         return new_binary(vm, ND_ADD, lhs, rhs, tok);
     }
 
     // ptr + num
-    rhs = new_binary(vm, ND_MUL, rhs, new_long(vm, get_vm_size(lhs->ty->base), tok), tok);
+    rhs = new_binary(vm, ND_MUL, rhs,
+                     new_long(vm, get_vm_size(lhs->ty->base), tok), tok);
     return new_binary(vm, ND_ADD, lhs, rhs, tok);
 }
 
@@ -2875,7 +3005,8 @@ static Node *new_sub(JCC *vm, Node *lhs, Node *rhs, Token *tok) {
 
     // VLA + num
     if (lhs->ty->base->kind == TY_VLA) {
-        rhs = new_binary(vm, ND_MUL, rhs, new_var_node(vm, lhs->ty->base->vla_size, tok), tok);
+        rhs = new_binary(vm, ND_MUL, rhs,
+                         new_var_node(vm, lhs->ty->base->vla_size, tok), tok);
         add_type(vm, rhs);
         Node *node = new_binary(vm, ND_SUB, lhs, rhs, tok);
         node->ty = lhs->ty;
@@ -2884,7 +3015,8 @@ static Node *new_sub(JCC *vm, Node *lhs, Node *rhs, Token *tok) {
 
     // ptr - num
     if (lhs->ty->base && is_integer(rhs->ty)) {
-        rhs = new_binary(vm, ND_MUL, rhs, new_long(vm, get_vm_size(lhs->ty->base), tok), tok);
+        rhs = new_binary(vm, ND_MUL, rhs,
+                         new_long(vm, get_vm_size(lhs->ty->base), tok), tok);
         add_type(vm, rhs);
         Node *node = new_binary(vm, ND_SUB, lhs, rhs, tok);
         node->ty = lhs->ty;
@@ -2895,7 +3027,8 @@ static Node *new_sub(JCC *vm, Node *lhs, Node *rhs, Token *tok) {
     if (lhs->ty->base && rhs->ty->base) {
         Node *node = new_binary(vm, ND_SUB, lhs, rhs, tok);
         node->ty = ty_long;
-        return new_binary(vm, ND_DIV, node, new_num(vm, lhs->ty->base->size, tok), tok);
+        return new_binary(vm, ND_DIV, node,
+                          new_num(vm, lhs->ty->base->size, tok), tok);
     }
 
     error_tok(vm, tok, "invalid operands");
@@ -3001,13 +3134,17 @@ static Node *cast(JCC *vm, Token **rest, Token *tok) {
 
 // ========== Block Literal Support (Apple Blocks Extension) ==========
 
-// Recursively collect variables from outer scopes that are referenced in an expression
-static void collect_captures_in_node(JCC *vm, Node *node, Obj *outer_locals, 
-                                     Obj ***captures, int *num_captures, int *cap_capacity) {
-    if (!node) return;
-    
+// Recursively collect variables from outer scopes that are referenced in an
+// expression
+static void collect_captures_in_node(JCC *vm, Node *node, Obj *outer_locals,
+                                     Obj ***captures, int *num_captures,
+                                     int *cap_capacity) {
+    if (!node)
+        return;
+
     if (node->kind == ND_VAR && node->var && node->var->is_local) {
-        // Check if this variable belongs to an outer function (in outer_locals list)
+        // Check if this variable belongs to an outer function (in outer_locals
+        // list)
         bool is_outer = false;
         for (Obj *local = outer_locals; local; local = local->next) {
             if (local == node->var) {
@@ -3015,17 +3152,18 @@ static void collect_captures_in_node(JCC *vm, Node *node, Obj *outer_locals,
                 break;
             }
         }
-        
+
         if (is_outer) {
             // Check if already captured
             for (int i = 0; i < *num_captures; i++) {
-                if ((*captures)[i] == node->var) return;  // Already captured
+                if ((*captures)[i] == node->var)
+                    return; // Already captured
             }
-            
+
             // Add to captures list
             if (*num_captures >= *cap_capacity) {
                 *cap_capacity = (*cap_capacity == 0) ? 8 : *cap_capacity * 2;
-                Obj **new_caps = arena_alloc(&vm->compiler.parser_arena, 
+                Obj **new_caps = arena_alloc(&vm->compiler.parser_arena,
                                              sizeof(Obj *) * (*cap_capacity));
                 for (int i = 0; i < *num_captures; i++)
                     new_caps[i] = (*captures)[i];
@@ -3035,42 +3173,52 @@ static void collect_captures_in_node(JCC *vm, Node *node, Obj *outer_locals,
             node->var->is_captured = true;
         }
     }
-    
+
     // Recursively check all children
-    collect_captures_in_node(vm, node->lhs, outer_locals, captures, num_captures, cap_capacity);
-    collect_captures_in_node(vm, node->rhs, outer_locals, captures, num_captures, cap_capacity);
-    collect_captures_in_node(vm, node->cond, outer_locals, captures, num_captures, cap_capacity);
-    collect_captures_in_node(vm, node->then, outer_locals, captures, num_captures, cap_capacity);
-    collect_captures_in_node(vm, node->els, outer_locals, captures, num_captures, cap_capacity);
-    collect_captures_in_node(vm, node->init, outer_locals, captures, num_captures, cap_capacity);
-    collect_captures_in_node(vm, node->inc, outer_locals, captures, num_captures, cap_capacity);
-    
+    collect_captures_in_node(vm, node->lhs, outer_locals, captures,
+                             num_captures, cap_capacity);
+    collect_captures_in_node(vm, node->rhs, outer_locals, captures,
+                             num_captures, cap_capacity);
+    collect_captures_in_node(vm, node->cond, outer_locals, captures,
+                             num_captures, cap_capacity);
+    collect_captures_in_node(vm, node->then, outer_locals, captures,
+                             num_captures, cap_capacity);
+    collect_captures_in_node(vm, node->els, outer_locals, captures,
+                             num_captures, cap_capacity);
+    collect_captures_in_node(vm, node->init, outer_locals, captures,
+                             num_captures, cap_capacity);
+    collect_captures_in_node(vm, node->inc, outer_locals, captures,
+                             num_captures, cap_capacity);
+
     for (Node *n = node->body; n; n = n->next)
-        collect_captures_in_node(vm, n, outer_locals, captures, num_captures, cap_capacity);
+        collect_captures_in_node(vm, n, outer_locals, captures, num_captures,
+                                 cap_capacity);
     for (Node *n = node->args; n; n = n->next)
-        collect_captures_in_node(vm, n, outer_locals, captures, num_captures, cap_capacity);
+        collect_captures_in_node(vm, n, outer_locals, captures, num_captures,
+                                 cap_capacity);
 }
 
-// Parse a block literal: ^{ ... } or ^(params){ ... } or ^returntype(params){ ... }
+// Parse a block literal: ^{ ... } or ^(params){ ... } or ^returntype(params){
+// ... }
 static Node *block_literal(JCC *vm, Token **rest, Token *tok) {
     Token *start = tok;
-    tok = tok->next;  // Skip ^
-    
+    tok = tok->next; // Skip ^
+
     // Determine return type and parameters
     Type *return_ty = ty_void;
     Type *params = NULL;
     // bool has_params = false;
-    
+
     // Check for explicit return type (anything before '(' that's a type)
     if (!equal(tok, "{") && !equal(tok, "(") && is_typename(vm, tok)) {
         return_ty = typename(vm, &tok, tok);
     }
-    
+
     // Check for parameter list
     if (equal(tok, "(")) {
         tok = tok->next;
         // has_params = true;
-        
+
         if (!equal(tok, ")")) {
             // Parse parameters using declspec + declarator (like func_params)
             Type head = {};
@@ -3078,10 +3226,10 @@ static Node *block_literal(JCC *vm, Token **rest, Token *tok) {
             while (!equal(tok, ")")) {
                 if (cur != &head)
                     tok = skip(vm, tok, ",");
-                
+
                 Type *param_ty = declspec(vm, &tok, tok, NULL);
                 param_ty = declarator(vm, &tok, tok, param_ty);
-                
+
                 // Convert array and function parameters to pointers
                 if (param_ty->kind == TY_ARRAY) {
                     Token *name = param_ty->name;
@@ -3092,60 +3240,64 @@ static Node *block_literal(JCC *vm, Token **rest, Token *tok) {
                     param_ty = pointer_to(vm, param_ty);
                     param_ty->name = name;
                 }
-                
+
                 cur = cur->next = copy_type(vm, param_ty);
             }
             params = head.next;
         }
         tok = skip(vm, tok, ")");
     }
-    
+
     // Now we must have a compound statement
     if (!equal(tok, "{"))
         error_tok(vm, tok, "expected '{' in block literal");
-    
+
     // Save current function context
     Obj *outer_fn = vm->compiler.current_fn;
     Obj *saved_locals = vm->compiler.locals;
-    
+
     // Create a synthetic function for this block
     char *block_name = new_unique_name(vm);
     Type *block_func_ty = func_type(vm, return_ty);
     block_func_ty->params = params;
-    
+
     Obj *block_fn = new_gvar(vm, block_name, strlen(block_name), block_func_ty);
     block_fn->is_function = true;
     block_fn->is_definition = true;
     block_fn->is_static = true;
     block_fn->is_block = true;
     block_fn->parent_fn = outer_fn;
-    block_fn->is_nested = true;  // Treat blocks like nested functions for codegen
+    block_fn->is_nested =
+        true; // Treat blocks like nested functions for codegen
     block_fn->nesting_depth = outer_fn ? outer_fn->nesting_depth + 1 : 1;
-    
+
     // Set up block function context
     vm->compiler.current_fn = block_fn;
     vm->compiler.locals = NULL;
-    
+
     enter_scope(vm);
-    
+
     // Create params in correct order for calling convention:
     // A0 = __static_link (descriptor), A1 = first user param, A2 = second, etc.
     // Since new_lvar prepends, we need to add in REVERSE order:
-    // add last user param, then prev, ..., then first user param, then __static_link
-    
+    // add last user param, then prev, ..., then first user param, then
+    // __static_link
+
     // Count user params and store in array for reverse iteration
     int param_count = 0;
-    for (Type *p = params; p; p = p->next) param_count++;
-    
+    for (Type *p = params; p; p = p->next)
+        param_count++;
+
     Type **param_array = NULL;
     if (param_count > 0) {
-        param_array = arena_alloc(&vm->compiler.parser_arena, sizeof(Type*) * param_count);
+        param_array = arena_alloc(&vm->compiler.parser_arena,
+                                  sizeof(Type *) * param_count);
         int idx = 0;
         for (Type *p = params; p; p = p->next) {
             param_array[idx++] = p;
         }
     }
-    
+
     // Add user params in reverse order (last first)
     for (int i = param_count - 1; i >= 0; i--) {
         Type *p = param_array[i];
@@ -3153,52 +3305,55 @@ static Node *block_literal(JCC *vm, Token **rest, Token *tok) {
             new_lvar(vm, get_ident(vm, p->name), p->name->len, p);
         }
     }
-    
+
     // Add __static_link LAST so it ends up FIRST in the list (receives A0)
     new_lvar(vm, "__static_link", 13, pointer_to(vm, ty_void));
-    
+
     block_fn->params = vm->compiler.locals;
-    block_fn->alloca_bottom = new_lvar(vm, "__alloca_size__", 15, pointer_to(vm, ty_char));
-    
+    block_fn->alloca_bottom =
+        new_lvar(vm, "__alloca_size__", 15, pointer_to(vm, ty_char));
+
     // Now parse the block body - params are visible in scope
     tok = skip(vm, tok, "{");
     block_fn->body = compound_stmt(vm, &tok, tok);
     block_fn->locals = vm->compiler.locals;
-    
+
     leave_scope(vm);
-    
+
     // Collect captured variables from the parsed body
-    // Use saved_locals (the outer function's locals list at the time we started)
+    // Use saved_locals (the outer function's locals list at the time we
+    // started)
     Obj **captures = NULL;
     int num_captures = 0, cap_capacity = 0;
-    
+
     if (saved_locals) {
-        collect_captures_in_node(vm, block_fn->body, saved_locals, 
-                                 &captures, &num_captures, &cap_capacity);
+        collect_captures_in_node(vm, block_fn->body, saved_locals, &captures,
+                                 &num_captures, &cap_capacity);
     }
-    
+
     block_fn->captures = captures;
     block_fn->num_captures = num_captures;
-    
-    // Store capture offsets - each captured variable will be at a known offset in descriptor
-    // Descriptor layout: [0]=invoke_ptr, [8]=cap0, [16]=cap1, ...
+
+    // Store capture offsets - each captured variable will be at a known offset
+    // in descriptor Descriptor layout: [0]=invoke_ptr, [8]=cap0, [16]=cap1, ...
     for (int i = 0; i < num_captures; i++) {
-        captures[i]->block_capture_offset = (i + 1) * 8;  // offset in descriptor
+        captures[i]->block_capture_offset = (i + 1) * 8; // offset in descriptor
     }
-    
+
     // Restore outer function context
     vm->compiler.current_fn = outer_fn;
     vm->compiler.locals = saved_locals;
-    
+
     // Create the block literal node
     Node *node = new_node(vm, ND_BLOCK_LITERAL, start);
     node->block_fn = block_fn;
     node->block_captures = captures;
     node->num_block_captures = num_captures;
-    
-    // Block type: pointer to function type (blocks are first-class callable values)
+
+    // Block type: pointer to function type (blocks are first-class callable
+    // values)
     node->ty = block_type(vm, return_ty, params);
-    
+
     *rest = tok;
     return node;
 }
@@ -3210,11 +3365,12 @@ static Node *block_literal(JCC *vm, Token **rest, Token *tok) {
 //       | postfix
 static Node *unary(JCC *vm, Token **rest, Token *tok) {
     // Apple blocks: ^{ ... } or ^(params){ ... } or ^returntype(params){ ... }
-    if (equal(tok, "^") && tok->next && 
-        (equal(tok->next, "{") || equal(tok->next, "(") || is_typename(vm, tok->next))) {
+    if (equal(tok, "^") && tok->next &&
+        (equal(tok->next, "{") || equal(tok->next, "(") ||
+         is_typename(vm, tok->next))) {
         return block_literal(vm, rest, tok);
     }
-    
+
     if (equal(tok, "+"))
         return cast(vm, rest, tok->next);
 
@@ -3225,7 +3381,8 @@ static Node *unary(JCC *vm, Token **rest, Token *tok) {
         Node *lhs = cast(vm, rest, tok->next);
         add_type(vm, lhs);
         if (lhs->kind == ND_MEMBER && lhs->member->is_bitfield) {
-            if (vm->collect_errors && error_tok_recover(vm, tok, "cannot take address of bitfield")) {
+            if (vm->collect_errors &&
+                error_tok_recover(vm, tok, "cannot take address of bitfield")) {
                 // Return the member itself as an error placeholder
                 return lhs;
             }
@@ -3254,11 +3411,13 @@ static Node *unary(JCC *vm, Token **rest, Token *tok) {
 
     // Read ++i as i+=1
     if (equal(tok, "++"))
-        return to_assign(vm, new_add(vm, unary(vm, rest, tok->next), new_num(vm, 1, tok), tok));
+        return to_assign(vm, new_add(vm, unary(vm, rest, tok->next),
+                                     new_num(vm, 1, tok), tok));
 
     // Read --i as i-=1
     if (equal(tok, "--"))
-        return to_assign(vm, new_sub(vm, unary(vm, rest, tok->next), new_num(vm, 1, tok), tok));
+        return to_assign(vm, new_sub(vm, unary(vm, rest, tok->next),
+                                     new_num(vm, 1, tok), tok));
 
     // [GNU] labels-as-values
     if (equal(tok, "&&")) {
@@ -3287,7 +3446,8 @@ static void struct_members(JCC *vm, Token **rest, Token *tok, Type *ty) {
         // Anonymous struct member
         if ((basety->kind == TY_STRUCT || basety->kind == TY_UNION) &&
             consume(vm, &tok, tok, ";")) {
-            Member *mem = arena_alloc(&vm->compiler.parser_arena, sizeof(Member));
+            Member *mem =
+                arena_alloc(&vm->compiler.parser_arena, sizeof(Member));
             memset(mem, 0, sizeof(Member));
             mem->ty = basety;
             mem->idx = idx++;
@@ -3302,7 +3462,8 @@ static void struct_members(JCC *vm, Token **rest, Token *tok, Type *ty) {
                 tok = skip(vm, tok, ",");
             first = false;
 
-            Member *mem = arena_alloc(&vm->compiler.parser_arena, sizeof(Member));
+            Member *mem =
+                arena_alloc(&vm->compiler.parser_arena, sizeof(Member));
             memset(mem, 0, sizeof(Member));
             mem->ty = declarator(vm, &tok, tok, basety);
             mem->name = mem->ty->name;
@@ -3331,7 +3492,8 @@ static void struct_members(JCC *vm, Token **rest, Token *tok, Type *ty) {
 }
 
 // attribute = ("__attribute__" "(" "(" attribute-list ")" ")")*
-// All attributes are accepted but most are ignored (only packed/aligned are used)
+// All attributes are accepted but most are ignored (only packed/aligned are
+// used)
 static Token *attribute_list(JCC *vm, Token *tok, Type *ty) {
     while (consume(vm, &tok, tok, "__attribute__")) {
         tok = skip(vm, tok, "(");
@@ -3364,7 +3526,8 @@ static Token *attribute_list(JCC *vm, Token *tok, Type *ty) {
             }
 
             // Handle all other attributes - just consume and ignore them
-            // This includes: unused, noreturn, const, pure, nonnull, warn_unused_result, etc.
+            // This includes: unused, noreturn, const, pure, nonnull,
+            // warn_unused_result, etc.
             if (tok->kind == TK_IDENT) {
                 tok = tok->next;
 
@@ -3398,7 +3561,7 @@ static Token *attribute_list(JCC *vm, Token *tok, Type *ty) {
 // C23/C++11 style attributes - all are parsed and ignored
 static Token *c23_attribute_list(JCC *vm, Token *tok, Type *ty) {
     while (equal(tok, "[") && equal(tok->next, "[")) {
-        tok = tok->next->next;  // Skip [[
+        tok = tok->next->next; // Skip [[
 
         bool first = true;
 
@@ -3474,7 +3637,8 @@ static Type *struct_union_decl(JCC *vm, Token **rest, Token *tok) {
         // Otherwise, register the struct type.
         // Linear search in current scope only
         Type *ty2 = NULL;
-        for (TagScopeNode *node = vm->compiler.scope->tags; node; node = node->next) {
+        for (TagScopeNode *node = vm->compiler.scope->tags; node;
+             node = node->next) {
             if (node->name_len == tag->len &&
                 strncmp(node->name, tag->loc, tag->len) == 0) {
                 ty2 = node->ty;
@@ -3517,15 +3681,18 @@ static Type *struct_decl(JCC *vm, Token **rest, Token *tok) {
             mem->bit_offset = bits % (sz * 8);
             bits += mem->bit_width;
         } else {
-            // Flexible array members (array with size 0) should not add padding before them,
-            // but they DO affect struct alignment (for final size calculation)
-            bool is_flexible_array = (mem->ty->kind == TY_ARRAY && mem->ty->array_len == 0);
+            // Flexible array members (array with size 0) should not add padding
+            // before them, but they DO affect struct alignment (for final size
+            // calculation)
+            bool is_flexible_array =
+                (mem->ty->kind == TY_ARRAY && mem->ty->array_len == 0);
             if (!ty->is_packed && !is_flexible_array)
                 bits = align_to(bits, mem->align * 8);
             mem->offset = bits / 8;
             bits += mem->ty->size * 8;
 
-            // Update struct alignment (including for flexible arrays, for final size padding)
+            // Update struct alignment (including for flexible arrays, for final
+            // size padding)
             if (!ty->is_packed && ty->align < mem->align)
                 ty->align = mem->align;
         }
@@ -3599,8 +3766,8 @@ static Node *struct_ref(JCC *vm, Node *node, Token *tok) {
     }
 
     if (node->ty->kind != TY_STRUCT && node->ty->kind != TY_UNION) {
-        if (vm->collect_errors && error_tok_recover(vm, node->tok,
-                                                     "not a struct nor a union")) {
+        if (vm->collect_errors &&
+            error_tok_recover(vm, node->tok, "not a struct nor a union")) {
             Node *err_node = new_node(vm, ND_MEMBER, tok);
             err_node->ty = ty_error;
             return err_node;
@@ -3613,8 +3780,9 @@ static Node *struct_ref(JCC *vm, Node *node, Token *tok) {
     for (;;) {
         Member *mem = get_struct_member(ty, tok);
         if (!mem) {
-            if (vm->collect_errors && error_tok_recover(vm, tok, "no such member '%.*s'",
-                                                         tok->len, tok->loc)) {
+            if (vm->collect_errors &&
+                error_tok_recover(vm, tok, "no such member '%.*s'", tok->len,
+                                  tok->loc)) {
                 Node *err_node = new_node(vm, ND_MEMBER, tok);
                 err_node->ty = ty_error;
                 return err_node;
@@ -3633,9 +3801,12 @@ static Node *struct_ref(JCC *vm, Node *node, Token *tok) {
 // Convert A++ to `(typeof A)((A += 1) - 1)`
 static Node *new_inc_dec(JCC *vm, Node *node, Token *tok, int addend) {
     add_type(vm, node);
-    return new_cast(vm, new_add(vm, to_assign(vm, new_add(vm, node, new_num(vm, addend, tok), tok)),
-                                new_num(vm, -addend, tok), tok),
-                    node->ty);
+    return new_cast(
+        vm,
+        new_add(vm,
+                to_assign(vm, new_add(vm, node, new_num(vm, addend, tok), tok)),
+                new_num(vm, -addend, tok), tok),
+        node->ty);
 }
 
 // postfix = "(" type-name ")" "{" initializer-list "}"
@@ -3676,8 +3847,8 @@ static Node *postfix(JCC *vm, Token **rest, Token *tok) {
             if (node->ty && node->ty->kind == TY_BLOCK) {
                 // Block invocation: create ND_BLOCK_CALL
                 Token *start = tok;
-                tok = tok->next;  // Skip '('
-                
+                tok = tok->next; // Skip '('
+
                 // Parse arguments
                 Node head = {};
                 Node *cur = &head;
@@ -3687,8 +3858,8 @@ static Node *postfix(JCC *vm, Token **rest, Token *tok) {
                     Node *arg = assign(vm, &tok, tok);
                     cur = cur->next = arg;
                 }
-                tok = tok->next;  // Skip ')'
-                
+                tok = tok->next; // Skip ')'
+
                 Node *call = new_node(vm, ND_BLOCK_CALL, start);
                 call->lhs = node;
                 call->args = head.next;
@@ -3707,7 +3878,8 @@ static Node *postfix(JCC *vm, Token **rest, Token *tok) {
 
             // Try to recover if ']' is missing
             if (!equal(tok, "]")) {
-                if (vm->collect_errors && error_tok_recover(vm, tok, "expected ']'")) {
+                if (vm->collect_errors &&
+                    error_tok_recover(vm, tok, "expected ']'")) {
                     // Use index 0 as placeholder and continue
                     idx = new_num(vm, 0, tok);
                 } else {
@@ -3717,7 +3889,8 @@ static Node *postfix(JCC *vm, Token **rest, Token *tok) {
                 tok = tok->next;
             }
 
-            node = new_unary(vm, ND_DEREF, new_add(vm, node, idx, start), start);
+            node =
+                new_unary(vm, ND_DEREF, new_add(vm, node, idx, start), start);
             continue;
         }
 
@@ -3774,7 +3947,8 @@ static Node *funcall(JCC *vm, Token **rest, Token *tok, Node *fn) {
         add_type(vm, arg);
 
         if (!param_ty && !ty->is_variadic) {
-            if (vm->collect_errors && error_tok_recover(vm, tok, "too many arguments")) {
+            if (vm->collect_errors &&
+                error_tok_recover(vm, tok, "too many arguments")) {
                 // Continue parsing to find more errors, but don't add this arg
                 continue;
             }
@@ -3795,7 +3969,8 @@ static Node *funcall(JCC *vm, Token **rest, Token *tok, Node *fn) {
     }
 
     if (param_ty) {
-        if (vm->collect_errors && error_tok_recover(vm, tok, "too few arguments")) {
+        if (vm->collect_errors &&
+            error_tok_recover(vm, tok, "too few arguments")) {
             // Create placeholder arguments for missing parameters
             while (param_ty) {
                 Node *placeholder = new_node(vm, ND_NUM, tok);
@@ -3861,7 +4036,8 @@ static Node *generic_selection(JCC *vm, Token **rest, Token *tok) {
     }
 
     if (!ret)
-        error_tok(vm, start, "controlling expression type not compatible with"
+        error_tok(vm, start,
+                  "controlling expression type not compatible with"
                   " any generic association type");
     return ret;
 }
@@ -3895,7 +4071,8 @@ static Node *primary(JCC *vm, Token **rest, Token *tok) {
         return node;
     }
 
-    if (equal(tok, "sizeof") && equal(tok->next, "(") && is_typename(vm, tok->next->next)) {
+    if (equal(tok, "sizeof") && equal(tok->next, "(") &&
+        is_typename(vm, tok->next->next)) {
         Type *ty = typename(vm, &tok, tok->next->next);
         *rest = skip(vm, tok, ")");
 
@@ -3919,7 +4096,8 @@ static Node *primary(JCC *vm, Token **rest, Token *tok) {
         return new_ulong(vm, node->ty->size, tok);
     }
 
-    if (equal(tok, "_Alignof") && equal(tok->next, "(") && is_typename(vm, tok->next->next)) {
+    if (equal(tok, "_Alignof") && equal(tok->next, "(") &&
+        is_typename(vm, tok->next->next)) {
         Type *ty = typename(vm, &tok, tok->next->next);
         *rest = skip(vm, tok, ")");
         return new_ulong(vm, ty->align, tok);
@@ -3989,23 +4167,25 @@ static Node *primary(JCC *vm, Token **rest, Token *tok) {
         node->ty = pointer_to(vm, ty_void);
         return node;
     }
-    
+
     // Block_copy(block) - Apple Blocks extension
-    // In JCC's simplified model, blocks are already heap-allocated, so this just returns the block
+    // In JCC's simplified model, blocks are already heap-allocated, so this
+    // just returns the block
     if (equal(tok, "Block_copy")) {
         tok = skip(vm, tok->next, "(");
         Node *block_expr = assign(vm, &tok, tok);
         *rest = skip(vm, tok, ")");
-        // Simply return the block expression as-is (already has TY_BLOCK type or void*)
+        // Simply return the block expression as-is (already has TY_BLOCK type
+        // or void*)
         add_type(vm, block_expr);
         return block_expr;
     }
-    
-    // Block_release(block) - Apple Blocks extension  
+
+    // Block_release(block) - Apple Blocks extension
     // In JCC's simplified model, this is a no-op (VM teardown handles cleanup)
     if (equal(tok, "Block_release")) {
         tok = skip(vm, tok->next, "(");
-        Node *block_expr = assign(vm, &tok, tok);  // Evaluate but discard
+        Node *block_expr = assign(vm, &tok, tok); // Evaluate but discard
         *rest = skip(vm, tok, ")");
         // Return a null expression (void, no effect)
         add_type(vm, block_expr);
@@ -4034,12 +4214,46 @@ static Node *primary(JCC *vm, Token **rest, Token *tok) {
                 return new_num(vm, sc->enum_val, tok);
         }
 
+        // Check if this is a pragma macro call
+        if (equal(tok->next, "(")) {
+            PragmaMacro *pm = find_pragma_macro(vm, tok);
+            if (pm) {
+                // Create ND_MACRO_CALL node
+                Token *macro_tok = tok;
+                tok = tok->next->next; // Skip identifier and '('
+
+                // Parse arguments
+                Node head = {};
+                Node *cur = &head;
+                int arg_count = 0;
+
+                while (!equal(tok, ")")) {
+                    if (cur != &head)
+                        tok = skip(vm, tok, ",");
+                    Node *arg = assign(vm, &tok, tok);
+                    cur = cur->next = arg;
+                    arg_count++;
+                }
+                *rest = tok->next; // Skip ')'
+
+                Node *node = new_node(vm, ND_MACRO_CALL, macro_tok);
+                node->macro_name = pm->name;
+                node->args = head.next;
+                node->macro_arg_count = arg_count;
+                // Type will be determined after macro expansion
+                node->ty =
+                    ty_long; // Placeholder - macros return Node* (pointer)
+                return node;
+            }
+        }
+
         if (equal(tok->next, "("))
             error_tok(vm, tok, "implicit declaration of a function");
 
         // Try error recovery if enabled
-        if (vm->collect_errors && error_tok_recover(vm, tok, "undefined variable '%.*s'",
-                                                     tok->len, tok->loc)) {
+        if (vm->collect_errors &&
+            error_tok_recover(vm, tok, "undefined variable '%.*s'", tok->len,
+                              tok->loc)) {
             // Return error placeholder node instead of aborting
             Node *node = new_var_node(vm, error_var, tok);
             node->ty = ty_error;
@@ -4058,13 +4272,15 @@ static Node *primary(JCC *vm, Token **rest, Token *tok) {
     if (tok->kind == TK_NUM) {
         Node *node;
         if (vm->debug_vm)
-            printf("  primary: TK_NUM tok->ty kind=%d, is_flonum=%d\n", tok->ty ? tok->ty->kind : -1, is_flonum(tok->ty));
-        
+            printf("  primary: TK_NUM tok->ty kind=%d, is_flonum=%d\n",
+                   tok->ty ? tok->ty->kind : -1, is_flonum(tok->ty));
+
         if (is_flonum(tok->ty)) {
             node = new_node(vm, ND_NUM, tok);
             node->fval = tok->fval;
             if (vm->debug_vm)
-                printf("  primary: created flonum node, fval=%Lf\n", node->fval);
+                printf("  primary: created flonum node, fval=%Lf\n",
+                       node->fval);
         } else {
             node = new_num(vm, tok->val, tok);
             if (vm->debug_vm)
@@ -4073,14 +4289,16 @@ static Node *primary(JCC *vm, Token **rest, Token *tok) {
 
         node->ty = tok->ty;
         if (vm->debug_vm)
-            printf(" primary: set node->ty to tok->ty, kind=%d\n", node->ty ? node->ty->kind : -1);
-        
+            printf(" primary: set node->ty to tok->ty, kind=%d\n",
+                   node->ty ? node->ty->kind : -1);
+
         *rest = tok->next;
         return node;
     }
 
     // Try error recovery if enabled
-    if (vm->collect_errors && error_tok_recover(vm, tok, "expected an expression")) {
+    if (vm->collect_errors &&
+        error_tok_recover(vm, tok, "expected an expression")) {
         // Skip the invalid token and return error placeholder
         *rest = tok->next;
         Node *node = new_node(vm, ND_NUM, tok);
@@ -4180,7 +4398,7 @@ static Token *function(JCC *vm, Token *tok, Type *basety, VarAttr *attr) {
     bool is_nested = (parent_fn != NULL);
     Obj *saved_locals = NULL;
     int saved_nesting_depth = 0;
-    
+
     if (is_nested) {
         // Save parent's locals - we're about to start a new locals chain
         saved_locals = vm->compiler.locals;
@@ -4195,13 +4413,15 @@ static Token *function(JCC *vm, Token *tok, Type *basety, VarAttr *attr) {
         if (fn->is_definition && equal(tok, "{"))
             error_tok(vm, tok, "redefinition of %s", name_str);
         if (!fn->is_static && attr->is_static)
-            error_tok(vm, tok, "static declaration follows a non-static declaration");
+            error_tok(vm, tok,
+                      "static declaration follows a non-static declaration");
         fn->is_definition = fn->is_definition || equal(tok, "{");
     } else {
         fn = new_gvar(vm, name_str, ty->name->len, ty);
         fn->is_function = true;
         fn->is_definition = equal(tok, "{");
-        fn->is_static = attr->is_static || (attr->is_inline && !attr->is_extern);
+        fn->is_static =
+            attr->is_static || (attr->is_inline && !attr->is_extern);
         fn->is_inline = attr->is_inline;
         fn->is_constexpr = attr->is_constexpr;
     }
@@ -4228,16 +4448,16 @@ static Token *function(JCC *vm, Token *tok, Type *basety, VarAttr *attr) {
     vm->compiler.locals = NULL;
     if (is_nested)
         vm->compiler.fn_nesting_depth++;
-    
+
     enter_scope(vm);
-    
+
     create_param_lvars(vm, ty->params);
 
     // For nested functions, create a hidden __static_link parameter
     // This holds a pointer to the parent function's stack frame (bp)
-    // IMPORTANT: This must be added AFTER create_param_lvars because new_lvar prepends
-    // to the locals list. We want __static_link to be at the HEAD of the list (offset -1)
-    // to match where ENT3 spills REG_A0.
+    // IMPORTANT: This must be added AFTER create_param_lvars because new_lvar
+    // prepends to the locals list. We want __static_link to be at the HEAD of
+    // the list (offset -1) to match where ENT3 spills REG_A0.
     if (is_nested) {
         new_lvar(vm, "__static_link", 13, pointer_to(vm, ty_void));
     }
@@ -4252,26 +4472,28 @@ static Token *function(JCC *vm, Token *tok, Type *basety, VarAttr *attr) {
     fn->params = vm->compiler.locals;
 
     if (ty->is_variadic)
-        fn->va_area = new_lvar(vm, "__va_area__", 11, array_of(vm, ty_char, 136));
-    fn->alloca_bottom = new_lvar(vm, "__alloca_size__", 15, pointer_to(vm, ty_char));
+        fn->va_area =
+            new_lvar(vm, "__va_area__", 11, array_of(vm, ty_char, 136));
+    fn->alloca_bottom =
+        new_lvar(vm, "__alloca_size__", 15, pointer_to(vm, ty_char));
 
     tok = skip(vm, tok, "{");
 
     // [https://www.sigbus.info/n1570#6.4.2.2p1] "__func__" is
     // automatically defined as a local variable containing the
     // current function name.
-    push_scope(vm, "__func__", 8)->var =
-    new_string_literal(vm, fn->name, array_of(vm, ty_char, strlen(fn->name) + 1));
+    push_scope(vm, "__func__", 8)->var = new_string_literal(
+        vm, fn->name, array_of(vm, ty_char, strlen(fn->name) + 1));
 
     // [GNU] __FUNCTION__ is yet another name of __func__.
-    push_scope(vm, "__FUNCTION__", 12)->var =
-    new_string_literal(vm, fn->name, array_of(vm, ty_char, strlen(fn->name) + 1));
+    push_scope(vm, "__FUNCTION__", 12)->var = new_string_literal(
+        vm, fn->name, array_of(vm, ty_char, strlen(fn->name) + 1));
 
     fn->body = compound_stmt(vm, &tok, tok);
     fn->locals = vm->compiler.locals;
     leave_scope(vm);
     resolve_goto_labels(vm);
-    
+
     // Restore parent function context if this was a nested function
     if (is_nested) {
         vm->compiler.current_fn = parent_fn;
@@ -4279,14 +4501,16 @@ static Token *function(JCC *vm, Token *tok, Type *basety, VarAttr *attr) {
         vm->compiler.fn_nesting_depth = saved_nesting_depth;
     } else {
         // CRITICAL: Reset current_fn to NULL for top-level functions!
-        // Otherwise the next top-level function will incorrectly think it's nested.
+        // Otherwise the next top-level function will incorrectly think it's
+        // nested.
         vm->compiler.current_fn = NULL;
     }
-    
+
     return tok;
 }
 
-static Token *global_variable(JCC *vm, Token *tok, Type *basety, VarAttr *attr) {
+static Token *global_variable(JCC *vm, Token *tok, Type *basety,
+                              VarAttr *attr) {
     bool first = true;
 
     while (!consume(vm, &tok, tok, ";")) {
@@ -4339,7 +4563,8 @@ static void scan_globals(JCC *vm) {
         // Find another definition of the same identifier.
         Obj *var2 = vm->compiler.globals;
         for (; var2; var2 = var2->next)
-            if (var != var2 && var2->is_definition && !strcmp(var->name, var2->name))
+            if (var != var2 && var2->is_definition &&
+                !strcmp(var->name, var2->name))
                 break;
 
         // If there's another definition, the tentative definition
@@ -4362,7 +4587,7 @@ static void declare_builtin_functions(JCC *vm) {
     // setjmp(jmp_buf) -> int
     // jmp_buf is an array type, but we'll treat it as a pointer for now
     Type *setjmp_ty = func_type(vm, ty_int);
-    setjmp_ty->params = pointer_to(vm, ty_long);  // jmp_buf is long long[5]
+    setjmp_ty->params = pointer_to(vm, ty_long); // jmp_buf is long long[5]
     vm->compiler.builtin_setjmp = new_gvar(vm, "setjmp", 6, setjmp_ty);
     vm->compiler.builtin_setjmp->is_definition = false;
 
@@ -4445,6 +4670,4 @@ Node *cc_parse_compound_stmt(JCC *vm, Token **rest, Token *tok) {
     return compound_stmt(vm, rest, tok);
 }
 
-void cc_init_parser(JCC *vm) {
-    error_var->ty = ty_error;
-}
+void cc_init_parser(JCC *vm) { error_var->ty = ty_error; }

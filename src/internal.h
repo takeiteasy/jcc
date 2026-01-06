@@ -16,7 +16,8 @@
  You should have received a copy of the GNU General Public License
  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
- This file was original part of chibicc by Rui Ueyama (MIT) https://github.com/rui314/chibicc
+ This file was original part of chibicc by Rui Ueyama (MIT)
+ https://github.com/rui314/chibicc
 */
 
 #pragma once
@@ -38,9 +39,10 @@
 #endif
 
 #define JCC_MAGIC "JCC\0"
-#define JCC_VERSION 2  // Version 2: Added flags field to header
+#define JCC_VERSION 2 // Version 2: Added flags field to header
 
-// Stack canary constant for detecting stack overflows (used when random canaries disabled)
+// Stack canary constant for detecting stack overflows (used when random
+// canaries disabled)
 #define STACK_CANARY 0xDEADBEEFCAFEBABELL
 
 // ========== Multi-Register VM Infrastructure ==========
@@ -55,70 +57,74 @@
 //   18-25 - Saved S0-S7 (callee-saved, preserved across calls)
 //   26-31 - Temporaries T5-T10 (caller-saved)
 
-#define REG_ZERO  0   // Always zero (writes discarded)
-#define REG_RA    1   // Return address
-#define REG_SP    2   // Stack pointer (unused for now - we have vm->sp)
-#define REG_T0    5   // Temporary (caller-saved)
-#define REG_T1    6   // Temporary
-#define REG_T2    7   // Temporary
-#define REG_T3    8   // Temporary
-#define REG_T4    9   // Temporary
-#define REG_A0    10  // Argument/return value
-#define REG_A1    11  // Argument
-#define REG_A2    12  // Argument
-#define REG_A3    13  // Argument
-#define REG_A4    14  // Argument
-#define REG_A5    15  // Argument
-#define REG_A6    16  // Argument
-#define REG_A7    17  // Argument
-#define REG_S0    18  // Saved (callee-saved)
-#define REG_S1    19  // Saved
-#define REG_S2    20  // Saved
-#define REG_S3    21  // Saved
-#define REG_S4    22  // Saved
-#define REG_S5    23  // Saved
-#define REG_S6    24  // Saved
-#define REG_S7    25  // Saved
-#define REG_T5    26  // Temporary (caller-saved)
-#define REG_T6    27  // Temporary
-#define REG_T7    28  // Temporary
-#define REG_T8    29  // Temporary
-#define REG_T9    30  // Temporary
-#define REG_T10   31  // Temporary
-#define NUM_REGS  32
+#define REG_ZERO 0 // Always zero (writes discarded)
+#define REG_RA 1   // Return address
+#define REG_SP 2   // Stack pointer (unused for now - we have vm->sp)
+#define REG_T0 5   // Temporary (caller-saved)
+#define REG_T1 6   // Temporary
+#define REG_T2 7   // Temporary
+#define REG_T3 8   // Temporary
+#define REG_T4 9   // Temporary
+#define REG_A0 10  // Argument/return value
+#define REG_A1 11  // Argument
+#define REG_A2 12  // Argument
+#define REG_A3 13  // Argument
+#define REG_A4 14  // Argument
+#define REG_A5 15  // Argument
+#define REG_A6 16  // Argument
+#define REG_A7 17  // Argument
+#define REG_S0 18  // Saved (callee-saved)
+#define REG_S1 19  // Saved
+#define REG_S2 20  // Saved
+#define REG_S3 21  // Saved
+#define REG_S4 22  // Saved
+#define REG_S5 23  // Saved
+#define REG_S6 24  // Saved
+#define REG_S7 25  // Saved
+#define REG_T5 26  // Temporary (caller-saved)
+#define REG_T6 27  // Temporary
+#define REG_T7 28  // Temporary
+#define REG_T8 29  // Temporary
+#define REG_T9 30  // Temporary
+#define REG_T10 31 // Temporary
+#define NUM_REGS 32
 
 // Floating-point register file indices (for float/double arguments)
 // These mirror REG_A* but in the fregs[] array
-#define FREG_A0   10  // Float argument/return (maps to fax)
-#define FREG_A1   11  // Float argument
-#define FREG_A2   12  // Float argument
-#define FREG_A3   13  // Float argument
-#define FREG_A4   14  // Float argument
-#define FREG_A5   15  // Float argument
-#define FREG_A6   16  // Float argument
-#define FREG_A7   17  // Float argument
+#define FREG_A0 10 // Float argument/return (maps to fax)
+#define FREG_A1 11 // Float argument
+#define FREG_A2 12 // Float argument
+#define FREG_A3 13 // Float argument
+#define FREG_A4 14 // Float argument
+#define FREG_A5 15 // Float argument
+#define FREG_A6 16 // Float argument
+#define FREG_A7 17 // Float argument
 
 // Instruction encoding macros for new opcodes
 // RRR format: [OPCODE] [rd:8|rs1:8|rs2:8|unused:40]
-#define ENCODE_RRR(rd, rs1, rs2) \
+#define ENCODE_RRR(rd, rs1, rs2)                                               \
     ((long long)(rd) | ((long long)(rs1) << 8) | ((long long)(rs2) << 16))
-#define DECODE_RRR(operands, rd, rs1, rs2) do { \
-    rd = (operands) & 0xFF; \
-    rs1 = ((operands) >> 8) & 0xFF; \
-    rs2 = ((operands) >> 16) & 0xFF; \
-} while(0)
+#define DECODE_RRR(operands, rd, rs1, rs2)                                     \
+    do {                                                                       \
+        rd = (operands) & 0xFF;                                                \
+        rs1 = ((operands) >> 8) & 0xFF;                                        \
+        rs2 = ((operands) >> 16) & 0xFF;                                       \
+    } while (0)
 
 // RR format: [OPCODE] [rd:8|rs1:8|unused:48]
-#define ENCODE_RR(rd, rs1) \
-    ((long long)(rd) | ((long long)(rs1) << 8))
-#define DECODE_RR(operands, rd, rs1) do { \
-    rd = (operands) & 0xFF; \
-    rs1 = ((operands) >> 8) & 0xFF; \
-} while(0)
+#define ENCODE_RR(rd, rs1) ((long long)(rd) | ((long long)(rs1) << 8))
+#define DECODE_RR(operands, rd, rs1)                                           \
+    do {                                                                       \
+        rd = (operands) & 0xFF;                                                \
+        rs1 = ((operands) >> 8) & 0xFF;                                        \
+    } while (0)
 
 // RI format: [OPCODE] [rd:8|unused:56] [immediate:64]
 #define ENCODE_R(rd) ((long long)(rd))
-#define DECODE_R(operands, rd) do { rd = (operands) & 0xFF; } while(0)
+#define DECODE_R(operands, rd)                                                 \
+    do {                                                                       \
+        rd = (operands) & 0xFF;                                                \
+    } while (0)
 
 void strarray_push(StringArray *arr, char *s);
 char *format(char *fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -129,10 +135,14 @@ Token *preprocess(JCC *vm, Token *tok);
 //
 
 noreturn void error(char *fmt, ...) __attribute__((format(printf, 1, 2)));
-void error_at(JCC *vm, char *loc, char *fmt, ...) __attribute__((format(printf, 3, 4)));
-void error_tok(JCC *vm, Token *tok, char *fmt, ...) __attribute__((format(printf, 3, 4)));
-bool error_tok_recover(JCC *vm, Token *tok, char *fmt, ...) __attribute__((format(printf, 3, 4)));
-void warn_tok(JCC *vm, Token *tok, char *fmt, ...) __attribute__((format(printf, 3, 4)));
+void error_at(JCC *vm, char *loc, char *fmt, ...)
+    __attribute__((format(printf, 3, 4)));
+void error_tok(JCC *vm, Token *tok, char *fmt, ...)
+    __attribute__((format(printf, 3, 4)));
+bool error_tok_recover(JCC *vm, Token *tok, char *fmt, ...)
+    __attribute__((format(printf, 3, 4)));
+void warn_tok(JCC *vm, Token *tok, char *fmt, ...)
+    __attribute__((format(printf, 3, 4)));
 bool equal(Token *tok, char *op);
 Token *skip(JCC *vm, Token *tok, char *op);
 bool consume(JCC *vm, Token **rest, Token *tok, char *str);
@@ -145,15 +155,15 @@ Token *tokenize_string(JCC *vm, char *name, char *contents);
 unsigned char *read_binary_file(JCC *vm, char *path, size_t *out_size);
 void cc_output_preprocessed(FILE *f, Token *tok);
 
-#define unreachable() \
-    error("internal error at %s:%d", __FILE__, __LINE__)
+#define unreachable() error("internal error at %s:%d", __FILE__, __LINE__)
 
 //
 // preprocess.c
 //
 
 char *get_std_header(char *filename);
-char *search_include_paths(JCC *vm, char *filename, int filename_len, bool is_system);
+char *search_include_paths(JCC *vm, char *filename, int filename_len,
+                           bool is_system);
 void init_macros(JCC *vm);
 void define_macro(JCC *vm, char *name, char *buf);
 void undef_macro(JCC *vm, char *name);
@@ -245,7 +255,8 @@ void hashmap_test(void);
 // HashMap iteration
 // Callback function type for iteration
 // Return 0 to continue iteration, non-zero to stop
-typedef int (*HashMapIterator)(char *key, int keylen, void *val, void *user_data);
+typedef int (*HashMapIterator)(char *key, int keylen, void *val,
+                               void *user_data);
 
 void hashmap_foreach(HashMap *map, HashMapIterator iter, void *user_data);
 int hashmap_count_if(HashMap *map, HashMapIterator predicate, void *user_data);
@@ -259,8 +270,10 @@ long long wrap_strlen(long long s);
 long long wrap_strcmp(long long s1, long long s2);
 long long wrap_strncmp(long long s1, long long s2, long long n);
 long long wrap_memcmp(long long s1, long long s2, long long n);
-long long wrap_fread(long long ptr, long long size, long long nmemb, long long stream);
-long long wrap_fwrite(long long ptr, long long size, long long nmemb, long long stream);
+long long wrap_fread(long long ptr, long long size, long long nmemb,
+                     long long stream);
+long long wrap_fwrite(long long ptr, long long size, long long nmemb,
+                      long long stream);
 long long wrap_read(long long fd, long long buf, long long count);
 long long wrap_write(long long fd, long long buf, long long count);
 

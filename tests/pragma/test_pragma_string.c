@@ -1,0 +1,20 @@
+// Test pragma macro with string literal generation
+
+#include <reflection.h>
+#include <string.h>
+
+// Define a pragma macro that generates a string literal
+#pragma macro
+Node *make_hello(void) {
+    return ast_string_literal(__jcc_get_vm(), "Hello, World!");
+}
+
+int main(void) {
+    const char *msg = make_hello();
+
+    if (strcmp(msg, "Hello, World!") != 0) {
+        return 1;
+    }
+
+    return 0;
+}
